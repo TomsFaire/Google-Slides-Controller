@@ -5,8 +5,8 @@
 	"description": "Control Google Slides presentations with automatic presentation mode and multi-monitor support",
 	"version": "1.2.4",
 	"license": "MIT",
-	"repository": "git+https://github.com/yourusername/gslide-opener.git",
-	"bugs": "https://github.com/yourusername/gslide-opener/issues",
+	"repository": "git+https://github.com/nerif-tafu/gslide-opener.git",
+	"bugs": "https://github.com/nerif-tafu/gslide-opener/issues",
 	"maintainers": [
 		{
 			"name": "nerif-tafu",

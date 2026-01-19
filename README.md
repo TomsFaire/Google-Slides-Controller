@@ -2,35 +2,31 @@
 
 A desktop application for quickly switching between Google Slides presentations across multiple monitors, with Bitfocus Companion integration.
 
-## Features
-
-- **Multi-Monitor Support**: Select which monitor to display presentations and notes
-- **Google Authentication**: Sign in with your Google account
-- **Automated Presentation Mode**: Automatically enters presentation mode and opens speaker notes
-- **Quick Window Management**: Press Escape to close both presentation and notes windows
-- **HTTP API**: Control presentations remotely via HTTP API (port 9595)
-- **Bitfocus Companion Integration**: Control presentations from Stream Deck and other Companion-compatible devices
-- **Modern UI**: Clean, intuitive interface
+![Demo](docs/images/demo.gif)
 
 ## Installation
 
-1. Install dependencies:
+1. Download the latest release of the Google Slides Opener (exe or Appimage) on your presentation machine, and download the `companion-module-gslide-opener.tgz` on your Companion machine.
+2. Open the Google Slides Opener executable and make any config changes you want.
+3. On your Companion instance, go to `Modules` > `Import module package` and select the .tgz file.
+4. Add the connection in Companion named `Google Slides Opener`
+
+## Development
+
+To work on this repository run the following commands:
+
 ```bash
 npm install
+npm run dev
 ```
 
-2. Run the application:
+If you would like to test the build you can use the following commands: 
+
 ```bash
-npm start
+npm run build:win # Builds the .exe for windows
+npm run build:linux # Builds the appimage for Linux
+./package-companion.ps1 # Builds the companion .tgz
 ```
-
-## Usage
-
-### Using the GUI
-
-1. **Select Monitors**: Choose which monitor for the presentation and which for notes
-2. **Sign In**: Click "Sign in with Google" to authenticate
-3. **Test**: Use the "Open Test Presentation" button to verify your setup
 
 ### Using the HTTP API
 
@@ -63,36 +59,3 @@ curl -X POST http://127.0.0.1:9595/api/open-presentation \
 # Close presentation
 curl -X POST http://127.0.0.1:9595/api/close-presentation
 ```
-
-### Bitfocus Companion Integration
-
-This app includes a Companion module for control from Stream Deck and other devices.
-
-See [companion-module-gslide-opener/README.md](companion-module-gslide-opener/README.md) for installation and usage instructions.
-
-**Quick Setup:**
-1. Make sure this app is running
-2. Copy the `companion-module-gslide-opener` folder to your Companion modules directory
-3. Restart Companion
-4. Add the "Google Slides Opener" connection in Companion
-5. Create buttons with "Open Presentation" actions
-
-## Keyboard Shortcuts
-
-- **Escape**: Close both presentation and notes windows (works from either window)
-
-## Development
-
-```bash
-npm run dev
-```
-
-## Built With
-
-- Electron
-- Node.js HTTP API
-- HTML/CSS/JavaScript
-
-## Configuration
-
-Monitor preferences and Google authentication are automatically saved and restored between sessions.

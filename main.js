@@ -319,17 +319,57 @@ ipcMain.handle('open-test-presentation', async () => {
   
   console.log('[Test] Window opened, loading URL...');
   
-  // Listen for all page loads
+  // Set up navigation listener to detect presentation mode activation
+  let sKeyPressed = false;
+  const navigationListener = async (event, url) => {
+    console.log('[Test] Navigated to:', url);
+    
+    // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
+    const isPresentMode = (url.includes('/present/') || url.includes('/localpresent')) && !url.includes('/presentation/');
+    if (isPresentMode && !sKeyPressed) {
+      sKeyPressed = true;
+      console.log('[Test] Presentation mode URL detected, pressing "s" for speaker notes...');
+      
+      // Small delay to ensure presentation mode UI is ready
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      try {
+        // Focus the window to ensure it receives the keyboard events
+        presentationWindow.focus();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Send real keyboard input events for 's' key
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+        
+        console.log('[Test] "s" key sent via sendInputEvent');
+      } catch (error) {
+        console.error('[Test] Error sending "s" key:', error);
+      }
+      
+      // Remove the listener after we've pressed 's'
+      presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+    }
+  };
+  
+  presentationWindow.webContents.on('did-navigate', navigationListener);
+  
+  // Listen for page load, then immediately trigger presentation mode
   presentationWindow.webContents.once('did-finish-load', async () => {
     const currentUrl = presentationWindow.webContents.getURL();
     console.log('[Test] Page loaded:', currentUrl);
     
-    console.log('[Test] Waiting 2 seconds before triggering presentation...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Small delay to ensure page is fully interactive
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    console.log('[Test] Attempting to trigger Ctrl+Shift+F5...');
+    console.log('[Test] Triggering Ctrl+Shift+F5 to enter presentation mode...');
     
     try {
+      // Focus the window first to ensure it receives the keyboard events
+      presentationWindow.focus();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       // Send real keyboard input events
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
       presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
@@ -339,22 +379,28 @@ ipcMain.handle('open-test-presentation', async () => {
       console.error('[Test] Error sending Ctrl+Shift+F5:', error);
     }
     
-    // Wait for presentation mode to activate, then press 's' to open speaker notes
-    console.log('[Test] Waiting 3 seconds for presentation mode to activate...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    console.log('[Test] Attempting to press "s" for speaker notes...');
-    
-    try {
-      // Send real keyboard input events for 's' key
-      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-      presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-      
-      console.log('[Test] "s" key sent via sendInputEvent');
-    } catch (error) {
-      console.error('[Test] Error sending "s" key:', error);
-    }
+    // Fallback: if navigation doesn't detect presentation mode, press 's' after a delay
+    setTimeout(async () => {
+      if (!sKeyPressed) {
+        console.log('[Test] Fallback timer: pressing "s" for speaker notes...');
+        sKeyPressed = true;
+        
+        try {
+          presentationWindow.focus();
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+          
+          console.log('[Test] "s" key sent via sendInputEvent (fallback)');
+        } catch (error) {
+          console.error('[Test] Error sending "s" key (fallback):', error);
+        }
+        
+        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+      }
+    }, 1500);
   });
   
   return { success: true };
@@ -517,16 +563,57 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   console.log('[Multi-Monitor] Window opened, loading URL...');
 
   // Listen for all page loads
+  // Set up navigation listener to detect presentation mode activation
+  let sKeyPressed = false;
+  const navigationListener = async (event, url) => {
+    console.log('[Multi-Monitor] Navigated to:', url);
+    
+    // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
+    const isPresentMode = (url.includes('/present/') || url.includes('/localpresent')) && !url.includes('/presentation/');
+    if (isPresentMode && !sKeyPressed) {
+      sKeyPressed = true;
+      console.log('[Multi-Monitor] Presentation mode URL detected, pressing "s" for speaker notes...');
+      
+      // Small delay to ensure presentation mode UI is ready
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      try {
+        // Focus the window to ensure it receives the keyboard events
+        presentationWindow.focus();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Send real keyboard input events for 's' key
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+        
+        console.log('[Multi-Monitor] "s" key sent via sendInputEvent');
+      } catch (error) {
+        console.error('[Multi-Monitor] Error sending "s" key:', error);
+      }
+      
+      // Remove the listener after we've pressed 's'
+      presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+    }
+  };
+  
+  presentationWindow.webContents.on('did-navigate', navigationListener);
+  
+  // Listen for page load, then immediately trigger presentation mode
   presentationWindow.webContents.once('did-finish-load', async () => {
     const currentUrl = presentationWindow.webContents.getURL();
     console.log('[Multi-Monitor] Page loaded:', currentUrl);
     
-    console.log('[Multi-Monitor] Waiting 2 seconds before triggering presentation...');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // Small delay to ensure page is fully interactive
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    console.log('[Multi-Monitor] Attempting to trigger Ctrl+Shift+F5...');
+    console.log('[Multi-Monitor] Triggering Ctrl+Shift+F5 to enter presentation mode...');
     
     try {
+      // Focus the window first to ensure it receives the keyboard events
+      presentationWindow.focus();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       // Send real keyboard input events
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
       presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
@@ -536,22 +623,28 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       console.error('[Multi-Monitor] Error sending Ctrl+Shift+F5:', error);
     }
     
-    // Wait for presentation mode to activate, then press 's' to open speaker notes
-    console.log('[Multi-Monitor] Waiting 3 seconds for presentation mode to activate...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    console.log('[Multi-Monitor] Attempting to press "s" for speaker notes...');
-    
-    try {
-      // Send real keyboard input events for 's' key
-      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-      presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-      
-      console.log('[Multi-Monitor] "s" key sent via sendInputEvent');
-    } catch (error) {
-      console.error('[Multi-Monitor] Error sending "s" key:', error);
-    }
+    // Fallback: if navigation doesn't detect presentation mode, press 's' after a delay
+    setTimeout(async () => {
+      if (!sKeyPressed) {
+        console.log('[Multi-Monitor] Fallback timer: pressing "s" for speaker notes...');
+        sKeyPressed = true;
+        
+        try {
+          presentationWindow.focus();
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+          
+          console.log('[Multi-Monitor] "s" key sent via sendInputEvent (fallback)');
+        } catch (error) {
+          console.error('[Multi-Monitor] Error sending "s" key (fallback):', error);
+        }
+        
+        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+      }
+    }, 1500);
   });
 
   presentationWindow.on('closed', () => {

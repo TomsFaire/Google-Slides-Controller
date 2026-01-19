@@ -25,6 +25,7 @@
   "build": {
     "appId": "com.gslide.opener",
     "productName": "Google Slides Opener",
+    "publish": null,
     "files": [
       "main.js",
       "preload.js",

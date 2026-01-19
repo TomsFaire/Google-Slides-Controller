@@ -1,6 +1,6 @@
 {
   "name": "companion-module-gslide-opener",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Bitfocus Companion module for Google Slides Opener",
   "main": "main.js",
   "scripts": {

@@ -8,11 +8,15 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 
 	async init(config) {
 		this.log('debug', 'Initializing Google Slides Opener module...')
-		this.config = config
+		
+		// Merge config with defaults
+		this.config = {
+			host: '127.0.0.1',
+			port: '9595',
+			...config
+		}
 
-		// Set default host/port if not configured
-		if (!this.config.host) this.config.host = '127.0.0.1'
-		if (!this.config.port) this.config.port = '9595'
+		this.log('debug', `Config: host=${this.config.host}, port=${this.config.port}`)
 
 		// Set initial status
 		this.updateStatus('ok', 'Initializing...')
@@ -34,7 +38,15 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 
 	async configUpdated(config) {
 		this.log('debug', 'configUpdated')
-		this.config = config
+		
+		// Merge config with defaults
+		this.config = {
+			host: '127.0.0.1',
+			port: '9595',
+			...config
+		}
+		
+		this.log('debug', `Updated config: host=${this.config.host}, port=${this.config.port}`)
 		await this.testConnection()
 	}
 
@@ -53,6 +65,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				label: 'Host',
 				width: 6,
 				default: '127.0.0.1',
+				required: true,
 			},
 			{
 				type: 'textinput',
@@ -60,7 +73,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				label: 'Port',
 				width: 6,
 				default: '9595',
-				regex: '/^\\d+$/',
+				required: true,
+				regex: this.REGEX_PORT,
 			},
 		]
 	}

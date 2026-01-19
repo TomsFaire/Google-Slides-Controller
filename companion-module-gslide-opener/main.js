@@ -65,7 +65,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				label: 'Host',
 				width: 6,
 				default: '127.0.0.1',
-				required: true,
+				tooltip: 'IP address of the computer running Google Slides Opener',
 			},
 			{
 				type: 'textinput',
@@ -73,8 +73,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				label: 'Port',
 				width: 6,
 				default: '9595',
-				required: true,
-				regex: this.REGEX_PORT,
+				tooltip: 'Port number (default: 9595)',
+				regex: '/^[0-9]+$/',
 			},
 		]
 	}

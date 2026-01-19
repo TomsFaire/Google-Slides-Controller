@@ -23,12 +23,13 @@ tar -czf companion-module-gslide-opener.tgz -C companion-module-gslide-opener .
 
 if (Test-Path "companion-module-gslide-opener.tgz") {
     $size = (Get-Item "companion-module-gslide-opener.tgz").Length / 1MB
-    Write-Host "✓ Package created: companion-module-gslide-opener.tgz ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
+    $sizeRounded = [math]::Round($size, 2)
+    Write-Host "Package created: companion-module-gslide-opener.tgz ($sizeRounded MB)" -ForegroundColor Green
     Write-Host ""
     Write-Host "To test in Companion:" -ForegroundColor Cyan
     Write-Host "1. Extract this .tgz file" -ForegroundColor White
     Write-Host "2. Place it in your Companion 'Developer modules path'" -ForegroundColor White
     Write-Host "3. Restart Companion" -ForegroundColor White
 } else {
-    Write-Host "✗ Failed to create package" -ForegroundColor Red
+    Write-Host "Failed to create package" -ForegroundColor Red
 }

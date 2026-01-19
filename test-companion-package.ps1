@@ -4,7 +4,7 @@
 Write-Host "Testing Companion Package..." -ForegroundColor Green
 
 if (-not (Test-Path "companion-module-gslide-opener.tgz")) {
-    Write-Host "✗ Package not found. Run package-companion.ps1 first" -ForegroundColor Red
+    Write-Host "Package not found. Run package-companion.ps1 first" -ForegroundColor Red
     exit 1
 }
 
@@ -40,16 +40,16 @@ $allGood = $true
 foreach ($file in $criticalFiles) {
     $fullPath = Join-Path $tempDir $file
     if (Test-Path $fullPath) {
-        Write-Host "  ✓ $file" -ForegroundColor Green
+        Write-Host "  OK: $file" -ForegroundColor Green
     } else {
-        Write-Host "  ✗ $file (MISSING)" -ForegroundColor Red
+        Write-Host "  MISSING: $file" -ForegroundColor Red
         $allGood = $false
     }
 }
 
 Write-Host ""
 if ($allGood) {
-    Write-Host "✓ Package looks good!" -ForegroundColor Green
+    Write-Host "Package looks good!" -ForegroundColor Green
     
     # Show version info
     $manifest = Get-Content "$tempDir/companion/manifest.json" | ConvertFrom-Json
@@ -59,7 +59,7 @@ if ($allGood) {
     Write-Host "  Version: $($manifest.version)" -ForegroundColor White
     Write-Host "  ID: $($manifest.id)" -ForegroundColor White
 } else {
-    Write-Host "✗ Package has missing files!" -ForegroundColor Red
+    Write-Host "Package has missing files!" -ForegroundColor Red
 }
 
 # Cleanup

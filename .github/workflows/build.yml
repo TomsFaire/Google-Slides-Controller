@@ -61,6 +61,10 @@ jobs:
       - name: Build Linux AppImage
         run: npm run build:linux
       
+      - name: Install Companion Module dependencies
+        run: npm ci
+        working-directory: ./companion-module-gslide-opener
+      
       - name: Package Companion Module
         run: tar -czf companion-module-gslide-opener.tgz -C companion-module-gslide-opener .
       

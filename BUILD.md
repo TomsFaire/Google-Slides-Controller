@@ -13,6 +13,7 @@ This project uses GitHub Actions to automatically build portable executables for
 ### Build artifacts:
 - **Windows**: Portable `.exe` (no installer needed)
 - **Linux**: `.AppImage` (portable, no installation needed)
+- **Companion Module**: `.tgz` package for Bitfocus Companion integration
 
 ## Manual Building
 
@@ -62,8 +63,9 @@ To create a GitHub Release with downloadable builds:
 2. GitHub Actions will automatically:
    - Build Windows portable exe
    - Build Linux AppImage
+   - Package Companion module as .tgz
    - Create a GitHub Release
-   - Attach both builds to the release
+   - Attach all builds to the release
 
 ## Downloading Builds
 
@@ -74,6 +76,7 @@ To create a GitHub Release with downloadable builds:
 4. Download:
    - `gslide-opener-windows-portable` for Windows
    - `gslide-opener-linux-appimage` for Linux
+   - `companion-module-gslide-opener` for Bitfocus Companion
 
 ### From GitHub Releases:
 1. Go to the "Releases" section

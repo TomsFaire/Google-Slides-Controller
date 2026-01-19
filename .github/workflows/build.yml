@@ -61,11 +61,21 @@ jobs:
       - name: Build Linux AppImage
         run: npm run build:linux
       
+      - name: Package Companion Module
+        run: tar -czf companion-module-gslide-opener.tgz -C companion-module-gslide-opener .
+      
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
           name: gslide-opener-linux-appimage
           path: dist/*.AppImage
+          retention-days: 30
+      
+      - name: Upload Companion Module artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-module-gslide-opener
+          path: companion-module-gslide-opener.tgz
           retention-days: 30
   
   release:
@@ -88,12 +98,19 @@ jobs:
           name: gslide-opener-linux-appimage
           path: artifacts/linux
       
+      - name: Download Companion Module artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: companion-module-gslide-opener
+          path: artifacts/companion
+      
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             artifacts/windows/*.exe
             artifacts/linux/*.AppImage
+            artifacts/companion/*.tgz
           draft: false
           prerelease: false
         env:

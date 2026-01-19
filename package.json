@@ -1,0 +1,16 @@
+{
+  "name": "gslide-opener",
+  "version": "1.0.0",
+  "description": "Quick Google Slides deck switcher",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --watch"
+  },
+  "keywords": ["electron", "google-slides", "presentation"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.1.0"
+  }
+}

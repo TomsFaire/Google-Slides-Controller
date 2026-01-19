@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 
 let mainWindow;
 let presentationWindow = null;
@@ -188,6 +189,7 @@ ipcMain.handle('open-test-presentation', async () => {
       width: presentationDisplay.bounds.width,
       height: presentationDisplay.bounds.height,
       fullscreen: true,
+      frame: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -204,8 +206,8 @@ ipcMain.handle('open-test-presentation', async () => {
       if (input.key === 'Escape' && input.type === 'keyDown') {
         console.log('[Test] Escape pressed, closing presentation and notes windows');
         event.preventDefault(); // Prevent Google Slides from handling Escape
-        if (notesWindow) notesWindow.close();
-        if (presentationWindow) presentationWindow.close();
+        if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+        if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
       }
     });
 
@@ -218,6 +220,7 @@ ipcMain.handle('open-test-presentation', async () => {
       // Allow Google Slides to open the speaker notes window
       // Position it on the selected notes display
       const windowOptions = {
+        frame: false,
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
@@ -257,8 +260,8 @@ ipcMain.handle('open-test-presentation', async () => {
           if (input.key === 'Escape' && input.type === 'keyDown') {
             console.log('[Test] Escape pressed in notes window, closing all windows');
             event.preventDefault();
-            if (notesWindow) notesWindow.close();
-            if (presentationWindow) presentationWindow.close();
+            if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+            if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
           }
         });
         
@@ -304,7 +307,7 @@ ipcMain.handle('open-test-presentation', async () => {
                 console.log('[Test] Notes window actual position:', actualNotesBounds);
                 console.log('[Test] =============================================');
               }, 500);
-            }, 100);
+            }, 50);
           }
         });
         
@@ -326,30 +329,32 @@ ipcMain.handle('open-test-presentation', async () => {
     
     // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
     const isPresentMode = (url.includes('/present/') || url.includes('/localpresent')) && !url.includes('/presentation/');
-    if (isPresentMode && !sKeyPressed) {
+    if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
       sKeyPressed = true;
       console.log('[Test] Presentation mode URL detected, pressing "s" for speaker notes...');
       
       // Small delay to ensure presentation mode UI is ready
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 300));
       
-      try {
-        // Focus the window to ensure it receives the keyboard events
-        presentationWindow.focus();
-        await new Promise(resolve => setTimeout(resolve, 100));
+      if (presentationWindow && !presentationWindow.isDestroyed()) {
+        try {
+          // Focus the window to ensure it receives the keyboard events
+          presentationWindow.focus();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+          // Send real keyboard input events for 's' key
+          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+          
+          console.log('[Test] "s" key sent via sendInputEvent');
+        } catch (error) {
+          console.error('[Test] Error sending "s" key:', error);
+        }
         
-        // Send real keyboard input events for 's' key
-        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-        
-        console.log('[Test] "s" key sent via sendInputEvent');
-      } catch (error) {
-        console.error('[Test] Error sending "s" key:', error);
+        // Remove the listener after we've pressed 's'
+        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
       }
-      
-      // Remove the listener after we've pressed 's'
-      presentationWindow.webContents.removeListener('did-navigate', navigationListener);
     }
   };
   
@@ -357,18 +362,22 @@ ipcMain.handle('open-test-presentation', async () => {
   
   // Listen for page load, then immediately trigger presentation mode
   presentationWindow.webContents.once('did-finish-load', async () => {
+    if (!presentationWindow || presentationWindow.isDestroyed()) return;
+    
     const currentUrl = presentationWindow.webContents.getURL();
     console.log('[Test] Page loaded:', currentUrl);
     
     // Small delay to ensure page is fully interactive
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    if (!presentationWindow || presentationWindow.isDestroyed()) return;
     
     console.log('[Test] Triggering Ctrl+Shift+F5 to enter presentation mode...');
     
     try {
       // Focus the window first to ensure it receives the keyboard events
       presentationWindow.focus();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 50));
       
       // Send real keyboard input events
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
@@ -381,13 +390,13 @@ ipcMain.handle('open-test-presentation', async () => {
     
     // Fallback: if navigation doesn't detect presentation mode, press 's' after a delay
     setTimeout(async () => {
-      if (!sKeyPressed) {
+      if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
         console.log('[Test] Fallback timer: pressing "s" for speaker notes...');
         sKeyPressed = true;
         
         try {
           presentationWindow.focus();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(resolve => setTimeout(resolve, 50));
           
           presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
           presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
@@ -398,9 +407,11 @@ ipcMain.handle('open-test-presentation', async () => {
           console.error('[Test] Error sending "s" key (fallback):', error);
         }
         
-        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+        if (presentationWindow && !presentationWindow.isDestroyed()) {
+          presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+        }
       }
-    }, 1500);
+    }, 1000);
   });
   
   return { success: true };
@@ -431,8 +442,8 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   }
 
   // Close existing windows if any
-  if (presentationWindow) presentationWindow.close();
-  if (notesWindow) notesWindow.close();
+  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
 
   // Open presentation window
   presentationWindow = new BrowserWindow({
@@ -441,6 +452,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     width: presentationDisplay.bounds.width,
     height: presentationDisplay.bounds.height,
     fullscreen: true,
+    frame: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -457,6 +469,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     // Allow Google Slides to open the speaker notes window
     // Position it on the selected notes display
     const windowOptions = {
+      frame: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -499,8 +512,8 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
         if (input.key === 'Escape' && input.type === 'keyDown') {
           console.log('[Multi-Monitor] Escape pressed in notes window, closing all windows');
           event.preventDefault();
-          if (notesWindow) notesWindow.close();
-          if (presentationWindow) presentationWindow.close();
+          if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+          if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
         }
       });
       
@@ -547,7 +560,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
               console.log('[Multi-Monitor] Notes window actual position:', actualNotesBounds);
               console.log('[Multi-Monitor] =============================================');
             }, 500);
-          }, 100);
+          }, 50);
         }
       });
       
@@ -570,30 +583,32 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     
     // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
     const isPresentMode = (url.includes('/present/') || url.includes('/localpresent')) && !url.includes('/presentation/');
-    if (isPresentMode && !sKeyPressed) {
+    if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
       sKeyPressed = true;
       console.log('[Multi-Monitor] Presentation mode URL detected, pressing "s" for speaker notes...');
       
       // Small delay to ensure presentation mode UI is ready
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 300));
       
-      try {
-        // Focus the window to ensure it receives the keyboard events
-        presentationWindow.focus();
-        await new Promise(resolve => setTimeout(resolve, 100));
+      if (presentationWindow && !presentationWindow.isDestroyed()) {
+        try {
+          // Focus the window to ensure it receives the keyboard events
+          presentationWindow.focus();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+          // Send real keyboard input events for 's' key
+          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+          
+          console.log('[Multi-Monitor] "s" key sent via sendInputEvent');
+        } catch (error) {
+          console.error('[Multi-Monitor] Error sending "s" key:', error);
+        }
         
-        // Send real keyboard input events for 's' key
-        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-        
-        console.log('[Multi-Monitor] "s" key sent via sendInputEvent');
-      } catch (error) {
-        console.error('[Multi-Monitor] Error sending "s" key:', error);
+        // Remove the listener after we've pressed 's'
+        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
       }
-      
-      // Remove the listener after we've pressed 's'
-      presentationWindow.webContents.removeListener('did-navigate', navigationListener);
     }
   };
   
@@ -601,18 +616,22 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   
   // Listen for page load, then immediately trigger presentation mode
   presentationWindow.webContents.once('did-finish-load', async () => {
+    if (!presentationWindow || presentationWindow.isDestroyed()) return;
+    
     const currentUrl = presentationWindow.webContents.getURL();
     console.log('[Multi-Monitor] Page loaded:', currentUrl);
     
     // Small delay to ensure page is fully interactive
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    if (!presentationWindow || presentationWindow.isDestroyed()) return;
     
     console.log('[Multi-Monitor] Triggering Ctrl+Shift+F5 to enter presentation mode...');
     
     try {
       // Focus the window first to ensure it receives the keyboard events
       presentationWindow.focus();
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 50));
       
       // Send real keyboard input events
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
@@ -625,13 +644,13 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     
     // Fallback: if navigation doesn't detect presentation mode, press 's' after a delay
     setTimeout(async () => {
-      if (!sKeyPressed) {
+      if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
         console.log('[Multi-Monitor] Fallback timer: pressing "s" for speaker notes...');
         sKeyPressed = true;
         
         try {
           presentationWindow.focus();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise(resolve => setTimeout(resolve, 50));
           
           presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
           presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
@@ -642,9 +661,11 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
           console.error('[Multi-Monitor] Error sending "s" key (fallback):', error);
         }
         
-        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+        if (presentationWindow && !presentationWindow.isDestroyed()) {
+          presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+        }
       }
-    }, 1500);
+    }, 1000);
   });
 
   presentationWindow.on('closed', () => {
@@ -656,16 +677,521 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     if (input.key === 'Escape' && input.type === 'keyDown') {
       console.log('[Multi-Monitor] Escape pressed, closing presentation and notes windows');
       event.preventDefault(); // Prevent Google Slides from handling Escape
-      if (notesWindow) notesWindow.close();
-      if (presentationWindow) presentationWindow.close();
+      if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+      if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
     }
   });
 
   return { success: true };
 });
 
+// HTTP API for Bitfocus Companion integration
+const API_PORT = 9595;
+let httpServer;
+
+function startHttpServer() {
+  httpServer = http.createServer(async (req, res) => {
+    // Enable CORS
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    // GET /api/status - Check if app is running
+    if (req.method === 'GET' && req.url === '/api/status') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        status: 'ok', 
+        version: '1.0.0',
+        presentationOpen: presentationWindow !== null
+      }));
+      return;
+    }
+    
+    // POST /api/open-presentation - Open a presentation with URL
+    if (req.method === 'POST' && req.url === '/api/open-presentation') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const { url } = data;
+          
+          if (!url) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'URL is required' }));
+            return;
+          }
+          
+          console.log('[API] Opening presentation:', url);
+          
+          // Close any existing presentation windows
+          try {
+            if (notesWindow && !notesWindow.isDestroyed()) {
+              console.log('[API] Closing existing notes window');
+              notesWindow.removeAllListeners('closed');
+              notesWindow.close();
+              notesWindow = null;
+            }
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              console.log('[API] Closing existing presentation window');
+              presentationWindow.removeAllListeners('closed');
+              presentationWindow.close();
+              presentationWindow = null;
+            }
+          } catch (error) {
+            console.error('[API] Error closing existing windows:', error.message);
+          }
+          
+          // Load preferences for monitor selection
+          const prefs = loadPreferences();
+          const displays = screen.getAllDisplays();
+          
+          const presentationDisplayId = Number(prefs.presentationDisplayId);
+          const notesDisplayId = Number(prefs.notesDisplayId);
+          
+          const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+          const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
+          
+          console.log('[API] Using presentation display:', presentationDisplay.id);
+          console.log('[API] Using notes display:', notesDisplay.id);
+          
+          // Open the presentation using the same logic as the IPC handler
+          // Create the presentation window
+          presentationWindow = new BrowserWindow({
+            x: presentationDisplay.bounds.x,
+            y: presentationDisplay.bounds.y,
+            width: presentationDisplay.bounds.width,
+            height: presentationDisplay.bounds.height,
+            fullscreen: true,
+            frame: false,
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              partition: GOOGLE_SESSION_PARTITION
+            }
+          });
+          
+          // Set up window open handler for speaker notes popup
+          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
+            console.log('[API] Window open intercepted:', url);
+            console.log('[API] Frame name:', frameName);
+            console.log('[API] Features:', features);
+            
+            const windowOptions = {
+              frame: false,
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                partition: GOOGLE_SESSION_PARTITION
+              }
+            };
+            
+            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
+              windowOptions.x = notesDisplay.bounds.x;
+              windowOptions.y = notesDisplay.bounds.y;
+              windowOptions.width = notesDisplay.bounds.width;
+              windowOptions.height = notesDisplay.bounds.height;
+            } else {
+              windowOptions.width = 1280;
+              windowOptions.height = 720;
+            }
+            
+            return {
+              action: 'allow',
+              overrideBrowserWindowOptions: windowOptions
+            };
+          });
+          
+          // Listen for notes window creation
+          const windowCreatedListener = (event, window) => {
+            if (window !== presentationWindow && window !== mainWindow) {
+              console.log('[API] Notes window created');
+              notesWindow = window;
+              
+              // Add Escape key handler to notes window
+              window.webContents.on('before-input-event', (event, input) => {
+                if (input.key === 'Escape' && input.type === 'keyDown') {
+                  console.log('[API] Escape pressed in notes window, closing all windows');
+                  event.preventDefault();
+                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+                }
+              });
+              
+              // Position and maximize notes window
+              window.once('ready-to-show', () => {
+                if (notesDisplay) {
+                  const targetBounds = {
+                    x: notesDisplay.bounds.x + 50,
+                    y: notesDisplay.bounds.y + 50,
+                    width: notesDisplay.bounds.width - 100,
+                    height: notesDisplay.bounds.height - 100
+                  };
+                  
+                  window.setBounds(targetBounds);
+                  
+                  setTimeout(() => {
+                    window.maximize();
+                  }, 50);
+                }
+              });
+              
+              app.removeListener('browser-window-created', windowCreatedListener);
+            }
+          };
+          app.on('browser-window-created', windowCreatedListener);
+          
+          // Set up navigation listener to detect presentation mode
+          let sKeyPressed = false;
+          const navigationListener = async (event, navUrl) => {
+            console.log('[API] Navigated to:', navUrl);
+            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
+            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
+              console.log('[API] Presentation mode detected, pressing "s" for speaker notes');
+              sKeyPressed = true;
+              await new Promise(resolve => setTimeout(resolve, 300));
+              
+              if (presentationWindow && !presentationWindow.isDestroyed()) {
+                presentationWindow.focus();
+                await new Promise(resolve => setTimeout(resolve, 50));
+                
+                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+                
+                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+              }
+            }
+          };
+          
+          presentationWindow.webContents.on('did-navigate', navigationListener);
+          
+          // Listen for page load
+          presentationWindow.webContents.once('did-finish-load', async () => {
+            console.log('[API] Page finished loading');
+            if (!presentationWindow || presentationWindow.isDestroyed()) {
+              console.log('[API] Window destroyed before processing');
+              return;
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              console.log('[API] Triggering Ctrl+Shift+F5 for presentation mode');
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 50));
+              
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
+            }
+            
+            // Fallback timer
+            setTimeout(async () => {
+              console.log('[API] Fallback timer triggered, sKeyPressed:', sKeyPressed);
+              if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
+                console.log('[API] Fallback: pressing "s" for speaker notes');
+                sKeyPressed = true;
+                presentationWindow.focus();
+                await new Promise(resolve => setTimeout(resolve, 50));
+                
+                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+                
+                if (presentationWindow && !presentationWindow.isDestroyed()) {
+                  presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+                }
+              }
+            }, 1000);
+          });
+          
+          presentationWindow.on('closed', () => {
+            presentationWindow = null;
+          });
+          
+          // Escape key handler for presentation window
+          presentationWindow.webContents.on('before-input-event', (event, input) => {
+          if (input.key === 'Escape' && input.type === 'keyDown') {
+            event.preventDefault();
+            if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+            if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+          }
+          });
+          
+          console.log('[API] Loading URL:', url);
+          presentationWindow.loadURL(url);
+          presentationWindow.show();
+          
+          console.log('[API] Window shown, waiting for page load...');
+          
+          // Send response immediately
+          if (!res.headersSent) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Presentation opened' }));
+          }
+        } catch (error) {
+          console.error('[API] Error:', error);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        }
+      });
+      return;
+    }
+    
+    // POST /api/close-presentation - Close current presentation
+    if (req.method === 'POST' && req.url === '/api/close-presentation') {
+      console.log('[API] Closing presentation');
+      
+      // Send response first before closing windows
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Presentation closed' }));
+      
+      // Close windows after sending response to avoid errors
+      setImmediate(() => {
+        try {
+          if (notesWindow && !notesWindow.isDestroyed()) {
+            notesWindow.removeAllListeners('closed');
+            notesWindow.close();
+            notesWindow = null;
+          }
+          if (presentationWindow && !presentationWindow.isDestroyed()) {
+            presentationWindow.removeAllListeners('closed');
+            presentationWindow.close();
+            presentationWindow = null;
+          }
+        } catch (error) {
+          console.error('[API] Error closing windows:', error.message);
+        }
+      });
+      
+      return;
+    }
+    
+    // POST /api/next-slide - Go to next slide
+    if (req.method === 'POST' && req.url === '/api/next-slide') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+      
+      try {
+        presentationWindow.focus();
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Next slide' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    
+    // POST /api/previous-slide - Go to previous slide
+    if (req.method === 'POST' && req.url === '/api/previous-slide') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+      
+      try {
+        presentationWindow.focus();
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Previous slide' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    
+    // POST /api/toggle-video - Toggle video playback (k key)
+    if (req.method === 'POST' && req.url === '/api/toggle-video') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+      
+      try {
+        presentationWindow.focus();
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K' });
+        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 'k' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K' });
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Video toggled' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    
+    // POST /api/zoom-in-notes - Zoom in on speaker notes
+    if (req.method === 'POST' && req.url === '/api/zoom-in-notes') {
+      console.log('[API] Zoom in on speaker notes requested');
+      
+      if (!notesWindow || notesWindow.isDestroyed()) {
+        console.log('[API] No speaker notes window is open');
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No speaker notes window is open' }));
+        return;
+      }
+      
+      try {
+        notesWindow.webContents.executeJavaScript(`
+          (function() {
+            const zoomInButton = document.querySelector('[title="Zoom in"]');
+            if (zoomInButton) {
+              // Dispatch real mouse events
+              const mousedownEvent = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                button: 0
+              });
+              const mouseupEvent = new MouseEvent('mouseup', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                button: 0
+              });
+              const clickEvent = new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                button: 0
+              });
+              
+              zoomInButton.dispatchEvent(mousedownEvent);
+              zoomInButton.dispatchEvent(mouseupEvent);
+              zoomInButton.dispatchEvent(clickEvent);
+              
+              return { success: true };
+            }
+            return { success: false, error: 'Button not found' };
+          })()
+        `).then(result => {
+          if (result.success) {
+            console.log('[API] ✓ Dispatched mouse events to zoom in button');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Zoomed in on notes' }));
+          } else {
+            console.log('[API] ✗ Zoom in button not found');
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: result.error }));
+          }
+        }).catch(error => {
+          console.error('[API] Error executing zoom in script:', error.message);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        });
+      } catch (error) {
+        console.error('[API] Error zooming in on notes:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    
+    // POST /api/zoom-out-notes - Zoom out on speaker notes
+    if (req.method === 'POST' && req.url === '/api/zoom-out-notes') {
+      console.log('[API] Zoom out on speaker notes requested');
+      
+      if (!notesWindow || notesWindow.isDestroyed()) {
+        console.log('[API] No speaker notes window is open');
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No speaker notes window is open' }));
+        return;
+      }
+      
+      try {
+        notesWindow.webContents.executeJavaScript(`
+          (function() {
+            const zoomOutButton = document.querySelector('[title="Zoom out"]');
+            if (zoomOutButton) {
+              // Dispatch real mouse events
+              const mousedownEvent = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                button: 0
+              });
+              const mouseupEvent = new MouseEvent('mouseup', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                button: 0
+              });
+              const clickEvent = new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                button: 0
+              });
+              
+              zoomOutButton.dispatchEvent(mousedownEvent);
+              zoomOutButton.dispatchEvent(mouseupEvent);
+              zoomOutButton.dispatchEvent(clickEvent);
+              
+              return { success: true };
+            }
+            return { success: false, error: 'Button not found' };
+          })()
+        `).then(result => {
+          if (result.success) {
+            console.log('[API] ✓ Dispatched mouse events to zoom out button');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Zoomed out on notes' }));
+          } else {
+            console.log('[API] ✗ Zoom out button not found');
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: result.error }));
+          }
+        }).catch(error => {
+          console.error('[API] Error executing zoom out script:', error.message);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        });
+      } catch (error) {
+        console.error('[API] Error zooming out on notes:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    
+    // 404 for unknown endpoints
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  });
+  
+  httpServer.listen(API_PORT, '127.0.0.1', () => {
+    console.log(`[API] HTTP server listening on http://127.0.0.1:${API_PORT}`);
+  });
+}
+
 app.whenReady().then(() => {
   createWindow();
+  startHttpServer();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -677,5 +1203,12 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', () => {
+  if (httpServer) {
+    console.log('[API] Shutting down HTTP server');
+    httpServer.close();
   }
 });

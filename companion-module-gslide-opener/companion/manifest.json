@@ -1,0 +1,26 @@
+{
+	"id": "gslide-opener",
+	"name": "Google Slides Opener",
+	"shortname": "gslide-opener",
+	"description": "Control Google Slides presentations with automatic presentation mode and multi-monitor support",
+	"version": "1.0.0",
+	"license": "MIT",
+	"repository": "git+https://github.com/yourusername/gslide-opener.git",
+	"bugs": "https://github.com/yourusername/gslide-opener/issues",
+	"maintainers": [
+		{
+			"name": "Your Name",
+			"email": "your-email@example.com"
+		}
+	],
+	"runtime": {
+		"type": "node22",
+		"api": "nodejs-ipc",
+		"apiVersion": "0.0.0",
+		"entrypoint": "../main.js"
+	},
+	"legacyIds": [],
+	"manufacturer": "Custom",
+	"products": ["Google Slides Opener"],
+	"keywords": ["google", "slides", "presentation", "powerpoint"]
+}

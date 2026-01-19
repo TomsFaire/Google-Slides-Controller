@@ -159,10 +159,22 @@ ipcMain.handle('google-signout', async () => {
 ipcMain.handle('open-test-presentation', async () => {
   const testUrl = 'https://docs.google.com/presentation/d/1rc9BSX-0TrU7c5LGeLDRyH3zRN89-uDuXEEqOpcnLVg/edit';
   
+  // Load preferences to get selected displays
+  const prefs = loadPreferences();
+  const displays = screen.getAllDisplays();
+  const presentationDisplay = displays.find(d => d.id === prefs.presentationDisplayId) || displays[0];
+  const notesDisplay = displays.find(d => d.id === prefs.notesDisplayId) || displays[0];
+  
+  console.log('[Test] Using presentation display:', presentationDisplay.id);
+  console.log('[Test] Using notes display:', notesDisplay.id);
+  
   if (!presentationWindow) {
     presentationWindow = new BrowserWindow({
-      width: 1280,
-      height: 720,
+      x: presentationDisplay.bounds.x,
+      y: presentationDisplay.bounds.y,
+      width: presentationDisplay.bounds.width,
+      height: presentationDisplay.bounds.height,
+      fullscreen: true,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -181,30 +193,79 @@ ipcMain.handle('open-test-presentation', async () => {
       console.log('[Test] Features:', details.features);
       
       // Allow Google Slides to open the speaker notes window
-      // It opens with about:blank and loads content via JavaScript
+      // Position it on the selected notes display
+      const windowOptions = {
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          partition: GOOGLE_SESSION_PARTITION
+        }
+      };
+      
+      if (notesDisplay && notesDisplay.id !== presentationDisplay.id) {
+        windowOptions.x = notesDisplay.bounds.x;
+        windowOptions.y = notesDisplay.bounds.y;
+        windowOptions.width = notesDisplay.bounds.width;
+        windowOptions.height = notesDisplay.bounds.height;
+      } else {
+        windowOptions.width = 1280;
+        windowOptions.height = 720;
+      }
+      
       return {
         action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 1280,
-          height: 720,
-          webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            partition: GOOGLE_SESSION_PARTITION
-          }
-        }
+        overrideBrowserWindowOptions: windowOptions
       };
     });
     
     // Listen for new windows being created (this will be the notes window)
-    app.on('browser-window-created', (event, window) => {
-      // Check if this is not the presentation window or main window
+    const testWindowCreatedListener = (event, window) => {
       if (window !== presentationWindow && window !== mainWindow) {
-        console.log('[Test] Notes window created, maximizing...');
+        console.log('[Test] Notes window created');
+        console.log('[Test] Presentation display ID:', presentationDisplay.id);
+        console.log('[Test] Notes display ID:', notesDisplay.id);
         notesWindow = window;
-        window.maximize();
+        
+        const initialBounds = window.getBounds();
+        console.log('[Test] Initial window bounds:', initialBounds);
+        
+        window.once('ready-to-show', () => {
+          console.log('[Test] Window ready-to-show event fired');
+          
+          if (notesDisplay && notesDisplay.id !== presentationDisplay.id) {
+            console.log('[Test] Different displays detected, moving notes window');
+            console.log('[Test] Target display bounds:', notesDisplay.bounds);
+            
+            const targetBounds = {
+              x: notesDisplay.bounds.x + 50,
+              y: notesDisplay.bounds.y + 50,
+              width: notesDisplay.bounds.width - 100,
+              height: notesDisplay.bounds.height - 100
+            };
+            console.log('[Test] Setting window bounds to:', targetBounds);
+            
+            window.setBounds(targetBounds);
+            
+            const newBounds = window.getBounds();
+            console.log('[Test] Window bounds after setBounds:', newBounds);
+            
+            setTimeout(() => {
+              console.log('[Test] Calling maximize on notes window');
+              window.maximize();
+              
+              const finalBounds = window.getBounds();
+              console.log('[Test] Final window bounds after maximize:', finalBounds);
+            }, 100);
+          } else {
+            console.log('[Test] Same display as presentation, just maximizing');
+            window.maximize();
+          }
+        });
+        
+        app.removeListener('browser-window-created', testWindowCreatedListener);
       }
-    });
+    };
+    app.on('browser-window-created', testWindowCreatedListener);
   }
 
   presentationWindow.loadURL(testUrl);
@@ -317,24 +378,53 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   const windowCreatedListener = (event, window) => {
     // Check if this is not the presentation window or main window
     if (window !== presentationWindow && window !== mainWindow) {
-      console.log('[Multi-Monitor] Notes window created, positioning on display...');
+      console.log('[Multi-Monitor] Notes window created');
+      console.log('[Multi-Monitor] Presentation display ID:', presentationDisplayId);
+      console.log('[Multi-Monitor] Notes display ID:', notesDisplayId);
+      console.log('[Multi-Monitor] Notes display object:', notesDisplay);
       notesWindow = window;
       
-      // Ensure the window is on the correct display
-      if (notesDisplay && notesDisplayId !== presentationDisplayId) {
-        // Set the window bounds to fill the notes display
-        window.setBounds({
-          x: notesDisplay.bounds.x,
-          y: notesDisplay.bounds.y,
-          width: notesDisplay.bounds.width,
-          height: notesDisplay.bounds.height
-        });
-        // Maximize after positioning
-        window.maximize();
-      } else {
-        // Same display as presentation, just maximize
-        window.maximize();
-      }
+      // Get initial window bounds
+      const initialBounds = window.getBounds();
+      console.log('[Multi-Monitor] Initial window bounds:', initialBounds);
+      
+      // Wait for the window to be ready before repositioning
+      window.once('ready-to-show', () => {
+        console.log('[Multi-Monitor] Window ready-to-show event fired');
+        
+        // Ensure the window is on the correct display
+        if (notesDisplay && notesDisplayId !== presentationDisplayId) {
+          console.log('[Multi-Monitor] Different displays detected, moving notes window');
+          console.log('[Multi-Monitor] Target display bounds:', notesDisplay.bounds);
+          
+          const targetBounds = {
+            x: notesDisplay.bounds.x + 50,
+            y: notesDisplay.bounds.y + 50,
+            width: notesDisplay.bounds.width - 100,
+            height: notesDisplay.bounds.height - 100
+          };
+          console.log('[Multi-Monitor] Setting window bounds to:', targetBounds);
+          
+          // First move the window to the correct display
+          window.setBounds(targetBounds);
+          
+          // Check if it actually moved
+          const newBounds = window.getBounds();
+          console.log('[Multi-Monitor] Window bounds after setBounds:', newBounds);
+          
+          // Small delay to ensure the window has moved
+          setTimeout(() => {
+            console.log('[Multi-Monitor] Calling maximize on notes window');
+            window.maximize();
+            
+            const finalBounds = window.getBounds();
+            console.log('[Multi-Monitor] Final window bounds after maximize:', finalBounds);
+          }, 100);
+        } else {
+          console.log('[Multi-Monitor] Same display as presentation, just maximizing');
+          window.maximize();
+        }
+      });
       
       // Remove listener after notes window is created
       app.removeListener('browser-window-created', windowCreatedListener);

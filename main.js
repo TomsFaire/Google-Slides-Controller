@@ -161,12 +161,25 @@ ipcMain.handle('open-test-presentation', async () => {
   
   // Load preferences to get selected displays
   const prefs = loadPreferences();
-  const displays = screen.getAllDisplays();
-  const presentationDisplay = displays.find(d => d.id === prefs.presentationDisplayId) || displays[0];
-  const notesDisplay = displays.find(d => d.id === prefs.notesDisplayId) || displays[0];
+  console.log('[Test] Loaded preferences:', prefs);
   
-  console.log('[Test] Using presentation display:', presentationDisplay.id);
-  console.log('[Test] Using notes display:', notesDisplay.id);
+  const displays = screen.getAllDisplays();
+  console.log('[Test] All available displays:');
+  displays.forEach((display, index) => {
+    console.log(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${JSON.stringify(display.bounds)}`);
+  });
+  
+  // Convert IDs to numbers for comparison (they might be saved as strings)
+  const presentationDisplayId = Number(prefs.presentationDisplayId);
+  const notesDisplayId = Number(prefs.notesDisplayId);
+  
+  const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+  const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
+  
+  console.log('[Test] Selected presentation display ID:', prefs.presentationDisplayId, '(converted to:', presentationDisplayId, ')');
+  console.log('[Test] Resolved presentation display:', presentationDisplay.id, 'Bounds:', presentationDisplay.bounds);
+  console.log('[Test] Selected notes display ID:', prefs.notesDisplayId, '(converted to:', notesDisplayId, ')');
+  console.log('[Test] Resolved notes display:', notesDisplay.id, 'Bounds:', notesDisplay.bounds);
   
   if (!presentationWindow) {
     presentationWindow = new BrowserWindow({
@@ -184,6 +197,16 @@ ipcMain.handle('open-test-presentation', async () => {
 
     presentationWindow.on('closed', () => {
       presentationWindow = null;
+    });
+    
+    // Listen for Escape key to close both windows
+    presentationWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'Escape' && input.type === 'keyDown') {
+        console.log('[Test] Escape pressed, closing presentation and notes windows');
+        event.preventDefault(); // Prevent Google Slides from handling Escape
+        if (notesWindow) notesWindow.close();
+        if (presentationWindow) presentationWindow.close();
+      }
     });
 
     // Handle the speaker notes popup window
@@ -229,19 +252,35 @@ ipcMain.handle('open-test-presentation', async () => {
         const initialBounds = window.getBounds();
         console.log('[Test] Initial window bounds:', initialBounds);
         
+        // Add Escape key handler to notes window as well
+        window.webContents.on('before-input-event', (event, input) => {
+          if (input.key === 'Escape' && input.type === 'keyDown') {
+            console.log('[Test] Escape pressed in notes window, closing all windows');
+            event.preventDefault();
+            if (notesWindow) notesWindow.close();
+            if (presentationWindow) presentationWindow.close();
+          }
+        });
+        
         window.once('ready-to-show', () => {
           console.log('[Test] Window ready-to-show event fired');
           
-          if (notesDisplay && notesDisplay.id !== presentationDisplay.id) {
-            console.log('[Test] Different displays detected, moving notes window');
-            console.log('[Test] Target display bounds:', notesDisplay.bounds);
-            
+          // Always move the window to the correct display first, then maximize
+          if (notesDisplay) {
             const targetBounds = {
               x: notesDisplay.bounds.x + 50,
               y: notesDisplay.bounds.y + 50,
               width: notesDisplay.bounds.width - 100,
               height: notesDisplay.bounds.height - 100
             };
+            
+            if (notesDisplay.id !== presentationDisplay.id) {
+              console.log('[Test] Different displays detected, moving notes window to display:', notesDisplay.id);
+            } else {
+              console.log('[Test] Same display as presentation, but still moving to ensure correct position');
+            }
+            
+            console.log('[Test] Target display bounds:', notesDisplay.bounds);
             console.log('[Test] Setting window bounds to:', targetBounds);
             
             window.setBounds(targetBounds);
@@ -255,10 +294,17 @@ ipcMain.handle('open-test-presentation', async () => {
               
               const finalBounds = window.getBounds();
               console.log('[Test] Final window bounds after maximize:', finalBounds);
+              
+              // Log actual final positions after a short delay
+              setTimeout(() => {
+                const actualPresentationBounds = presentationWindow ? presentationWindow.getBounds() : null;
+                const actualNotesBounds = notesWindow ? notesWindow.getBounds() : null;
+                console.log('[Test] ===== ACTUAL FINAL WINDOW POSITIONS =====');
+                console.log('[Test] Presentation window actual position:', actualPresentationBounds);
+                console.log('[Test] Notes window actual position:', actualNotesBounds);
+                console.log('[Test] =============================================');
+              }, 500);
             }, 100);
-          } else {
-            console.log('[Test] Same display as presentation, just maximizing');
-            window.maximize();
           }
         });
         
@@ -317,8 +363,22 @@ ipcMain.handle('open-test-presentation', async () => {
 // Open presentation on specific monitor
 ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, notesDisplayId }) => {
   const displays = screen.getAllDisplays();
-  const presentationDisplay = displays.find(d => d.id === presentationDisplayId);
-  const notesDisplay = displays.find(d => d.id === notesDisplayId);
+  console.log('[Multi-Monitor] All available displays:');
+  displays.forEach((display, index) => {
+    console.log(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${JSON.stringify(display.bounds)}`);
+  });
+  
+  // Convert IDs to numbers for comparison (they might be passed as strings)
+  const presentationDisplayIdNum = Number(presentationDisplayId);
+  const notesDisplayIdNum = Number(notesDisplayId);
+  
+  const presentationDisplay = displays.find(d => d.id === presentationDisplayIdNum);
+  const notesDisplay = displays.find(d => d.id === notesDisplayIdNum);
+
+  console.log('[Multi-Monitor] Selected presentation display ID:', presentationDisplayId, '(converted to:', presentationDisplayIdNum, ')');
+  console.log('[Multi-Monitor] Resolved presentation display:', presentationDisplay ? presentationDisplay.id : 'NOT FOUND', 'Bounds:', presentationDisplay ? presentationDisplay.bounds : 'N/A');
+  console.log('[Multi-Monitor] Selected notes display ID:', notesDisplayId, '(converted to:', notesDisplayIdNum, ')');
+  console.log('[Multi-Monitor] Resolved notes display:', notesDisplay ? notesDisplay.id : 'NOT FOUND', 'Bounds:', notesDisplay ? notesDisplay.bounds : 'N/A');
 
   if (!presentationDisplay) {
     return { success: false, message: 'Invalid presentation display' };
@@ -358,7 +418,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       }
     };
     
-    if (notesDisplay && notesDisplayId !== presentationDisplayId) {
+    if (notesDisplay && notesDisplayIdNum !== presentationDisplayIdNum) {
       windowOptions.x = notesDisplay.bounds.x;
       windowOptions.y = notesDisplay.bounds.y;
       windowOptions.width = notesDisplay.bounds.width;
@@ -379,8 +439,8 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     // Check if this is not the presentation window or main window
     if (window !== presentationWindow && window !== mainWindow) {
       console.log('[Multi-Monitor] Notes window created');
-      console.log('[Multi-Monitor] Presentation display ID:', presentationDisplayId);
-      console.log('[Multi-Monitor] Notes display ID:', notesDisplayId);
+      console.log('[Multi-Monitor] Presentation display ID:', presentationDisplayIdNum);
+      console.log('[Multi-Monitor] Notes display ID:', notesDisplayIdNum);
       console.log('[Multi-Monitor] Notes display object:', notesDisplay);
       notesWindow = window;
       
@@ -388,41 +448,60 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       const initialBounds = window.getBounds();
       console.log('[Multi-Monitor] Initial window bounds:', initialBounds);
       
+      // Add Escape key handler to notes window as well
+      window.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'Escape' && input.type === 'keyDown') {
+          console.log('[Multi-Monitor] Escape pressed in notes window, closing all windows');
+          event.preventDefault();
+          if (notesWindow) notesWindow.close();
+          if (presentationWindow) presentationWindow.close();
+        }
+      });
+      
       // Wait for the window to be ready before repositioning
       window.once('ready-to-show', () => {
         console.log('[Multi-Monitor] Window ready-to-show event fired');
         
-        // Ensure the window is on the correct display
-        if (notesDisplay && notesDisplayId !== presentationDisplayId) {
-          console.log('[Multi-Monitor] Different displays detected, moving notes window');
-          console.log('[Multi-Monitor] Target display bounds:', notesDisplay.bounds);
-          
+        // Always move the window to the correct display first, then maximize
+        if (notesDisplay) {
           const targetBounds = {
             x: notesDisplay.bounds.x + 50,
             y: notesDisplay.bounds.y + 50,
             width: notesDisplay.bounds.width - 100,
             height: notesDisplay.bounds.height - 100
           };
+          
+          if (notesDisplayIdNum !== presentationDisplayIdNum) {
+            console.log('[Multi-Monitor] Different displays detected, moving notes window to display:', notesDisplayIdNum);
+          } else {
+            console.log('[Multi-Monitor] Same display as presentation, but still moving to ensure correct position');
+          }
+          
+          console.log('[Multi-Monitor] Target display bounds:', notesDisplay.bounds);
           console.log('[Multi-Monitor] Setting window bounds to:', targetBounds);
           
-          // First move the window to the correct display
           window.setBounds(targetBounds);
           
-          // Check if it actually moved
           const newBounds = window.getBounds();
           console.log('[Multi-Monitor] Window bounds after setBounds:', newBounds);
           
-          // Small delay to ensure the window has moved
           setTimeout(() => {
             console.log('[Multi-Monitor] Calling maximize on notes window');
             window.maximize();
             
             const finalBounds = window.getBounds();
             console.log('[Multi-Monitor] Final window bounds after maximize:', finalBounds);
+            
+            // Log actual final positions after a short delay
+            setTimeout(() => {
+              const actualPresentationBounds = presentationWindow ? presentationWindow.getBounds() : null;
+              const actualNotesBounds = notesWindow ? notesWindow.getBounds() : null;
+              console.log('[Multi-Monitor] ===== ACTUAL FINAL WINDOW POSITIONS =====');
+              console.log('[Multi-Monitor] Presentation window actual position:', actualPresentationBounds);
+              console.log('[Multi-Monitor] Notes window actual position:', actualNotesBounds);
+              console.log('[Multi-Monitor] =============================================');
+            }, 500);
           }, 100);
-        } else {
-          console.log('[Multi-Monitor] Same display as presentation, just maximizing');
-          window.maximize();
         }
       });
       
@@ -477,6 +556,16 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
+  });
+  
+  // Listen for Escape key to close both windows
+  presentationWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      console.log('[Multi-Monitor] Escape pressed, closing presentation and notes windows');
+      event.preventDefault(); // Prevent Google Slides from handling Escape
+      if (notesWindow) notesWindow.close();
+      if (presentationWindow) presentationWindow.close();
+    }
   });
 
   return { success: true };

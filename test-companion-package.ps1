@@ -29,11 +29,9 @@ Write-Host ""
 Write-Host "Checking critical files..." -ForegroundColor Yellow
 
 $criticalFiles = @(
-    "main.js",
-    "actions.js",
-    "package.json",
-    "companion/manifest.json",
-    "node_modules/@companion-module/base/package.json"
+    "pkg/main.js",
+    "pkg/package.json",
+    "pkg/companion/manifest.json"
 )
 
 $allGood = $true
@@ -52,7 +50,7 @@ if ($allGood) {
     Write-Host "Package looks good!" -ForegroundColor Green
     
     # Show version info
-    $manifest = Get-Content "$tempDir/companion/manifest.json" | ConvertFrom-Json
+    $manifest = Get-Content "$tempDir/pkg/companion/manifest.json" | ConvertFrom-Json
     Write-Host ""
     Write-Host "Module Info:" -ForegroundColor Cyan
     Write-Host "  Name: $($manifest.name)" -ForegroundColor White

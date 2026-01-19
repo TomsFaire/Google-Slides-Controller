@@ -1,5 +1,8 @@
 module.exports = function (self) {
-	self.setActionDefinitions({
+	console.log('[gslide-opener] actions.js - Setting up action definitions')
+	self.log('info', '=== Setting up action definitions ===')
+	
+	const actionDefinitions = {
 		open_presentation: {
 			name: 'Open Presentation',
 			options: [
@@ -108,5 +111,11 @@ module.exports = function (self) {
 				}
 			},
 		},
-	})
+	}
+	
+	console.log('[gslide-opener] actions.js - Registering', Object.keys(actionDefinitions).length, 'actions')
+	self.log('info', `Registering ${Object.keys(actionDefinitions).length} actions`)
+	self.setActionDefinitions(actionDefinitions)
+	console.log('[gslide-opener] actions.js - Actions registered successfully')
+	self.log('info', 'Actions registered successfully')
 }

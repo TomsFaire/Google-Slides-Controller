@@ -1,5 +1,5 @@
 # Package Companion Module for Testing
-# This replicates what GitHub Actions does
+# Uses the official @companion-module/tools build command
 
 Write-Host "Packaging Companion Module..." -ForegroundColor Green
 
@@ -14,12 +14,16 @@ if (-not (Test-Path "node_modules")) {
     Write-Host "Dependencies already installed" -ForegroundColor Gray
 }
 
-# Go back to root
-Set-Location ..
+# Run official build command
+Write-Host "Building package with companion-module-build..." -ForegroundColor Yellow
+npm run package
 
-# Create the tarball (same as GitHub Actions)
-Write-Host "Creating tarball..." -ForegroundColor Yellow
-tar -czf companion-module-gslide-opener.tgz -C companion-module-gslide-opener .
+# Move the package to root and rename
+Set-Location ..
+$tgzFile = Get-ChildItem companion-module-gslide-opener\*.tgz -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($tgzFile) {
+    Move-Item $tgzFile.FullName companion-module-gslide-opener.tgz -Force
+}
 
 if (Test-Path "companion-module-gslide-opener.tgz") {
     $size = (Get-Item "companion-module-gslide-opener.tgz").Length / 1MB
@@ -28,7 +32,7 @@ if (Test-Path "companion-module-gslide-opener.tgz") {
     Write-Host ""
     Write-Host "To test in Companion:" -ForegroundColor Cyan
     Write-Host "1. Extract this .tgz file" -ForegroundColor White
-    Write-Host "2. Place it in your Companion 'Developer modules path'" -ForegroundColor White
+    Write-Host "2. Point Developer modules path to the extracted 'pkg' folder" -ForegroundColor White
     Write-Host "3. Restart Companion" -ForegroundColor White
 } else {
     Write-Host "Failed to create package" -ForegroundColor Red

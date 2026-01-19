@@ -10,3 +10,4 @@ companion-module-gslide-opener/node_modules/
 *.AppImage
 companion-module-gslide-opener.tgz
 test-package-temp/
+pkg/

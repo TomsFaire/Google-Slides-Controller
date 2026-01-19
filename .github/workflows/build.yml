@@ -66,7 +66,11 @@ jobs:
         working-directory: ./companion-module-gslide-opener
       
       - name: Package Companion Module
-        run: tar -czf companion-module-gslide-opener.tgz -C companion-module-gslide-opener .
+        run: npm run package
+        working-directory: ./companion-module-gslide-opener
+      
+      - name: Move package to root
+        run: mv companion-module-gslide-opener/*.tgz companion-module-gslide-opener.tgz
       
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4

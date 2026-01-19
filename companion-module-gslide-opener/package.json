@@ -1,10 +1,11 @@
 {
   "name": "companion-module-gslide-opener",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Bitfocus Companion module for Google Slides Opener",
   "main": "main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "package": "companion-module-build"
   },
   "keywords": [
     "companion",
@@ -15,5 +16,8 @@
   "license": "MIT",
   "dependencies": {
     "@companion-module/base": "~1.11.3"
+  },
+  "devDependencies": {
+    "@companion-module/tools": "^2.0.0"
   }
 }

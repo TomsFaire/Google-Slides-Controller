@@ -1,6 +1,6 @@
 {
   "name": "gslide-opener",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -8,7 +8,8 @@
     "dev": "electron . --watch",
     "build": "electron-builder",
     "build:win": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
-    "build:linux": "electron-builder --linux AppImage"
+    "build:linux": "electron-builder --linux AppImage",
+    "build:mac": "electron-builder --mac"
   },
   "keywords": [
     "electron",
@@ -59,6 +60,19 @@
       ],
       "category": "Utility",
       "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns"
     }
   }
 }

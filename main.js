@@ -7,6 +7,7 @@ let mainWindow;
 let presentationWindow = null;
 let notesWindow = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
+let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
 
 function toPresentUrl(inputUrl) {
   try {
@@ -23,6 +24,161 @@ function toPresentUrl(inputUrl) {
   } catch (e) {
     return inputUrl;
   }
+}
+
+// Minimize the left preview pane in speaker notes window by moving the divider to the left
+function minimizeSpeakerNotesPreviewPane(window) {
+  if (!window || window.isDestroyed()) return;
+  
+  // Wait for page to load, then try to resize the divider
+  window.webContents.once('did-finish-load', () => {
+    // Try multiple times with increasing delays to catch the DOM when it's ready
+    [500, 1000, 1500].forEach((delay, index) => {
+      setTimeout(() => {
+        if (window.isDestroyed()) return;
+        
+        window.webContents.executeJavaScript(`
+          (function() {
+            try {
+              // Strategy 1: Find and drag the divider/resizer element
+              var divider = null;
+              var allElements = document.querySelectorAll('*');
+              
+              // Look for elements with resize cursor or draggable attribute
+              for (var i = 0; i < allElements.length; i++) {
+                var el = allElements[i];
+                var style = window.getComputedStyle(el);
+                var rect = el.getBoundingClientRect();
+                
+                // Check if element looks like a vertical divider (thin, vertical, has resize cursor)
+                if ((style.cursor === 'ew-resize' || style.cursor === 'col-resize' || 
+                     el.draggable === true || el.getAttribute('role') === 'separator') &&
+                    rect.width < 20 && rect.height > 100) {
+                  divider = el;
+                  break;
+                }
+              }
+              
+              if (divider) {
+                // Found divider - simulate dragging it to the left
+                var rect = divider.getBoundingClientRect();
+                var startX = rect.left + rect.width / 2;
+                var targetX = 150; // Target position for left edge of right pane
+                
+                // Create mouse events to simulate drag
+                var mousedown = new MouseEvent('mousedown', {
+                  bubbles: true,
+                  cancelable: true,
+                  view: window,
+                  clientX: startX,
+                  clientY: rect.top + rect.height / 2,
+                  button: 0,
+                  buttons: 1
+                });
+                
+                var mousemove = new MouseEvent('mousemove', {
+                  bubbles: true,
+                  cancelable: true,
+                  view: window,
+                  clientX: targetX,
+                  clientY: rect.top + rect.height / 2,
+                  button: 0,
+                  buttons: 1
+                });
+                
+                var mouseup = new MouseEvent('mouseup', {
+                  bubbles: true,
+                  cancelable: true,
+                  view: window,
+                  clientX: targetX,
+                  clientY: rect.top + rect.height / 2,
+                  button: 0,
+                  buttons: 0
+                });
+                
+                divider.dispatchEvent(mousedown);
+                setTimeout(function() {
+                  divider.dispatchEvent(mousemove);
+                  setTimeout(function() {
+                    divider.dispatchEvent(mouseup);
+                  }, 100);
+                }, 50);
+                
+                return { success: true, method: 'divider-drag', attempt: ${index + 1} };
+              }
+              
+              // Strategy 2: Find left pane and set its width directly
+              var leftPane = null;
+              var panes = document.querySelectorAll('div[style*="width"], div[style*="flex"]');
+              
+              for (var i = 0; i < panes.length; i++) {
+                var pane = panes[i];
+                var rect = pane.getBoundingClientRect();
+                var style = window.getComputedStyle(pane);
+                
+                // Look for a pane that's on the left side and contains slide previews
+                if (rect.left < window.innerWidth * 0.4 && 
+                    (pane.textContent.includes('Slide') || pane.querySelector('img') || 
+                     pane.querySelector('[class*="preview"]') || pane.querySelector('[class*="slide"]'))) {
+                  leftPane = pane;
+                  break;
+                }
+              }
+              
+              if (leftPane) {
+                // Set left pane to minimum width
+                leftPane.style.width = '150px';
+                leftPane.style.minWidth = '150px';
+                leftPane.style.maxWidth = '200px';
+                leftPane.style.flexBasis = '150px';
+                leftPane.style.flexShrink = '0';
+                
+                // Also try to find and adjust any flex container
+                var container = leftPane.parentElement;
+                if (container) {
+                  var containerStyle = window.getComputedStyle(container);
+                  if (containerStyle.display === 'flex') {
+                    // Force the left pane to be small
+                    leftPane.style.flex = '0 0 150px';
+                  }
+                }
+                
+                return { success: true, method: 'direct-pane-resize', attempt: ${index + 1} };
+              }
+              
+              // Strategy 3: Look for CSS variables or data attributes that control width
+              var containers = document.querySelectorAll('[style*="--"], [data-width], [style*="grid"]');
+              for (var i = 0; i < containers.length; i++) {
+                var container = containers[i];
+                var style = container.style;
+                
+                // Try to set CSS custom properties if they exist
+                if (style.getPropertyValue('--left-pane-width')) {
+                  style.setProperty('--left-pane-width', '150px');
+                  return { success: true, method: 'css-variable', attempt: ${index + 1} };
+                }
+              }
+              
+              return { success: false, error: 'Could not find divider or left pane', attempt: ${index + 1} };
+            } catch (e) {
+              return { success: false, error: e.message, attempt: ${index + 1} };
+            }
+          })()
+        `).then(result => {
+          if (result && result.success) {
+            console.log('[Notes] Successfully minimized preview pane:', result.method, '(attempt', result.attempt + ')');
+          } else if (index === 2) {
+            // Only log failure on last attempt to avoid spam
+            console.log('[Notes] Could not minimize preview pane:', result ? result.error : 'unknown error');
+          }
+        }).catch(err => {
+          if (index === 2) {
+            console.log('[Notes] Error minimizing preview pane:', err.message);
+          }
+        });
+      }, delay);
+    });
+  });
 }
 
 
@@ -152,15 +308,103 @@ ipcMain.handle('google-signin', async () => {
 
 // Check if user is already signed in
 ipcMain.handle('check-signin-status', async () => {
-  const googleSession = getGoogleSession();
-  const cookies = await googleSession.cookies.get({ domain: '.google.com' });
-  
-  // Check if we have Google authentication cookies
-  const hasAuthCookies = cookies.some(cookie => 
-    cookie.name === 'SID' || cookie.name === 'HSID' || cookie.name === 'SSID'
-  );
-  
-  return { signedIn: hasAuthCookies };
+  try {
+    const googleSession = getGoogleSession();
+    const cookies = await googleSession.cookies.get({ domain: '.google.com' });
+    
+    // Check if we have Google authentication cookies
+    const hasAuthCookies = cookies.some(cookie => 
+      cookie.name === 'SID' || cookie.name === 'HSID' || cookie.name === 'SSID'
+    );
+    
+    let userEmail = null;
+    let userName = null;
+    
+    if (hasAuthCookies) {
+      // Try to get user email from cookies
+      const emailCookie = cookies.find(cookie => 
+        cookie.name === 'Email' || cookie.name === 'email' || cookie.domain.includes('google.com')
+      );
+      if (emailCookie && emailCookie.value && emailCookie.value.includes('@')) {
+        userEmail = emailCookie.value;
+      }
+      
+      // Try to get user name from cookies
+      const nameCookie = cookies.find(cookie => 
+        cookie.name === 'Name' || cookie.name === 'name'
+      );
+      if (nameCookie) {
+        userName = nameCookie.value;
+      }
+      
+      // If we don't have email, try to fetch from Google account page
+      if (!userEmail) {
+        try {
+          const tempWindow = new BrowserWindow({
+            show: false,
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              partition: GOOGLE_SESSION_PARTITION
+            }
+          });
+          
+          await tempWindow.loadURL('https://myaccount.google.com/');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          const userInfo = await tempWindow.webContents.executeJavaScript(`
+            (function() {
+              try {
+                var email = null;
+                var name = null;
+                
+                // Look for email in page
+                var emailEl = document.querySelector('[data-email]') || 
+                             document.querySelector('input[type="email"][value]');
+                if (emailEl) {
+                  email = emailEl.getAttribute('data-email') || emailEl.value;
+                }
+                
+                // Look for name
+                var nameEl = document.querySelector('[data-name]') ||
+                            document.querySelector('h1');
+                if (nameEl) {
+                  name = nameEl.getAttribute('data-name') || nameEl.textContent.trim();
+                }
+                
+                // Try to extract from page title
+                if (!email) {
+                  var title = document.title;
+                  var emailMatch = title.match(/([\\w.-]+@[\\w.-]+\\.[\\w.-]+)/);
+                  if (emailMatch) email = emailMatch[1];
+                }
+                
+                return { email: email || null, name: name || null };
+              } catch (e) {
+                return { email: null, name: null };
+              }
+            })()
+          `);
+          
+          if (userInfo.email) userEmail = userInfo.email;
+          if (userInfo.name) userName = userInfo.name;
+          
+          tempWindow.close();
+        } catch (error) {
+          console.error('Error fetching user info:', error);
+        }
+      }
+    }
+    
+    return { 
+      signedIn: hasAuthCookies,
+      userEmail: userEmail || null,
+      userName: userName || null
+    };
+  } catch (error) {
+    console.error('Error checking sign-in status:', error);
+    return { signedIn: false, userEmail: null, userName: null };
+  }
 });
 
 // Sign out from Google
@@ -288,6 +532,9 @@ ipcMain.handle('open-test-presentation', async () => {
         window.once('ready-to-show', () => {
           console.log('[Test] Window ready-to-show event fired');
           
+          // Minimize the left preview pane in speaker notes
+          minimizeSpeakerNotesPreviewPane(window);
+          
           // Always move the window to the correct display first, then maximize
           if (notesDisplay) {
             const targetBounds = {
@@ -337,6 +584,7 @@ ipcMain.handle('open-test-presentation', async () => {
     app.on('browser-window-created', testWindowCreatedListener);
   }
 
+  lastPresentationUrl = testUrl; // Store for reload
   currentSlide = 1;
   presentationWindow.loadURL(testUrl);
   presentationWindow.show();
@@ -543,6 +791,9 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       window.once('ready-to-show', () => {
         console.log('[Multi-Monitor] Window ready-to-show event fired');
         
+        // Minimize the left preview pane in speaker notes
+        minimizeSpeakerNotesPreviewPane(window);
+        
         // Always move the window to the correct display first, then maximize
         if (notesDisplay) {
           const targetBounds = {
@@ -593,6 +844,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   app.on('browser-window-created', windowCreatedListener);
 
   // Load presentation URL
+  lastPresentationUrl = url; // Store for reload
   currentSlide = 1;
   presentationWindow.loadURL(url);
 
@@ -713,6 +965,10 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 const API_PORT = 9595;
 let httpServer;
 
+// Web UI for preset management
+const WEB_UI_PORT = 8000;
+let webUiServer;
+
 function startHttpServer() {
   httpServer = http.createServer(async (req, res) => {
     // Enable CORS
@@ -729,31 +985,162 @@ function startHttpServer() {
     // GET /api/status - Check if app is running and expose state for Companion variables/feedbacks
     if (req.method === 'GET' && req.url === '/api/status') {
       (async () => {
+        // Get login state and user info
+        let loginState = false;
+        let loggedInUser = null;
+        try {
+          const googleSession = getGoogleSession();
+          const cookies = await googleSession.cookies.get({ domain: '.google.com' });
+          const hasAuthCookies = cookies.some(cookie => 
+            cookie.name === 'SID' || cookie.name === 'HSID' || cookie.name === 'SSID'
+          );
+          loginState = hasAuthCookies;
+          
+          if (hasAuthCookies) {
+            // Try to get user email from cookies
+            const emailCookie = cookies.find(cookie => 
+              cookie.name === 'Email' || cookie.name === 'email' || 
+              (cookie.value && cookie.value.includes('@'))
+            );
+            if (emailCookie && emailCookie.value && emailCookie.value.includes('@')) {
+              loggedInUser = emailCookie.value;
+            } else {
+              // Try to get from any cookie value that looks like an email
+              const emailLikeCookie = cookies.find(cookie => 
+                cookie.value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cookie.value)
+              );
+              if (emailLikeCookie) {
+                loggedInUser = emailLikeCookie.value;
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[API] Error checking login state:', error);
+        }
+        
         const state = {
           status: 'ok',
-          version: '1.0.0',
+          version: '1.2.5',
           presentationOpen: !!(presentationWindow && !presentationWindow.isDestroyed()),
           notesOpen: !!(notesWindow && !notesWindow.isDestroyed()),
           currentSlide: currentSlide,
-          totalSlides: null
+          totalSlides: null,
+          presentationUrl: lastPresentationUrl || null,
+          slideInfo: null,
+          isFirstSlide: null,
+          isLastSlide: null,
+          nextSlide: null,
+          previousSlide: null,
+          presentationTitle: null,
+          timerElapsed: null,
+          loginState: loginState,
+          loggedInUser: loggedInUser || null
         };
+        
+        // Get slide info and other data from notes window DOM
         if (notesWindow && !notesWindow.isDestroyed()) {
           try {
             const info = await notesWindow.webContents.executeJavaScript(`
               (function(){
+                var result = {};
+                
+                // Get slide numbers from aria attributes
                 var el = document.querySelector('[aria-posinset]');
-                if (!el) return null;
-                var cur = parseInt(el.getAttribute('aria-posinset'), 10);
-                var tot = parseInt(el.getAttribute('aria-setsize'), 10);
-                return { current: isNaN(cur) ? null : cur, total: isNaN(tot) ? null : tot };
+                if (el) {
+                  var cur = parseInt(el.getAttribute('aria-posinset'), 10);
+                  var tot = parseInt(el.getAttribute('aria-setsize'), 10);
+                  if (!isNaN(cur)) result.current = cur;
+                  if (!isNaN(tot)) result.total = tot;
+                }
+                
+                // Get presentation title from page title or DOM
+                var titleEl = document.querySelector('title');
+                if (titleEl) {
+                  var titleText = titleEl.textContent;
+                  // Extract title from "Presenter view - TITLE - Google Slides"
+                  var match = titleText.match(/Presenter view - (.+?) - Google Slides/);
+                  if (match) {
+                    result.title = match[1];
+                  } else {
+                    result.title = titleText;
+                  }
+                }
+                
+                // Get timer value (look for timer display - usually shows "00:00:06" format)
+                // Try to find elements containing time format
+                var allText = document.body.innerText || document.body.textContent || '';
+                var timeMatch = allText.match(/(\\d{1,2}:\\d{2}(?::\\d{2})?)/);
+                if (timeMatch) {
+                  result.timer = timeMatch[1];
+                } else {
+                  // Try specific timer elements
+                  var timerEls = document.querySelectorAll('div, span');
+                  for (var i = 0; i < timerEls.length; i++) {
+                    var text = timerEls[i].textContent || timerEls[i].innerText || '';
+                    var match = text.match(/^(\\d{1,2}:\\d{2}(?::\\d{2})?)$/);
+                    if (match) {
+                      result.timer = match[1];
+                      break;
+                    }
+                  }
+                }
+                
+                return result;
               })()
             `);
-            if (info && info.current != null) {
-              state.currentSlide = info.current;
-              if (info.total != null) state.totalSlides = info.total;
+            
+            if (info) {
+              if (info.current != null) {
+                state.currentSlide = info.current;
+                // Calculate derived values
+                if (info.total != null) {
+                  state.totalSlides = info.total;
+                  state.isFirstSlide = info.current === 1;
+                  state.isLastSlide = info.current === info.total;
+                  state.nextSlide = info.current < info.total ? info.current + 1 : null;
+                  state.previousSlide = info.current > 1 ? info.current - 1 : null;
+                  state.slideInfo = info.current + ' / ' + info.total;
+                } else if (state.currentSlide !== null) {
+                  // Use tracked currentSlide if DOM didn't provide total
+                  state.isFirstSlide = state.currentSlide === 1;
+                  state.nextSlide = state.currentSlide + 1;
+                  state.previousSlide = state.currentSlide > 1 ? state.currentSlide - 1 : null;
+                  if (state.totalSlides) {
+                    state.isLastSlide = state.currentSlide === state.totalSlides;
+                    state.slideInfo = state.currentSlide + ' / ' + state.totalSlides;
+                  } else {
+                    state.slideInfo = String(state.currentSlide);
+                  }
+                }
+              }
+              
+              if (info.title) state.presentationTitle = info.title;
+              if (info.timer) state.timerElapsed = info.timer;
             }
           } catch (e) { /* DOM not available or changed */ }
         }
+        
+        // Calculate derived values even if DOM didn't provide them
+        if (state.currentSlide !== null && state.currentSlide !== undefined) {
+          if (state.isFirstSlide === null) state.isFirstSlide = state.currentSlide === 1;
+          if (state.nextSlide === null) state.nextSlide = state.currentSlide + 1;
+          if (state.previousSlide === null) state.previousSlide = state.currentSlide > 1 ? state.currentSlide - 1 : null;
+          if (state.slideInfo === null) {
+            if (state.totalSlides) {
+              state.slideInfo = state.currentSlide + ' / ' + state.totalSlides;
+            } else {
+              state.slideInfo = String(state.currentSlide);
+            }
+          }
+          if (state.totalSlides && state.isLastSlide === null) {
+            state.isLastSlide = state.currentSlide === state.totalSlides;
+          }
+        }
+        
+        // Get preferences for display IDs
+        const prefs = loadPreferences();
+        state.presentationDisplayId = prefs.presentationDisplayId || null;
+        state.notesDisplayId = prefs.notesDisplayId || null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
       })().catch(err => {
@@ -882,6 +1269,9 @@ function startHttpServer() {
               
               // Position and maximize notes window
               window.once('ready-to-show', () => {
+                // Minimize the left preview pane in speaker notes
+                minimizeSpeakerNotesPreviewPane(window);
+                
                 if (notesDisplay) {
                   const targetBounds = {
                     x: notesDisplay.bounds.x + 50,
@@ -983,6 +1373,7 @@ function startHttpServer() {
           
           const presentUrl = toPresentUrl(url);
           console.log('[API] Loading PRESENT URL:', presentUrl);
+          lastPresentationUrl = url; // Store original URL (not /present URL) for reload
           currentSlide = 1;
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
@@ -1075,6 +1466,528 @@ function startHttpServer() {
       }
       return;
     }
+
+    // POST /api/go-to-slide - Navigate to a specific slide number
+    if (req.method === 'POST' && req.url === '/api/go-to-slide') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const targetSlide = parseInt(data.slide, 10);
+
+          if (isNaN(targetSlide) || targetSlide < 1) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Valid slide number (>= 1) is required' }));
+            return;
+          }
+
+          // Get current slide (from our tracking or default to 1)
+          const current = typeof currentSlide === 'number' ? currentSlide : 1;
+          const slidesToMove = targetSlide - current;
+
+          if (slidesToMove === 0) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Already on slide ' + targetSlide }));
+            return;
+          }
+
+          presentationWindow.focus();
+          await new Promise(resolve => setTimeout(resolve, 50));
+
+          // Send arrow key presses to navigate
+          const keyCode = slidesToMove > 0 ? 'Right' : 'Left';
+          const count = Math.abs(slidesToMove);
+
+          for (let i = 0; i < count; i++) {
+            presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: keyCode });
+            presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: keyCode });
+            // Small delay between key presses to ensure they're processed
+            if (i < count - 1) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+
+          // Update our tracking
+          currentSlide = targetSlide;
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: true, 
+            message: `Navigated to slide ${targetSlide}`,
+            fromSlide: current,
+            toSlide: targetSlide
+          }));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/reload-presentation - Close, reopen, and return to current slide
+    if (req.method === 'POST' && req.url === '/api/reload-presentation') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+
+      if (!lastPresentationUrl) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No previous presentation URL stored' }));
+        return;
+      }
+
+      // Send response immediately (this will be async)
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Reloading presentation...' }));
+
+      // Do the reload asynchronously
+      (async () => {
+        try {
+          // Capture current slide
+          const savedSlide = typeof currentSlide === 'number' ? currentSlide : 1;
+          const urlToReload = lastPresentationUrl;
+
+          // Capture current zoom level from notes window before closing
+          let savedZoomLevel = null;
+          
+          // Function to restore zoom level (will be called after notes window opens)
+          const restoreZoomLevel = async (window) => {
+            if (savedZoomLevel === null || !window || window.isDestroyed()) return;
+            
+            console.log('[API] Restoring zoom level to:', savedZoomLevel);
+            
+            // Wait for the page to fully load
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            
+            try {
+              // Get current zoom level
+              const currentZoom = await window.webContents.executeJavaScript(`
+                (function() {
+                  try {
+                    var zoomInBtn = document.querySelector('[title="Zoom in"]');
+                    var zoomOutBtn = document.querySelector('[title="Zoom out"]');
+                    var contentArea = document.querySelector('[role="main"]') || document.body;
+                    var style = window.getComputedStyle(contentArea);
+                    var fontSize = parseFloat(style.fontSize);
+                    var transform = style.transform;
+                    var scale = 1;
+                    if (transform && transform !== 'none') {
+                      var match = transform.match(/scale\\(([^)]+)\\)/);
+                      if (match) scale = parseFloat(match[1]);
+                    }
+                    var allText = document.body.innerText || '';
+                    var zoomMatch = allText.match(/(\\d+)%/);
+                    var zoomPercent = zoomMatch ? parseInt(zoomMatch[1], 10) : null;
+                    
+                    return {
+                      fontSize: fontSize,
+                      scale: scale,
+                      zoomPercent: zoomPercent,
+                      currentZoom: zoomPercent || (scale * 100) || Math.round((fontSize / 14) * 100)
+                    };
+                  } catch (e) {
+                    return { currentZoom: 100 };
+                  }
+                })()
+              `);
+              
+              const targetZoom = savedZoomLevel;
+              const currentZoomValue = currentZoom.currentZoom || 100;
+              const zoomDifference = targetZoom - currentZoomValue;
+              
+              console.log('[API] Current zoom:', currentZoomValue, 'Target zoom:', targetZoom, 'Difference:', zoomDifference);
+              
+              // Calculate how many clicks needed (each click is roughly 10-20% change)
+              // We'll use a more conservative estimate of ~15% per click
+              const clicksNeeded = Math.round(zoomDifference / 15);
+              
+              if (Math.abs(clicksNeeded) > 0 && Math.abs(zoomDifference) > 5) {
+                const buttonToClick = clicksNeeded > 0 ? 'Zoom in' : 'Zoom out';
+                const clickCount = Math.abs(clicksNeeded);
+                
+                console.log('[API] Clicking', buttonToClick, clickCount, 'times');
+                
+                for (let i = 0; i < clickCount; i++) {
+                  await new Promise(resolve => setTimeout(resolve, 250)); // Delay between clicks
+                  
+                  const result = await window.webContents.executeJavaScript(`
+                    (function() {
+                      try {
+                        var btn = document.querySelector('[title="${buttonToClick}"]');
+                        if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
+                          var mousedownEvent = new MouseEvent('mousedown', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                            button: 0
+                          });
+                          var mouseupEvent = new MouseEvent('mouseup', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                            button: 0
+                          });
+                          var clickEvent = new MouseEvent('click', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                            button: 0
+                          });
+                          
+                          btn.dispatchEvent(mousedownEvent);
+                          btn.dispatchEvent(mouseupEvent);
+                          btn.dispatchEvent(clickEvent);
+                          
+                          return { success: true };
+                        }
+                        return { success: false, error: 'Button not found or disabled' };
+                      } catch (e) {
+                        return { success: false, error: e.message };
+                      }
+                    })()
+                  `);
+                  
+                  if (!result.success) {
+                    console.log('[API] Zoom button click failed:', result.error);
+                    break; // Stop if button becomes unavailable
+                  }
+                }
+                
+                console.log('[API] Zoom restoration complete');
+              } else {
+                console.log('[API] Zoom level already correct (difference:', zoomDifference, '), no adjustment needed');
+              }
+            } catch (error) {
+              console.error('[API] Error restoring zoom level:', error);
+            }
+          };
+          if (notesWindow && !notesWindow.isDestroyed()) {
+            try {
+              const zoomInfo = await notesWindow.webContents.executeJavaScript(`
+                (function() {
+                  try {
+                    // Try to detect zoom level by checking font sizes or transform scales
+                    // Look for the main content area in speaker notes
+                    var contentArea = document.querySelector('[role="main"]') || 
+                                    document.querySelector('.speaker-notes') ||
+                                    document.body;
+                    
+                    if (contentArea) {
+                      var style = window.getComputedStyle(contentArea);
+                      var fontSize = parseFloat(style.fontSize);
+                      var transform = style.transform;
+                      
+                      // Check for zoom/scale in transform
+                      var scale = 1;
+                      if (transform && transform !== 'none') {
+                        var match = transform.match(/scale\\(([^)]+)\\)/);
+                        if (match) {
+                          scale = parseFloat(match[1]);
+                        }
+                      }
+                      
+                      // Try to find zoom buttons to see if they're disabled (at min/max)
+                      var zoomInBtn = document.querySelector('[title="Zoom in"]');
+                      var zoomOutBtn = document.querySelector('[title="Zoom out"]');
+                      var zoomInDisabled = zoomInBtn ? zoomInBtn.disabled || zoomInBtn.getAttribute('aria-disabled') === 'true' : false;
+                      var zoomOutDisabled = zoomOutBtn ? zoomOutBtn.disabled || zoomOutBtn.getAttribute('aria-disabled') === 'true' : false;
+                      
+                      // Try to find a zoom indicator in the UI
+                      var zoomText = null;
+                      var allText = document.body.innerText || '';
+                      var zoomMatch = allText.match(/(\\d+)%/);
+                      if (zoomMatch) {
+                        zoomText = parseInt(zoomMatch[1], 10);
+                      }
+                      
+                      return {
+                        fontSize: fontSize,
+                        scale: scale,
+                        zoomInDisabled: zoomInDisabled,
+                        zoomOutDisabled: zoomOutDisabled,
+                        zoomPercent: zoomText,
+                        // Calculate relative zoom: we'll use a combination of factors
+                        relativeZoom: zoomText || (scale * 100) || null
+                      };
+                    }
+                    return null;
+                  } catch (e) {
+                    return null;
+                  }
+                })()
+              `);
+              
+              if (zoomInfo && zoomInfo.relativeZoom !== null) {
+                savedZoomLevel = zoomInfo.relativeZoom;
+                console.log('[API] Captured zoom level:', savedZoomLevel);
+              } else {
+                // Fallback: try to count zoom clicks by checking button states
+                // If zoom out is disabled, we're at minimum; if zoom in is disabled, we're at maximum
+                // Otherwise, we'll try to detect from font size
+                if (zoomInfo) {
+                  if (zoomInfo.zoomOutDisabled && !zoomInfo.zoomInDisabled) {
+                    savedZoomLevel = 50; // Minimum zoom
+                  } else if (zoomInfo.zoomInDisabled && !zoomInfo.zoomOutDisabled) {
+                    savedZoomLevel = 200; // Maximum zoom
+                  } else if (zoomInfo.fontSize) {
+                    // Use font size as a proxy (default is usually around 14-16px)
+                    savedZoomLevel = Math.round((zoomInfo.fontSize / 14) * 100);
+                  } else {
+                    savedZoomLevel = 100; // Default/unknown
+                  }
+                  console.log('[API] Captured zoom level (fallback):', savedZoomLevel);
+                }
+              }
+            } catch (error) {
+              console.error('[API] Error capturing zoom level:', error);
+              savedZoomLevel = 100; // Default fallback
+            }
+          }
+
+          console.log('[API] Reloading presentation: saving slide', savedSlide, 'zoom level', savedZoomLevel, 'URL:', urlToReload);
+
+          // Close existing windows
+          if (notesWindow && !notesWindow.isDestroyed()) {
+            notesWindow.removeAllListeners('closed');
+            notesWindow.close();
+            notesWindow = null;
+          }
+          if (presentationWindow && !presentationWindow.isDestroyed()) {
+            presentationWindow.removeAllListeners('closed');
+            presentationWindow.close();
+            presentationWindow = null;
+          }
+          currentSlide = null;
+
+          // Wait a moment for windows to close
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          // Re-open the presentation (reuse the same logic as /api/open-presentation)
+          const prefs = loadPreferences();
+          const displays = screen.getAllDisplays();
+          const presentationDisplayId = Number(prefs.presentationDisplayId);
+          const notesDisplayId = Number(prefs.notesDisplayId);
+          const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+          const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
+
+          presentationWindow = new BrowserWindow({
+            x: presentationDisplay.bounds.x,
+            y: presentationDisplay.bounds.y,
+            width: presentationDisplay.bounds.width,
+            height: presentationDisplay.bounds.height,
+            fullscreen: true,
+            frame: false,
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              partition: GOOGLE_SESSION_PARTITION
+            }
+          });
+
+          // Set up window handlers (same as open-presentation)
+          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
+            const windowOptions = {
+              frame: false,
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                partition: GOOGLE_SESSION_PARTITION
+              }
+            };
+            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
+              windowOptions.x = notesDisplay.bounds.x;
+              windowOptions.y = notesDisplay.bounds.y;
+              windowOptions.width = notesDisplay.bounds.width;
+              windowOptions.height = notesDisplay.bounds.height;
+            } else {
+              windowOptions.width = 1280;
+              windowOptions.height = 720;
+            }
+            return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
+          });
+
+          const windowCreatedListener = (event, window) => {
+            if (window !== presentationWindow && window !== mainWindow) {
+              notesWindow = window;
+              window.webContents.on('before-input-event', (event, input) => {
+                if (input.key === 'Escape' && input.type === 'keyDown') {
+                  event.preventDefault();
+                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+                }
+              });
+              window.once('ready-to-show', () => {
+                // Minimize the left preview pane in speaker notes
+                minimizeSpeakerNotesPreviewPane(window);
+                
+                if (notesDisplay) {
+                  const targetBounds = {
+                    x: notesDisplay.bounds.x + 50,
+                    y: notesDisplay.bounds.y + 50,
+                    width: notesDisplay.bounds.width - 100,
+                    height: notesDisplay.bounds.height - 100
+                  };
+                  window.setBounds(targetBounds);
+                  setTimeout(() => { window.maximize(); }, 50);
+                }
+                
+                // Restore zoom level if we saved one
+                if (savedZoomLevel !== null) {
+                  // Wait for the page to fully load before restoring zoom
+                  window.webContents.once('did-finish-load', () => {
+                    restoreZoomLevel(window);
+                  });
+                }
+              });
+              app.removeListener('browser-window-created', windowCreatedListener);
+            }
+          };
+          app.on('browser-window-created', windowCreatedListener);
+
+          // Set up navigation listener for speaker notes
+          let sKeyPressed = false;
+          const navigationListener = async (event, navUrl) => {
+            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
+            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
+              sKeyPressed = true;
+              await new Promise(resolve => setTimeout(resolve, 300));
+              if (presentationWindow && !presentationWindow.isDestroyed()) {
+                presentationWindow.focus();
+                await new Promise(resolve => setTimeout(resolve, 50));
+                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+              }
+            }
+          };
+          presentationWindow.webContents.on('did-navigate', navigationListener);
+
+          // Load the presentation
+          const presentUrl = toPresentUrl(urlToReload);
+          lastPresentationUrl = urlToReload; // Re-store it
+          currentSlide = 1; // Will be updated after navigation
+          
+          // Ensure fullscreen on macOS (sometimes needed after programmatic window creation)
+          // Set up fullscreen handler before loading
+          presentationWindow.once('ready-to-show', () => {
+            if (process.platform === 'darwin' && presentationWindow && !presentationWindow.isDestroyed()) {
+              // Ensure window is on correct display and set fullscreen
+              presentationWindow.setBounds({
+                x: presentationDisplay.bounds.x,
+                y: presentationDisplay.bounds.y,
+                width: presentationDisplay.bounds.width,
+                height: presentationDisplay.bounds.height
+              });
+              setTimeout(() => {
+                if (presentationWindow && !presentationWindow.isDestroyed()) {
+                  presentationWindow.setFullScreen(true);
+                }
+              }, 50);
+            }
+          });
+          
+          presentationWindow.loadURL(presentUrl);
+          presentationWindow.show();
+          
+          // Fallback: set fullscreen after a short delay if ready-to-show already fired
+          if (process.platform === 'darwin') {
+            setTimeout(() => {
+              if (presentationWindow && !presentationWindow.isDestroyed() && !presentationWindow.isFullScreen()) {
+                presentationWindow.setBounds({
+                  x: presentationDisplay.bounds.x,
+                  y: presentationDisplay.bounds.y,
+                  width: presentationDisplay.bounds.width,
+                  height: presentationDisplay.bounds.height
+                });
+                presentationWindow.setFullScreen(true);
+              }
+            }, 200);
+          }
+
+          // Wait for presentation to load and enter presentation mode
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          // Trigger presentation mode (Ctrl+Shift+F5)
+          presentationWindow.webContents.once('did-finish-load', async () => {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 50));
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
+            }
+          });
+
+          // Fallback: press 's' for speaker notes after delay
+          setTimeout(async () => {
+            if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
+              sKeyPressed = true;
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 50));
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+              if (presentationWindow && !presentationWindow.isDestroyed()) {
+                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+              }
+            }
+          }, 1000);
+
+          // Wait for presentation mode to be ready, then navigate to saved slide
+          await new Promise(resolve => setTimeout(resolve, 3000));
+
+          if (presentationWindow && !presentationWindow.isDestroyed() && savedSlide > 1) {
+            console.log('[API] Navigating to saved slide:', savedSlide);
+            presentationWindow.focus();
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Navigate to the saved slide (from slide 1)
+            const slidesToMove = savedSlide - 1;
+            for (let i = 0; i < slidesToMove; i++) {
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+              if (i < slidesToMove - 1) {
+                await new Promise(resolve => setTimeout(resolve, 150));
+              }
+            }
+            currentSlide = savedSlide;
+            console.log('[API] Reload complete: returned to slide', savedSlide);
+          }
+
+          presentationWindow.on('closed', () => {
+            presentationWindow = null;
+            currentSlide = null;
+          });
+
+          presentationWindow.webContents.on('before-input-event', (event, input) => {
+            if (input.key === 'Escape' && input.type === 'keyDown') {
+              event.preventDefault();
+              if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+              if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+            }
+          });
+
+        } catch (error) {
+          console.error('[API] Error during reload:', error);
+        }
+      })();
+
+      return;
+    }
     
     // POST /api/toggle-video - Toggle video playback (k key)
     if (req.method === 'POST' && req.url === '/api/toggle-video') {
@@ -1135,6 +2048,116 @@ function startHttpServer() {
         notesWindow = null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Speaker notes closed' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // POST /api/scroll-notes-down - Scroll speaker notes down (JS only, no keyboard)
+    if (req.method === 'POST' && req.url === '/api/scroll-notes-down') {
+      if (!notesWindow || notesWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No speaker notes window is open' }));
+        return;
+      }
+      try {
+        notesWindow.webContents.executeJavaScript(`
+          (function() {
+            // Find scrollable elements - try common patterns in Google Slides presenter view
+            var scrollable = null;
+            var allElements = document.querySelectorAll('*');
+            for (var i = 0; i < allElements.length; i++) {
+              var el = allElements[i];
+              var style = window.getComputedStyle(el);
+              if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && 
+                  el.scrollHeight > el.clientHeight) {
+                scrollable = el;
+                break;
+              }
+            }
+            // Fallback: try document body or documentElement if they're scrollable
+            if (!scrollable) {
+              if (document.body && document.body.scrollHeight > document.body.clientHeight) {
+                scrollable = document.body;
+              } else if (document.documentElement && document.documentElement.scrollHeight > document.documentElement.clientHeight) {
+                scrollable = document.documentElement;
+              }
+            }
+            if (scrollable) {
+              scrollable.scrollBy(0, 150);
+              return { success: true, scrolled: true };
+            }
+            return { success: false, error: 'No scrollable element found' };
+          })()
+        `).then(result => {
+          if (result.success && result.scrolled) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Notes scrolled down' }));
+          } else {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: result.error || 'Could not scroll notes' }));
+          }
+        }).catch(error => {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        });
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // POST /api/scroll-notes-up - Scroll speaker notes up (JS only, no keyboard)
+    if (req.method === 'POST' && req.url === '/api/scroll-notes-up') {
+      if (!notesWindow || notesWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No speaker notes window is open' }));
+        return;
+      }
+      try {
+        notesWindow.webContents.executeJavaScript(`
+          (function() {
+            // Find scrollable elements - try common patterns in Google Slides presenter view
+            var scrollable = null;
+            var allElements = document.querySelectorAll('*');
+            for (var i = 0; i < allElements.length; i++) {
+              var el = allElements[i];
+              var style = window.getComputedStyle(el);
+              if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && 
+                  el.scrollHeight > el.clientHeight) {
+                scrollable = el;
+                break;
+              }
+            }
+            // Fallback: try document body or documentElement if they're scrollable
+            if (!scrollable) {
+              if (document.body && document.body.scrollHeight > document.body.clientHeight) {
+                scrollable = document.body;
+              } else if (document.documentElement && document.documentElement.scrollHeight > document.documentElement.clientHeight) {
+                scrollable = document.documentElement;
+              }
+            }
+            if (scrollable) {
+              scrollable.scrollBy(0, -150);
+              return { success: true, scrolled: true };
+            }
+            return { success: false, error: 'No scrollable element found' };
+          })()
+        `).then(result => {
+          if (result.success && result.scrolled) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Notes scrolled up' }));
+          } else {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: result.error || 'Could not scroll notes' }));
+          }
+        }).catch(error => {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        });
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
@@ -1276,6 +2299,277 @@ function startHttpServer() {
       return;
     }
     
+    // GET /api/presets - Get all preset presentations
+    if (req.method === 'GET' && req.url === '/api/presets') {
+      const prefs = loadPreferences();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        presentation1: prefs.presentation1 || '',
+        presentation2: prefs.presentation2 || '',
+        presentation3: prefs.presentation3 || ''
+      }));
+      return;
+    }
+
+    // POST /api/presets - Set preset presentations
+    if (req.method === 'POST' && req.url === '/api/presets') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const prefs = loadPreferences();
+          
+          // Update presets
+          if (data.presentation1 !== undefined) prefs.presentation1 = data.presentation1;
+          if (data.presentation2 !== undefined) prefs.presentation2 = data.presentation2;
+          if (data.presentation3 !== undefined) prefs.presentation3 = data.presentation3;
+          
+          savePreferences(prefs);
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Presets saved' }));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/open-preset - Open a preset by name (1, 2, or 3)
+    if (req.method === 'POST' && req.url === '/api/open-preset') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const presetNumber = parseInt(data.preset, 10);
+          
+          if (isNaN(presetNumber) || presetNumber < 1 || presetNumber > 3) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Preset must be 1, 2, or 3' }));
+            return;
+          }
+          
+          const prefs = loadPreferences();
+          const presetKey = `presentation${presetNumber}`;
+          const url = prefs[presetKey];
+          
+          if (!url) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Preset ${presetNumber} is not configured` }));
+            return;
+          }
+          
+          // Forward to open-presentation endpoint logic
+          // We'll reuse the same code path
+          console.log(`[API] Opening preset ${presetNumber}: ${url}`);
+          
+          // Close any existing presentation windows
+          try {
+            if (notesWindow && !notesWindow.isDestroyed()) {
+              console.log('[API] Closing existing notes window');
+              notesWindow.removeAllListeners('closed');
+              notesWindow.close();
+              notesWindow = null;
+            }
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              console.log('[API] Closing existing presentation window');
+              presentationWindow.removeAllListeners('closed');
+              presentationWindow.close();
+              presentationWindow = null;
+            }
+            currentSlide = null;
+          } catch (error) {
+            console.error('[API] Error closing existing windows:', error.message);
+          }
+          
+          // Load preferences for monitor selection
+          const displays = screen.getAllDisplays();
+          const presentationDisplayId = Number(prefs.presentationDisplayId);
+          const notesDisplayId = Number(prefs.notesDisplayId);
+          const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+          const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
+          
+          console.log('[API] Using presentation display:', presentationDisplay.id);
+          console.log('[API] Using notes display:', notesDisplay.id);
+          
+          // Create the presentation window (reuse open-presentation logic)
+          presentationWindow = new BrowserWindow({
+            x: presentationDisplay.bounds.x,
+            y: presentationDisplay.bounds.y,
+            width: presentationDisplay.bounds.width,
+            height: presentationDisplay.bounds.height,
+            fullscreen: true,
+            frame: false,
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              partition: GOOGLE_SESSION_PARTITION
+            }
+          });
+          
+          // Set up window handlers (same as open-presentation)
+          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
+            const windowOptions = {
+              frame: false,
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                partition: GOOGLE_SESSION_PARTITION
+              }
+            };
+            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
+              windowOptions.x = notesDisplay.bounds.x;
+              windowOptions.y = notesDisplay.bounds.y;
+              windowOptions.width = notesDisplay.bounds.width;
+              windowOptions.height = notesDisplay.bounds.height;
+            } else {
+              windowOptions.width = 1280;
+              windowOptions.height = 720;
+            }
+            return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
+          });
+          
+          const windowCreatedListener = (event, window) => {
+            if (window !== presentationWindow && window !== mainWindow) {
+              notesWindow = window;
+              window.webContents.on('before-input-event', (event, input) => {
+                if (input.key === 'Escape' && input.type === 'keyDown') {
+                  event.preventDefault();
+                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+                }
+              });
+              window.once('ready-to-show', () => {
+                minimizeSpeakerNotesPreviewPane(window);
+                if (notesDisplay) {
+                  const targetBounds = {
+                    x: notesDisplay.bounds.x + 50,
+                    y: notesDisplay.bounds.y + 50,
+                    width: notesDisplay.bounds.width - 100,
+                    height: notesDisplay.bounds.height - 100
+                  };
+                  window.setBounds(targetBounds);
+                  setTimeout(() => { window.maximize(); }, 50);
+                }
+              });
+              app.removeListener('browser-window-created', windowCreatedListener);
+            }
+          };
+          app.on('browser-window-created', windowCreatedListener);
+          
+          let sKeyPressed = false;
+          const navigationListener = async (event, navUrl) => {
+            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
+            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
+              sKeyPressed = true;
+              await new Promise(resolve => setTimeout(resolve, 300));
+              if (presentationWindow && !presentationWindow.isDestroyed()) {
+                presentationWindow.focus();
+                await new Promise(resolve => setTimeout(resolve, 50));
+                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+              }
+            }
+          };
+          presentationWindow.webContents.on('did-navigate', navigationListener);
+          
+          presentationWindow.webContents.once('did-finish-load', async () => {
+            if (!presentationWindow || presentationWindow.isDestroyed()) return;
+            await new Promise(resolve => setTimeout(resolve, 200));
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 50));
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
+            }
+          });
+          
+          setTimeout(async () => {
+            if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
+              sKeyPressed = true;
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 50));
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+              if (presentationWindow && !presentationWindow.isDestroyed()) {
+                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+              }
+            }
+          }, 1000);
+          
+          presentationWindow.on('closed', () => {
+            presentationWindow = null;
+            currentSlide = null;
+          });
+          
+          presentationWindow.webContents.on('before-input-event', (event, input) => {
+            if (input.key === 'Escape' && input.type === 'keyDown') {
+              event.preventDefault();
+              if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+              if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+            }
+          });
+          
+          const presentUrl = toPresentUrl(url);
+          console.log('[API] Loading PRESENT URL:', presentUrl);
+          lastPresentationUrl = url;
+          currentSlide = 1;
+          presentationWindow.loadURL(presentUrl);
+          presentationWindow.show();
+          
+          // Ensure fullscreen on macOS
+          presentationWindow.once('ready-to-show', () => {
+            if (process.platform === 'darwin' && presentationWindow && !presentationWindow.isDestroyed()) {
+              presentationWindow.setBounds({
+                x: presentationDisplay.bounds.x,
+                y: presentationDisplay.bounds.y,
+                width: presentationDisplay.bounds.width,
+                height: presentationDisplay.bounds.height
+              });
+              setTimeout(() => {
+                if (presentationWindow && !presentationWindow.isDestroyed()) {
+                  presentationWindow.setFullScreen(true);
+                }
+              }, 50);
+            }
+          });
+          
+          if (process.platform === 'darwin') {
+            setTimeout(() => {
+              if (presentationWindow && !presentationWindow.isDestroyed() && !presentationWindow.isFullScreen()) {
+                presentationWindow.setBounds({
+                  x: presentationDisplay.bounds.x,
+                  y: presentationDisplay.bounds.y,
+                  width: presentationDisplay.bounds.width,
+                  height: presentationDisplay.bounds.height
+                });
+                presentationWindow.setFullScreen(true);
+              }
+            }, 200);
+          }
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: `Preset ${presetNumber} opened`, url: url }));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+    
     // 404 for unknown endpoints
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
@@ -1286,9 +2580,259 @@ function startHttpServer() {
   });
 }
 
+// Start web UI server for preset management
+function startWebUiServer() {
+  webUiServer = http.createServer((req, res) => {
+    // Enable CORS
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (req.method === 'OPTIONS') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    
+    // GET / - Serve the web UI
+    if (req.method === 'GET' && req.url === '/') {
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Slides Opener - Preset Manager</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      max-width: 600px;
+      width: 100%;
+      padding: 40px;
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .preset-group {
+      margin-bottom: 24px;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    .btn {
+      width: 100%;
+      padding: 14px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 8px;
+    }
+    .btn:hover {
+      background: #5568d3;
+    }
+    .btn:active {
+      transform: scale(0.98);
+    }
+    .btn-secondary {
+      background: #6c757d;
+      margin-top: 12px;
+    }
+    .btn-secondary:hover {
+      background: #5a6268;
+    }
+    .status {
+      margin-top: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      font-size: 14px;
+      display: none;
+    }
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+      display: block;
+    }
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+      display: block;
+    }
+    .info {
+      background: #e7f3ff;
+      border: 1px solid #b3d9ff;
+      color: #004085;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Presentation Presets</h1>
+    <p class="subtitle">Configure your 3 preset presentations</p>
+    
+    <div class="info">
+      These presets can be opened from Companion using "Open Presentation 1", "Open Presentation 2", or "Open Presentation 3" actions.
+    </div>
+    
+    <form id="preset-form">
+      <div class="preset-group">
+        <label for="preset1">Presentation 1</label>
+        <input type="text" id="preset1" name="preset1" placeholder="https://docs.google.com/presentation/d/..." />
+      </div>
+      
+      <div class="preset-group">
+        <label for="preset2">Presentation 2</label>
+        <input type="text" id="preset2" name="preset2" placeholder="https://docs.google.com/presentation/d/..." />
+      </div>
+      
+      <div class="preset-group">
+        <label for="preset3">Presentation 3</label>
+        <input type="text" id="preset3" name="preset3" placeholder="https://docs.google.com/presentation/d/..." />
+      </div>
+      
+      <button type="submit" class="btn">Save Presets</button>
+      <button type="button" class="btn btn-secondary" id="load-btn">Load Current Presets</button>
+    </form>
+    
+    <div id="status" class="status"></div>
+  </div>
+  
+  <script>
+    const form = document.getElementById('preset-form');
+    const loadBtn = document.getElementById('load-btn');
+    const status = document.getElementById('status');
+    
+    function showStatus(message, isError) {
+      status.textContent = message;
+      status.className = 'status ' + (isError ? 'error' : 'success');
+      setTimeout(() => {
+        status.className = 'status';
+      }, 3000);
+    }
+    
+    // Load current presets on page load
+    fetch('http://127.0.0.1:9595/api/presets')
+      .then(res => res.json())
+      .then(data => {
+        document.getElementById('preset1').value = data.presentation1 || '';
+        document.getElementById('preset2').value = data.presentation2 || '';
+        document.getElementById('preset3').value = data.presentation3 || '';
+      })
+      .catch(err => {
+        console.error('Failed to load presets:', err);
+      });
+    
+    // Load button
+    loadBtn.addEventListener('click', () => {
+      fetch('http://127.0.0.1:9595/api/presets')
+        .then(res => res.json())
+        .then(data => {
+          document.getElementById('preset1').value = data.presentation1 || '';
+          document.getElementById('preset2').value = data.presentation2 || '';
+          document.getElementById('preset3').value = data.presentation3 || '';
+          showStatus('Presets loaded', false);
+        })
+        .catch(err => {
+          showStatus('Failed to load presets: ' + err.message, true);
+        });
+    });
+    
+    // Save form
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      
+      const data = {
+        presentation1: document.getElementById('preset1').value.trim(),
+        presentation2: document.getElementById('preset2').value.trim(),
+        presentation3: document.getElementById('preset3').value.trim()
+      };
+      
+      fetch('http://127.0.0.1:9595/api/presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      })
+        .then(res => res.json())
+        .then(result => {
+          if (result.success) {
+            showStatus('Presets saved successfully!', false);
+          } else {
+            showStatus('Failed to save: ' + (result.error || 'Unknown error'), true);
+          }
+        })
+        .catch(err => {
+          showStatus('Failed to save presets: ' + err.message, true);
+        });
+    });
+  </script>
+</body>
+</html>`;
+      
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(html);
+      return;
+    }
+    
+    // 404 for other routes
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+  });
+  
+  webUiServer.listen(WEB_UI_PORT, '0.0.0.0', () => {
+    console.log(`[Web UI] Server listening on http://0.0.0.0:${WEB_UI_PORT}`);
+  });
+}
+
 app.whenReady().then(() => {
   createWindow();
   startHttpServer();
+  startWebUiServer();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -1307,5 +2851,9 @@ app.on('before-quit', () => {
   if (httpServer) {
     console.log('[API] Shutting down HTTP server');
     httpServer.close();
+  }
+  if (webUiServer) {
+    console.log('[Web UI] Shutting down web UI server');
+    webUiServer.close();
   }
 });

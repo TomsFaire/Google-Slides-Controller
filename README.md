@@ -28,6 +28,18 @@ npm run build:linux # Builds the appimage for Linux
 ./package-companion.ps1 # Builds the companion .tgz
 ```
 
+### Web UI for Preset Management
+
+The app includes a web interface on port **8000** for managing preset presentations:
+
+- **Access:** Open `http://YOUR_COMPUTER_IP:8000` in any web browser
+- **Features:**
+  - Configure 3 preset presentations (Presentation 1, 2, 3)
+  - Save and load presets
+  - Accessible from any device on your network
+
+These presets can then be opened from Companion using the "Open Presentation 1/2/3" actions without needing to enter URLs.
+
 ### Using the HTTP API
 
 The app exposes an HTTP API on `http://127.0.0.1:9595` when running:
@@ -44,11 +56,35 @@ The app exposes an HTTP API on `http://127.0.0.1:9595` when running:
 - `POST /api/close-presentation` - Close current presentation
 - `POST /api/next-slide` - Go to next slide
 - `POST /api/previous-slide` - Go to previous slide
+- `POST /api/go-to-slide` - Navigate to a specific slide number
+  ```json
+  {
+    "slide": 5
+  }
+  ```
+- `POST /api/reload-presentation` - Close and reopen the current presentation, returning to the same slide
 - `POST /api/toggle-video` - Toggle video playback
 - `POST /api/open-speaker-notes` - Open or close speaker notes (s key)
 - `POST /api/close-speaker-notes` - Close the speaker notes window
+- `POST /api/scroll-notes-down` - Scroll speaker notes down (150px)
+- `POST /api/scroll-notes-up` - Scroll speaker notes up (150px)
 - `POST /api/zoom-in-notes` - Zoom in on speaker notes
 - `POST /api/zoom-out-notes` - Zoom out on speaker notes
+- `GET /api/presets` - Get all preset presentation URLs
+- `POST /api/presets` - Set preset presentation URLs
+  ```json
+  {
+    "presentation1": "https://docs.google.com/presentation/d/...",
+    "presentation2": "https://docs.google.com/presentation/d/...",
+    "presentation3": "https://docs.google.com/presentation/d/..."
+  }
+  ```
+- `POST /api/open-preset` - Open a preset by number (1, 2, or 3)
+  ```json
+  {
+    "preset": 1
+  }
+  ```
 
 #### Example with curl
 

@@ -28,6 +28,51 @@ module.exports = function (self) {
 			},
 		},
 
+		open_preset_1: {
+			name: 'Open Presentation 1',
+			description: 'Open the preset presentation configured as "Presentation 1"',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Opening preset presentation 1')
+					const response = await self.apiRequest('POST', '/api/open-preset', { preset: 1 })
+					self.log('info', response.message || 'Preset 1 opened')
+				} catch (error) {
+					self.log('error', `Failed to open preset 1: ${error.message}`)
+				}
+			},
+		},
+
+		open_preset_2: {
+			name: 'Open Presentation 2',
+			description: 'Open the preset presentation configured as "Presentation 2"',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Opening preset presentation 2')
+					const response = await self.apiRequest('POST', '/api/open-preset', { preset: 2 })
+					self.log('info', response.message || 'Preset 2 opened')
+				} catch (error) {
+					self.log('error', `Failed to open preset 2: ${error.message}`)
+				}
+			},
+		},
+
+		open_preset_3: {
+			name: 'Open Presentation 3',
+			description: 'Open the preset presentation configured as "Presentation 3"',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Opening preset presentation 3')
+					const response = await self.apiRequest('POST', '/api/open-preset', { preset: 3 })
+					self.log('info', response.message || 'Preset 3 opened')
+				} catch (error) {
+					self.log('error', `Failed to open preset 3: ${error.message}`)
+				}
+			},
+		},
+
 		close_presentation: {
 			name: 'Close Current Presentation',
 			options: [],
@@ -70,6 +115,53 @@ module.exports = function (self) {
 			},
 		},
 
+		go_to_slide: {
+			name: 'Go to Slide',
+			options: [
+				{
+					id: 'slide',
+					type: 'number',
+					label: 'Slide Number',
+					default: 1,
+					min: 1,
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const slideStr = await self.parseVariablesInString(String(event.options.slide))
+					const slide = parseInt(slideStr, 10)
+					
+					if (isNaN(slide) || slide < 1) {
+						self.log('error', `Invalid slide number: ${slideStr}`)
+						return
+					}
+
+					self.log('info', `Navigating to slide ${slide}`)
+					const response = await self.apiRequest('POST', '/api/go-to-slide', { slide })
+					self.log('info', response.message || `Navigated to slide ${slide}`)
+				} catch (error) {
+					self.log('error', `Failed to go to slide: ${error.message}`)
+				}
+			},
+		},
+
+		reload_presentation: {
+			name: 'Reload Presentation',
+			description: 'Closes and reopens the current presentation, returning to the same slide',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Reloading presentation...')
+					const response = await self.apiRequest('POST', '/api/reload-presentation', {})
+					self.log('info', response.message || 'Presentation reloaded')
+				} catch (error) {
+					self.log('error', `Failed to reload presentation: ${error.message}`)
+				}
+			},
+		},
+
 		toggle_video: {
 			name: 'Toggle Video Playback',
 			options: [],
@@ -108,6 +200,34 @@ module.exports = function (self) {
 					self.log('debug', response.message || 'Speaker notes closed')
 				} catch (error) {
 					self.log('error', `Failed to close speaker notes: ${error.message}`)
+				}
+			},
+		},
+
+		scroll_notes_down: {
+			name: 'Scroll Speaker Notes Down',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Scrolling speaker notes down')
+					const response = await self.apiRequest('POST', '/api/scroll-notes-down', {})
+					self.log('debug', response.message || 'Notes scrolled down')
+				} catch (error) {
+					self.log('error', `Failed to scroll notes: ${error.message}`)
+				}
+			},
+		},
+
+		scroll_notes_up: {
+			name: 'Scroll Speaker Notes Up',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Scrolling speaker notes up')
+					const response = await self.apiRequest('POST', '/api/scroll-notes-up', {})
+					self.log('debug', response.message || 'Notes scrolled up')
+				} catch (error) {
+					self.log('error', `Failed to scroll notes: ${error.message}`)
 				}
 			},
 		},

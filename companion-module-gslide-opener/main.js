@@ -1,4 +1,4 @@
-const { InstanceBase, runEntrypoint } = require('@companion-module/base')
+const { InstanceBase, runEntrypoint, combineRgb } = require('@companion-module/base')
 const UpdateActions = require('./actions.js')
 
 class GoogleSlidesOpenerInstance extends InstanceBase {
@@ -6,6 +6,29 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 		super(internal)
 		console.log('[gslide-opener] Constructor called')
 		this.log('info', '=== Constructor called ===')
+		
+		// State for variables and feedbacks
+		this.state = {
+			presentationOpen: false,
+			notesOpen: false,
+			currentSlide: null,
+			totalSlides: null,
+			presentationUrl: null,
+			slideInfo: null,
+			isFirstSlide: null,
+			isLastSlide: null,
+			nextSlide: null,
+			previousSlide: null,
+			presentationTitle: null,
+			timerElapsed: null,
+			presentationDisplayId: null,
+			notesDisplayId: null,
+			loginState: false,
+			loggedInUser: null
+		}
+		
+		// Polling interval
+		this.pollInterval = null
 	}
 
 	async init(config) {
@@ -32,11 +55,24 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 		this.updateActions()
 		this.log('info', 'Actions updated')
 
+		// Set up variables
+		this.log('info', 'Setting up variables...')
+		this.setupVariables()
+		this.log('info', 'Variables set up')
+
+		// Set up feedbacks
+		this.log('info', 'Setting up feedbacks...')
+		this.setupFeedbacks()
+		this.log('info', 'Feedbacks set up')
+
 		// Test connection after module is ready
 		this.log('info', 'Starting connection test...')
 		this.testConnection().catch(error => {
 			this.log('warn', `Connection test failed during init: ${error.message}`)
 		})
+
+		// Start polling for state updates
+		this.startPolling()
 
 		this.log('info', '=== Module initialization completed ===')
 		console.log('[gslide-opener] init() completed')
@@ -45,6 +81,13 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 	async destroy() {
 		console.log('[gslide-opener] destroy() called')
 		this.log('info', '=== destroy() called ===')
+		
+		// Stop polling
+		if (this.pollInterval) {
+			clearInterval(this.pollInterval)
+			this.pollInterval = null
+			this.log('info', 'Polling stopped')
+		}
 	}
 
 	async configUpdated(config) {
@@ -117,6 +160,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.log('info', 'Connected to Google Slides Opener')
 			this.log('info', `Response: ${JSON.stringify(response)}`)
 			this.updateStatus('ok', 'Connected')
+			
+			// Update state immediately on successful connection
+			await this.updateState()
 		} catch (error) {
 			console.log('[gslide-opener] Connection failed:', error)
 			this.log('error', `Failed to connect to Google Slides Opener: ${error.message}`)
@@ -178,6 +224,230 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			}
 			req.end()
 		})
+	}
+
+	// Set up variable definitions
+	setupVariables() {
+		const variables = [
+			{
+				variableId: 'presentation_open',
+				name: 'Presentation Open'
+			},
+			{
+				variableId: 'notes_open',
+				name: 'Speaker Notes Open'
+			},
+			{
+				variableId: 'current_slide',
+				name: 'Current Slide Number'
+			},
+			{
+				variableId: 'total_slides',
+				name: 'Total Slides'
+			},
+			{
+				variableId: 'slide_info',
+				name: 'Slide Info (e.g. "3 / 10")'
+			},
+			{
+				variableId: 'next_slide',
+				name: 'Next Slide Number'
+			},
+			{
+				variableId: 'previous_slide',
+				name: 'Previous Slide Number'
+			},
+			{
+				variableId: 'is_first_slide',
+				name: 'Is First Slide'
+			},
+			{
+				variableId: 'is_last_slide',
+				name: 'Is Last Slide'
+			},
+			{
+				variableId: 'presentation_url',
+				name: 'Presentation URL'
+			},
+			{
+				variableId: 'presentation_title',
+				name: 'Presentation Title'
+			},
+			{
+				variableId: 'timer_elapsed',
+				name: 'Timer Elapsed (e.g. "00:00:06")'
+			},
+			{
+				variableId: 'presentation_display_id',
+				name: 'Presentation Display ID'
+			},
+			{
+				variableId: 'notes_display_id',
+				name: 'Notes Display ID'
+			},
+			{
+				variableId: 'login_state',
+				name: 'Login State (Yes/No)'
+			},
+			{
+				variableId: 'logged_in_user',
+				name: 'Logged In User (Email)'
+			}
+		]
+		
+		this.setVariableDefinitions(variables)
+		this.log('info', `Defined ${variables.length} variables`)
+	}
+
+	// Set up feedback definitions
+	setupFeedbacks() {
+		const feedbacks = {
+			presentation_open: {
+				type: 'boolean',
+				name: 'Presentation is Open',
+				description: 'Indicates when a presentation is currently open',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(0, 200, 0)
+				},
+				options: [],
+				callback: (feedback) => {
+					return this.state.presentationOpen === true
+				},
+				showInvert: true
+			},
+			notes_open: {
+				type: 'boolean',
+				name: 'Speaker Notes are Open',
+				description: 'Indicates when the speaker notes window is open',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(0, 150, 255)
+				},
+				options: [],
+				callback: (feedback) => {
+					return this.state.notesOpen === true
+				},
+				showInvert: true
+			},
+			on_slide: {
+				type: 'boolean',
+				name: 'On Specific Slide',
+				description: 'Indicates when the presentation is on a specific slide number',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(255, 150, 0)
+				},
+				options: [
+					{
+						type: 'number',
+						id: 'slide',
+						label: 'Slide Number',
+						min: 1,
+						default: 1
+					}
+				],
+				callback: (feedback) => {
+					const targetSlide = feedback.options.slide
+					return this.state.currentSlide !== null && this.state.currentSlide === targetSlide
+				},
+				showInvert: true
+			}
+		}
+		
+		this.setFeedbackDefinitions(feedbacks)
+		this.log('info', `Defined ${Object.keys(feedbacks).length} feedbacks`)
+	}
+
+	// Start polling for state updates
+	startPolling() {
+		// Poll immediately, then every 1 second
+		this.updateState()
+		this.pollInterval = setInterval(() => {
+			this.updateState()
+		}, 1000)
+		this.log('info', 'Started polling for state updates (1s interval)')
+	}
+
+	// Update state from API and refresh variables/feedbacks
+	async updateState() {
+		try {
+			const response = await this.apiRequest('GET', '/api/status')
+			
+		// Update internal state with all available fields
+		const newState = {
+			presentationOpen: response.presentationOpen === true,
+			notesOpen: response.notesOpen === true,
+			currentSlide: response.currentSlide !== null && response.currentSlide !== undefined ? response.currentSlide : null,
+			totalSlides: response.totalSlides !== null && response.totalSlides !== undefined ? response.totalSlides : null,
+			presentationUrl: response.presentationUrl || null,
+			slideInfo: response.slideInfo || null,
+			isFirstSlide: response.isFirstSlide === true,
+			isLastSlide: response.isLastSlide === true,
+			nextSlide: response.nextSlide !== null && response.nextSlide !== undefined ? response.nextSlide : null,
+			previousSlide: response.previousSlide !== null && response.previousSlide !== undefined ? response.previousSlide : null,
+			presentationTitle: response.presentationTitle || null,
+			timerElapsed: response.timerElapsed || null,
+			presentationDisplayId: response.presentationDisplayId !== null && response.presentationDisplayId !== undefined ? response.presentationDisplayId : null,
+			notesDisplayId: response.notesDisplayId !== null && response.notesDisplayId !== undefined ? response.notesDisplayId : null,
+			loginState: response.loginState === true,
+			loggedInUser: response.loggedInUser || null
+		}
+		
+		// Check if state changed (compare all fields)
+		const stateChanged = 
+			this.state.presentationOpen !== newState.presentationOpen ||
+			this.state.notesOpen !== newState.notesOpen ||
+			this.state.currentSlide !== newState.currentSlide ||
+			this.state.totalSlides !== newState.totalSlides ||
+			this.state.presentationUrl !== newState.presentationUrl ||
+			this.state.slideInfo !== newState.slideInfo ||
+			this.state.isFirstSlide !== newState.isFirstSlide ||
+			this.state.loginState !== newState.loginState ||
+			this.state.loggedInUser !== newState.loggedInUser ||
+			this.state.isLastSlide !== newState.isLastSlide ||
+			this.state.nextSlide !== newState.nextSlide ||
+			this.state.previousSlide !== newState.previousSlide ||
+			this.state.presentationTitle !== newState.presentationTitle ||
+			this.state.timerElapsed !== newState.timerElapsed ||
+			this.state.presentationDisplayId !== newState.presentationDisplayId ||
+			this.state.notesDisplayId !== newState.notesDisplayId
+		
+		if (stateChanged) {
+			this.state = newState
+			
+			// Update all variables
+			this.setVariableValues({
+				presentation_open: this.state.presentationOpen ? 'Yes' : 'No',
+				notes_open: this.state.notesOpen ? 'Yes' : 'No',
+				current_slide: this.state.currentSlide !== null ? String(this.state.currentSlide) : '',
+				total_slides: this.state.totalSlides !== null ? String(this.state.totalSlides) : '',
+				slide_info: this.state.slideInfo || '',
+				next_slide: this.state.nextSlide !== null ? String(this.state.nextSlide) : '',
+				previous_slide: this.state.previousSlide !== null ? String(this.state.previousSlide) : '',
+				is_first_slide: this.state.isFirstSlide ? 'Yes' : 'No',
+				is_last_slide: this.state.isLastSlide ? 'Yes' : 'No',
+				presentation_url: this.state.presentationUrl || '',
+				presentation_title: this.state.presentationTitle || '',
+				timer_elapsed: this.state.timerElapsed || '',
+				presentation_display_id: this.state.presentationDisplayId !== null ? String(this.state.presentationDisplayId) : '',
+				notes_display_id: this.state.notesDisplayId !== null ? String(this.state.notesDisplayId) : '',
+				login_state: this.state.loginState ? 'Yes' : 'No',
+				logged_in_user: this.state.loggedInUser || ''
+			})
+			
+			// Trigger feedback updates
+			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide')
+			
+			this.log('debug', `State updated: presentation=${this.state.presentationOpen}, notes=${this.state.notesOpen}, slide=${this.state.currentSlide}/${this.state.totalSlides}, title=${this.state.presentationTitle || 'N/A'}`)
+		}
+		} catch (error) {
+			// Silently fail - connection might be down, don't spam logs
+			// Only log if we previously had a connection
+			if (this.state.presentationOpen || this.state.notesOpen) {
+				this.log('debug', `Failed to update state: ${error.message}`)
+			}
+		}
 	}
 }
 

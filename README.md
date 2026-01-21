@@ -45,6 +45,8 @@ The app exposes an HTTP API on `http://127.0.0.1:9595` when running:
 - `POST /api/next-slide` - Go to next slide
 - `POST /api/previous-slide` - Go to previous slide
 - `POST /api/toggle-video` - Toggle video playback
+- `POST /api/open-speaker-notes` - Open or close speaker notes (s key)
+- `POST /api/close-speaker-notes` - Close the speaker notes window
 - `POST /api/zoom-in-notes` - Zoom in on speaker notes
 - `POST /api/zoom-out-notes` - Zoom out on speaker notes
 

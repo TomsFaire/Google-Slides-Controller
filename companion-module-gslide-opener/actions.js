@@ -84,6 +84,34 @@ module.exports = function (self) {
 			},
 		},
 
+		open_speaker_notes: {
+			name: 'Open Speaker Notes',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Toggling speaker notes')
+					const response = await self.apiRequest('POST', '/api/open-speaker-notes', {})
+					self.log('debug', response.message || 'Speaker notes toggled')
+				} catch (error) {
+					self.log('error', `Failed to open speaker notes: ${error.message}`)
+				}
+			},
+		},
+
+		close_speaker_notes: {
+			name: 'Close Speaker Notes',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Closing speaker notes')
+					const response = await self.apiRequest('POST', '/api/close-speaker-notes', {})
+					self.log('debug', response.message || 'Speaker notes closed')
+				} catch (error) {
+					self.log('error', `Failed to close speaker notes: ${error.message}`)
+				}
+			},
+		},
+
 		zoom_in_notes: {
 			name: 'Zoom In Speaker Notes',
 			options: [],

@@ -6,6 +6,25 @@ const http = require('http');
 let mainWindow;
 let presentationWindow = null;
 let notesWindow = null;
+let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
+
+function toPresentUrl(inputUrl) {
+  try {
+    const u = new URL(inputUrl);
+
+    // Extract deck id from any /presentation/d/<ID>/... path
+    const m = u.pathname.match(/\/presentation\/d\/([^/]+)/);
+    if (!m) return inputUrl;
+
+    const id = m[1];
+
+    // Go straight to slideshow mode (avoids platform-specific present hotkeys)
+    return `https://docs.google.com/presentation/d/${id}/present`;
+  } catch (e) {
+    return inputUrl;
+  }
+}
+
 
 // Use a persistent session for Google authentication
 const GOOGLE_SESSION_PARTITION = 'persist:google';
@@ -199,6 +218,7 @@ ipcMain.handle('open-test-presentation', async () => {
 
     presentationWindow.on('closed', () => {
       presentationWindow = null;
+      currentSlide = null;
     });
     
     // Listen for Escape key to close both windows
@@ -317,6 +337,7 @@ ipcMain.handle('open-test-presentation', async () => {
     app.on('browser-window-created', testWindowCreatedListener);
   }
 
+  currentSlide = 1;
   presentationWindow.loadURL(testUrl);
   presentationWindow.show();
   
@@ -444,6 +465,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Close existing windows if any
   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
   if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+  currentSlide = null;
 
   // Open presentation window
   presentationWindow = new BrowserWindow({
@@ -571,6 +593,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   app.on('browser-window-created', windowCreatedListener);
 
   // Load presentation URL
+  currentSlide = 1;
   presentationWindow.loadURL(url);
 
   console.log('[Multi-Monitor] Window opened, loading URL...');
@@ -670,6 +693,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
+    currentSlide = null;
   });
   
   // Listen for Escape key to close both windows
@@ -702,14 +726,42 @@ function startHttpServer() {
       return;
     }
     
-    // GET /api/status - Check if app is running
+    // GET /api/status - Check if app is running and expose state for Companion variables/feedbacks
     if (req.method === 'GET' && req.url === '/api/status') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
-        status: 'ok', 
-        version: '1.0.0',
-        presentationOpen: presentationWindow !== null
-      }));
+      (async () => {
+        const state = {
+          status: 'ok',
+          version: '1.0.0',
+          presentationOpen: !!(presentationWindow && !presentationWindow.isDestroyed()),
+          notesOpen: !!(notesWindow && !notesWindow.isDestroyed()),
+          currentSlide: currentSlide,
+          totalSlides: null
+        };
+        if (notesWindow && !notesWindow.isDestroyed()) {
+          try {
+            const info = await notesWindow.webContents.executeJavaScript(`
+              (function(){
+                var el = document.querySelector('[aria-posinset]');
+                if (!el) return null;
+                var cur = parseInt(el.getAttribute('aria-posinset'), 10);
+                var tot = parseInt(el.getAttribute('aria-setsize'), 10);
+                return { current: isNaN(cur) ? null : cur, total: isNaN(tot) ? null : tot };
+              })()
+            `);
+            if (info && info.current != null) {
+              state.currentSlide = info.current;
+              if (info.total != null) state.totalSlides = info.total;
+            }
+          } catch (e) { /* DOM not available or changed */ }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(state));
+      })().catch(err => {
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
     
@@ -747,6 +799,7 @@ function startHttpServer() {
               presentationWindow.close();
               presentationWindow = null;
             }
+            currentSlide = null;
           } catch (error) {
             console.error('[API] Error closing existing windows:', error.message);
           }
@@ -916,6 +969,7 @@ function startHttpServer() {
           
           presentationWindow.on('closed', () => {
             presentationWindow = null;
+            currentSlide = null;
           });
           
           // Escape key handler for presentation window
@@ -927,12 +981,11 @@ function startHttpServer() {
           }
           });
           
-          console.log('[API] Loading URL:', url);
-          presentationWindow.loadURL(url);
+          const presentUrl = toPresentUrl(url);
+          console.log('[API] Loading PRESENT URL:', presentUrl);
+          currentSlide = 1;
+          presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
-          
-          console.log('[API] Window shown, waiting for page load...');
-          
           // Send response immediately
           if (!res.headersSent) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -970,6 +1023,7 @@ function startHttpServer() {
             presentationWindow.close();
             presentationWindow = null;
           }
+          currentSlide = null;
         } catch (error) {
           console.error('[API] Error closing windows:', error.message);
         }
@@ -990,7 +1044,7 @@ function startHttpServer() {
         presentationWindow.focus();
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
-        
+        currentSlide = (typeof currentSlide === 'number' ? currentSlide + 1 : 1);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Next slide' }));
       } catch (error) {
@@ -1012,7 +1066,7 @@ function startHttpServer() {
         presentationWindow.focus();
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
-        
+        currentSlide = (typeof currentSlide === 'number' && currentSlide > 1 ? currentSlide - 1 : 1);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Previous slide' }));
       } catch (error) {
@@ -1038,6 +1092,49 @@ function startHttpServer() {
         
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Video toggled' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // POST /api/open-speaker-notes - Toggle speaker notes (s key)
+    if (req.method === 'POST' && req.url === '/api/open-speaker-notes') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+
+      try {
+        presentationWindow.focus();
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Speaker notes toggled' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // POST /api/close-speaker-notes - Close the speaker notes window
+    if (req.method === 'POST' && req.url === '/api/close-speaker-notes') {
+      if (!notesWindow || notesWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No speaker notes window is open' }));
+        return;
+      }
+
+      try {
+        notesWindow.close();
+        notesWindow = null;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Speaker notes closed' }));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
@@ -1184,8 +1281,8 @@ function startHttpServer() {
     res.end(JSON.stringify({ error: 'Not found' }));
   });
   
-  httpServer.listen(API_PORT, '127.0.0.1', () => {
-    console.log(`[API] HTTP server listening on http://127.0.0.1:${API_PORT}`);
+  httpServer.listen(API_PORT, '0.0.0.0', () => {
+    console.log(`[API] HTTP server listening on http://0.0.0.0:${API_PORT}`);
   });
 }
 

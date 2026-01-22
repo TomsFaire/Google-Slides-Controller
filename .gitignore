@@ -1,0 +1,31 @@
+node_modules/
+dist/
+release/
+*.log
+.DS_Store
+preferences.json
+companion-module-gslide-opener/node_modules/
+
+# Build artifacts
+*.exe
+*.AppImage
+*.dmg
+*.zip
+*.tar.gz
+*.tgz
+*.app
+test-package-temp/
+pkg/
+
+# macOS resource forks
+Icon
+**/Icon
+**/Icon?
+
+# Test files
+test-*.js
+test-*.ps1
+verify-app.sh
+
+# Duplicate/old folders
+github/

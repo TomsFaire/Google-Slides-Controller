@@ -7,7 +7,10 @@ A desktop application for quickly switching between Google Slides presentations 
 ## Installation
 
 1. Download the latest release of the Google Slides Opener (exe or Appimage) on your presentation machine, and download the `companion-module-gslide-opener.tgz` on your Companion machine.
-2. Open the Google Slides Opener executable and make any config changes you want.
+2. Open the Google Slides Opener executable and make any config changes you want:
+   - Select your presentation and notes monitors
+   - Configure network ports (API and Web UI)
+   - View available network IP addresses for accessing the Web UI
 3. On your Companion instance, go to `Modules` > `Import module package` and select the .tgz file.
 4. Add the connection in Companion named `Google Slides Opener`
 
@@ -28,17 +31,30 @@ npm run build:linux # Builds the appimage for Linux
 ./package-companion.ps1 # Builds the companion .tgz
 ```
 
-### Web UI for Preset Management
+### Web UI for Preset Management and Controls
 
-The app includes a web interface on port **8000** for managing preset presentations:
+The app includes a web interface (default port **80**, configurable) for managing preset presentations and controlling active presentations:
 
-- **Access:** Open `http://YOUR_COMPUTER_IP:8000` in any web browser
+- **Access:** Open `http://YOUR_COMPUTER_IP` (or `http://YOUR_COMPUTER_IP:PORT`) in any web browser
+- **Port Configuration:** The web UI port can be configured in the desktop app's "Network Ports" section
 - **Features:**
+
+  **Controls Tab:**
+  - **Slide Controls:**
+    - Previous Slide
+    - Next Slide
+    - Reload Presentation (preserves current slide and zoom level)
+  - **Speaker Notes Controls:**
+    - Zoom In / Zoom Out
+    - Scroll Up / Scroll Down
+
+  **Presets Tab:**
   - Configure 3 preset presentations (Presentation 1, 2, 3)
   - Save and load presets
-  - Accessible from any device on your network
+  - These presets can then be opened from Companion using the "Open Presentation 1/2/3" actions without needing to enter URLs
 
-These presets can then be opened from Companion using the "Open Presentation 1/2/3" actions without needing to enter URLs.
+- **Network Access:** The desktop app displays all available IP addresses where the web UI can be accessed in the "Network Access" section
+- **Accessible from any device:** Use the web UI from phones, tablets, or other computers on your network
 
 ### Using the HTTP API
 

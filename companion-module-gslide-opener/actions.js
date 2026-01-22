@@ -5,6 +5,7 @@ module.exports = function (self) {
 	const actionDefinitions = {
 		open_presentation: {
 			name: 'Open Presentation',
+			description: 'Open a presentation (without auto-starting speaker notes)',
 			options: [
 				{
 					id: 'url',
@@ -24,6 +25,32 @@ module.exports = function (self) {
 					self.log('info', response.message || 'Presentation opened')
 				} catch (error) {
 					self.log('error', `Failed to open presentation: ${error.message}`)
+				}
+			},
+		},
+
+		open_presentation_with_notes: {
+			name: 'Open Presentation with Notes',
+			description: 'Open a presentation and automatically start speaker notes',
+			options: [
+				{
+					id: 'url',
+					type: 'textinput',
+					label: 'Google Slides URL',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const url = await self.parseVariablesInString(event.options.url)
+					self.log('info', `Opening presentation with notes: ${url}`)
+
+					const response = await self.apiRequest('POST', '/api/open-presentation-with-notes', { url })
+					self.log('info', response.message || 'Presentation opened with notes')
+				} catch (error) {
+					self.log('error', `Failed to open presentation with notes: ${error.message}`)
 				}
 			},
 		},

@@ -44,6 +44,71 @@
         </div>
       </section>
 
+      <!-- Machine Name Section -->
+      <section class="card">
+        <h2>Machine Name</h2>
+        <p class="card-description">Set a name for this machine (shown in web UI)</p>
+        
+        <div class="form-group">
+          <label for="machine-name">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            Machine Name
+          </label>
+          <input type="text" id="machine-name" class="input-field" placeholder="Enter machine name..." maxlength="50" />
+          <small class="field-hint">Leave empty to use system hostname</small>
+        </div>
+      </section>
+
+      <!-- Port Configuration Section -->
+      <section class="card">
+        <h2>Network Ports</h2>
+        <p class="card-description">Configure ports for API and Web UI (restart required)</p>
+        
+        <div class="form-group">
+          <label for="api-port">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            API Port (Companion)
+          </label>
+          <input type="number" id="api-port" class="input-field" min="1024" max="65535" placeholder="9595" />
+          <small class="field-hint">Port for Companion module API (default: 9595)</small>
+        </div>
+
+        <div class="form-group">
+          <label for="web-ui-port">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+              <line x1="8" y1="21" x2="16" y2="21"></line>
+              <line x1="12" y1="17" x2="12" y2="21"></line>
+            </svg>
+            Web UI Port
+          </label>
+          <input type="number" id="web-ui-port" class="input-field" min="1" max="65535" placeholder="80" />
+          <small class="field-hint">Port for web interface (default: 80, requires admin for ports &lt;1024)</small>
+        </div>
+
+        <!-- Network Access Information -->
+        <div class="network-info">
+          <h3>Network Access</h3>
+          <div class="network-urls">
+            <div class="network-group">
+              <strong>API (Companion):</strong>
+              <div id="api-urls" class="url-list"></div>
+            </div>
+            <div class="network-group">
+              <strong>Web UI:</strong>
+              <div id="web-ui-urls" class="url-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Authentication Section -->
       <section class="card">
         <h2>Google Account</h2>

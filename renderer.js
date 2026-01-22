@@ -1,6 +1,8 @@
 // DOM Elements
 const presentationDisplay = document.getElementById('presentation-display');
 const notesDisplay = document.getElementById('notes-display');
+const apiPortInput = document.getElementById('api-port');
+const webUiPortInput = document.getElementById('web-ui-port');
 const signinBtn = document.getElementById('signin-btn');
 const testBtn = document.getElementById('test-btn');
 const statusMessage = document.getElementById('status-message');
@@ -42,12 +44,88 @@ async function initDisplays() {
       notesDisplay.selectedIndex = 1;
     }
     
+    // Restore machine name
+    const machineNameInput = document.getElementById('machine-name');
+    if (preferences.machineName) {
+      machineNameInput.value = preferences.machineName;
+    }
+
+    // Restore port preferences
+    if (preferences.apiPort) {
+      apiPortInput.value = preferences.apiPort;
+    } else {
+      apiPortInput.value = '9595'; // Default
+    }
+
+    if (preferences.webUiPort) {
+      webUiPortInput.value = preferences.webUiPort;
+    } else {
+      webUiPortInput.value = '80'; // Default
+    }
+    
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
     notesDisplay.addEventListener('change', saveMonitorPreferences);
+    machineNameInput.addEventListener('change', saveMachineName);
+    apiPortInput.addEventListener('change', savePortPreferences);
+    webUiPortInput.addEventListener('change', savePortPreferences);
+    
+    // Load and display network info
+    await updateNetworkInfo();
     
   } catch (error) {
     showStatus('Failed to load displays', 'error');
+  }
+}
+
+// Update network information display
+async function updateNetworkInfo() {
+  try {
+    const networkInfo = await window.electronAPI.getNetworkInfo();
+    const preferences = await window.electronAPI.getPreferences();
+    
+    const apiPort = preferences.apiPort || 9595;
+    const webUiPort = preferences.webUiPort || 80;
+    
+    // Display API URLs
+    const apiUrlsDiv = document.getElementById('api-urls');
+    apiUrlsDiv.innerHTML = '';
+    
+    if (networkInfo.length === 0) {
+      apiUrlsDiv.innerHTML = '<div class="url-item">No network interfaces found</div>';
+    } else {
+      networkInfo.forEach(ip => {
+        const urlItem = document.createElement('div');
+        urlItem.className = 'url-item' + (ip.internal ? ' internal' : '');
+        urlItem.textContent = `http://${ip.address}:${apiPort}`;
+        if (ip.internal) {
+          urlItem.title = 'Localhost/internal interface';
+        }
+        apiUrlsDiv.appendChild(urlItem);
+      });
+    }
+    
+    // Display Web UI URLs
+    const webUiUrlsDiv = document.getElementById('web-ui-urls');
+    webUiUrlsDiv.innerHTML = '';
+    
+    if (networkInfo.length === 0) {
+      webUiUrlsDiv.innerHTML = '<div class="url-item">No network interfaces found</div>';
+    } else {
+      networkInfo.forEach(ip => {
+        const urlItem = document.createElement('div');
+        urlItem.className = 'url-item' + (ip.internal ? ' internal' : '');
+        urlItem.textContent = `http://${ip.address}:${webUiPort}`;
+        if (ip.internal) {
+          urlItem.title = 'Localhost/internal interface';
+        }
+        webUiUrlsDiv.appendChild(urlItem);
+      });
+    }
+  } catch (error) {
+    console.error('Failed to load network info:', error);
+    document.getElementById('api-urls').innerHTML = '<div class="url-item">Error loading network info</div>';
+    document.getElementById('web-ui-urls').innerHTML = '<div class="url-item">Error loading network info</div>';
   }
 }
 
@@ -60,6 +138,52 @@ async function saveMonitorPreferences() {
     });
   } catch (error) {
     console.error('Failed to save preferences:', error);
+  }
+}
+
+  // Save machine name
+  async function saveMachineName() {
+    try {
+      const machineName = machineNameInput.value.trim();
+      await window.electronAPI.savePreferences({
+        machineName: machineName || null
+      });
+      showStatus('Machine name saved', 'info');
+    } catch (error) {
+      console.error('Failed to save machine name:', error);
+      showStatus('Failed to save machine name', 'error');
+    }
+  }
+
+  // Save port preferences
+  async function savePortPreferences() {
+  try {
+    const apiPort = parseInt(apiPortInput.value, 10);
+    const webUiPort = parseInt(webUiPortInput.value, 10);
+    
+    // Validate ports
+    if (isNaN(apiPort) || apiPort < 1024 || apiPort > 65535) {
+      showStatus('API port must be between 1024 and 65535', 'error');
+      return;
+    }
+    
+    if (isNaN(webUiPort) || webUiPort < 1 || webUiPort > 65535) {
+      showStatus('Web UI port must be between 1 and 65535', 'error');
+      return;
+    }
+    
+    await window.electronAPI.savePreferences({
+      apiPort: apiPort,
+      webUiPort: webUiPort
+    });
+    
+    // Update network info display with new ports
+    await updateNetworkInfo();
+    
+    showStatus('Ports saved. Please restart the app for changes to take effect.', 'info');
+  } catch (error) {
+    console.error('Failed to save port preferences:', error);
+    showStatus('Failed to save port preferences', 'error');
   }
 }
 

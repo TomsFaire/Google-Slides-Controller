@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
 
 let mainWindow;
 let presentationWindow = null;
@@ -198,12 +199,23 @@ function getPreferencesPath() {
 function loadPreferences() {
   try {
     const prefsPath = getPreferencesPath();
+    console.log('[Preferences] Loading from:', prefsPath);
+    
     if (fs.existsSync(prefsPath)) {
       const data = fs.readFileSync(prefsPath, 'utf8');
-      return JSON.parse(data);
+      const prefs = JSON.parse(data);
+      console.log('[Preferences] Loaded preferences:', JSON.stringify(prefs));
+      return prefs;
+    } else {
+      console.log('[Preferences] File does not exist, returning empty object');
     }
   } catch (error) {
-    console.error('Error loading preferences:', error);
+    console.error('[Preferences] Error loading preferences:', error);
+    console.error('[Preferences] Error details:', {
+      message: error.message,
+      code: error.code,
+      path: getPreferencesPath()
+    });
   }
   return {};
 }
@@ -212,23 +224,51 @@ function loadPreferences() {
 function savePreferences(prefs) {
   try {
     const prefsPath = getPreferencesPath();
+    console.log('[Preferences] Saving to:', prefsPath);
+    console.log('[Preferences] Data to save:', JSON.stringify(prefs, null, 2));
+    
+    // Ensure directory exists
+    const prefsDir = path.dirname(prefsPath);
+    if (!fs.existsSync(prefsDir)) {
+      console.log('[Preferences] Creating directory:', prefsDir);
+      fs.mkdirSync(prefsDir, { recursive: true });
+    }
+    
     fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf8');
+    console.log('[Preferences] Successfully saved preferences');
+    
+    // Verify it was written
+    if (fs.existsSync(prefsPath)) {
+      const stats = fs.statSync(prefsPath);
+      console.log('[Preferences] File verified - size:', stats.size, 'bytes');
+    } else {
+      console.error('[Preferences] ERROR: File was not created after write!');
+    }
   } catch (error) {
-    console.error('Error saving preferences:', error);
+    console.error('[Preferences] Error saving preferences:', error);
+    console.error('[Preferences] Error details:', {
+      message: error.message,
+      code: error.code,
+      path: getPreferencesPath(),
+      stack: error.stack
+    });
+    throw error; // Re-throw so caller can handle it
   }
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 600,
-    height: 700,
+    width: 800,
+    height: 900,
+    minWidth: 600,
+    minHeight: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     },
     autoHideMenuBar: true,
-    resizable: false,
+    resizable: true,
     center: true
   });
 
@@ -254,9 +294,41 @@ ipcMain.handle('get-preferences', async () => {
   return loadPreferences();
 });
 
+// Get network interfaces and IP addresses
+ipcMain.handle('get-network-info', async () => {
+  const interfaces = os.networkInterfaces();
+  const ipAddresses = [];
+  
+  // Get all IPv4 addresses (excluding internal/loopback, but including localhost)
+  Object.keys(interfaces).forEach((ifaceName) => {
+    interfaces[ifaceName].forEach((iface) => {
+      // Include IPv4 addresses (both internal and external)
+      if (iface.family === 'IPv4') {
+        ipAddresses.push({
+          address: iface.address,
+          internal: iface.internal,
+          interface: ifaceName
+        });
+      }
+    });
+  });
+  
+  // Sort: non-internal first, then by interface name
+  ipAddresses.sort((a, b) => {
+    if (a.internal !== b.internal) {
+      return a.internal ? 1 : -1;
+    }
+    return a.interface.localeCompare(b.interface);
+  });
+  
+  return ipAddresses;
+});
+
 // Save preferences
 ipcMain.handle('save-preferences', async (event, prefs) => {
-  savePreferences(prefs);
+  const currentPrefs = loadPreferences();
+  const mergedPrefs = { ...currentPrefs, ...prefs };
+  savePreferences(mergedPrefs);
   return { success: true };
 });
 
@@ -962,11 +1034,10 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 });
 
 // HTTP API for Bitfocus Companion integration
-const API_PORT = 9595;
+// Ports are configurable via preferences, defaults below
+const DEFAULT_API_PORT = 9595;
+const DEFAULT_WEB_UI_PORT = 80;
 let httpServer;
-
-// Web UI for preset management
-const WEB_UI_PORT = 8000;
 let webUiServer;
 
 function startHttpServer() {
@@ -1293,27 +1364,10 @@ function startHttpServer() {
           };
           app.on('browser-window-created', windowCreatedListener);
           
-          // Set up navigation listener to detect presentation mode
-          let sKeyPressed = false;
+          // Navigation listener (no auto-launch of notes - user must manually start notes)
           const navigationListener = async (event, navUrl) => {
             console.log('[API] Navigated to:', navUrl);
-            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
-            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              console.log('[API] Presentation mode detected, pressing "s" for speaker notes');
-              sKeyPressed = true;
-              await new Promise(resolve => setTimeout(resolve, 300));
-              
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                presentationWindow.focus();
-                await new Promise(resolve => setTimeout(resolve, 50));
-                
-                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-                
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
-            }
+            // Just log navigation, don't auto-launch notes
           };
           
           presentationWindow.webContents.on('did-navigate', navigationListener);
@@ -1380,7 +1434,7 @@ function startHttpServer() {
           // Send response immediately
           if (!res.headersSent) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Presentation opened' }));
+            res.end(JSON.stringify({ success: true, message: 'Presentation opened (notes not auto-started)' }));
           }
         } catch (error) {
           console.error('[API] Error:', error);
@@ -2301,13 +2355,83 @@ function startHttpServer() {
     
     // GET /api/presets - Get all preset presentations
     if (req.method === 'GET' && req.url === '/api/presets') {
+      console.log('[API] GET /api/presets - Loading presets');
       const prefs = loadPreferences();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      console.log('[API] Returning presets:', {
+        presentation1: prefs.presentation1 || '',
+        presentation2: prefs.presentation2 || '',
+        presentation3: prefs.presentation3 || ''
+      });
+      res.writeHead(200, { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type'
+      });
       res.end(JSON.stringify({
         presentation1: prefs.presentation1 || '',
         presentation2: prefs.presentation2 || '',
         presentation3: prefs.presentation3 || ''
       }));
+      return;
+    }
+
+    // GET /api/debug/preferences - Debug endpoint for preferences file
+    if (req.method === 'GET' && req.url === '/api/debug/preferences') {
+      try {
+        const prefsPath = getPreferencesPath();
+        const prefsDir = path.dirname(prefsPath);
+        const exists = fs.existsSync(prefsPath);
+        const dirExists = fs.existsSync(prefsDir);
+        
+        let stats = null;
+        let content = null;
+        let dirWritable = false;
+        
+        if (exists) {
+          stats = fs.statSync(prefsPath);
+          try {
+            content = fs.readFileSync(prefsPath, 'utf8');
+          } catch (e) {
+            content = `Error reading file: ${e.message}`;
+          }
+        }
+        
+        try {
+          fs.accessSync(prefsDir, fs.constants.W_OK);
+          dirWritable = true;
+        } catch (e) {
+          dirWritable = false;
+        }
+        
+        res.writeHead(200, { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type'
+        });
+        res.end(JSON.stringify({
+          path: prefsPath,
+          directory: prefsDir,
+          fileExists: exists,
+          directoryExists: dirExists,
+          directoryWritable: dirWritable,
+          fileSize: stats ? stats.size : null,
+          fileModified: stats ? stats.mtime : null,
+          fileContent: content,
+          preferences: loadPreferences(),
+          platform: process.platform,
+          userData: app.getPath('userData')
+        }));
+      } catch (error) {
+        res.writeHead(500, { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type'
+        });
+        res.end(JSON.stringify({ error: error.message, stack: error.stack }));
+      }
       return;
     }
 
@@ -2320,21 +2444,63 @@ function startHttpServer() {
       
       req.on('end', () => {
         try {
+          console.log('[API] POST /api/presets - Received body:', body);
           const data = JSON.parse(body);
+          console.log('[API] Parsed data:', data);
+          
           const prefs = loadPreferences();
+          console.log('[API] Current preferences before update:', JSON.stringify(prefs));
           
           // Update presets
-          if (data.presentation1 !== undefined) prefs.presentation1 = data.presentation1;
-          if (data.presentation2 !== undefined) prefs.presentation2 = data.presentation2;
-          if (data.presentation3 !== undefined) prefs.presentation3 = data.presentation3;
+          if (data.presentation1 !== undefined) {
+            prefs.presentation1 = data.presentation1;
+            console.log('[API] Updated presentation1:', data.presentation1);
+          }
+          if (data.presentation2 !== undefined) {
+            prefs.presentation2 = data.presentation2;
+            console.log('[API] Updated presentation2:', data.presentation2);
+          }
+          if (data.presentation3 !== undefined) {
+            prefs.presentation3 = data.presentation3;
+            console.log('[API] Updated presentation3:', data.presentation3);
+          }
           
+          console.log('[API] Preferences after update:', JSON.stringify(prefs));
           savePreferences(prefs);
           
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, message: 'Presets saved' }));
+          // Verify save by reloading
+          const verifyPrefs = loadPreferences();
+          console.log('[API] Verification - reloaded preferences:', JSON.stringify(verifyPrefs));
+          
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+          });
+          res.end(JSON.stringify({ 
+            success: true, 
+            message: 'Presets saved',
+            saved: {
+              presentation1: verifyPrefs.presentation1 || '',
+              presentation2: verifyPrefs.presentation2 || '',
+              presentation3: verifyPrefs.presentation3 || ''
+            }
+          }));
         } catch (error) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: error.message }));
+          console.error('[API] Error saving presets:', error);
+          console.error('[API] Error stack:', error.stack);
+          res.writeHead(500, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+          });
+          res.end(JSON.stringify({ 
+            error: error.message,
+            code: error.code || 'UNKNOWN',
+            details: process.platform === 'darwin' ? 'Check Console.app for detailed logs' : 'Check console output'
+          }));
         }
       });
       return;
@@ -2575,8 +2741,11 @@ function startHttpServer() {
     res.end(JSON.stringify({ error: 'Not found' }));
   });
   
-  httpServer.listen(API_PORT, '0.0.0.0', () => {
-    console.log(`[API] HTTP server listening on http://0.0.0.0:${API_PORT}`);
+  const prefs = loadPreferences();
+  const apiPort = prefs.apiPort || DEFAULT_API_PORT;
+  
+  httpServer.listen(apiPort, '0.0.0.0', () => {
+    console.log(`[API] HTTP server listening on http://0.0.0.0:${apiPort}`);
   });
 }
 
@@ -2596,6 +2765,20 @@ function startWebUiServer() {
     
     // GET / - Serve the web UI
     if (req.method === 'GET' && req.url === '/') {
+      // Get configured API port for the web UI
+      const prefs = loadPreferences();
+      const apiPort = prefs.apiPort || DEFAULT_API_PORT;
+      const webUiPort = prefs.webUiPort || DEFAULT_WEB_UI_PORT;
+      
+      // Get machine name or fallback to hostname
+      // Escape HTML to prevent XSS
+      const machineName = (prefs.machineName || os.hostname())
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+      
       const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2709,18 +2892,221 @@ function startWebUiServer() {
       font-size: 13px;
       line-height: 1.5;
     }
+    .controls-section {
+      margin-bottom: 30px;
+      padding-top: 20px;
+      border-top: 2px solid #e0e0e0;
+    }
+    .controls-section h3 {
+      color: #333;
+      font-size: 18px;
+      margin-bottom: 12px;
+      margin-top: 20px;
+    }
+    .controls-section h3:first-child {
+      margin-top: 0;
+    }
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .btn-control {
+      padding: 12px 16px;
+      background: #f8f9fa;
+      color: #333;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-control:hover {
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+    }
+    .btn-control:active {
+      transform: translateY(0);
+    }
+    .btn-control:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .btn-icon {
+      width: 18px;
+      height: 18px;
+      stroke-width: 2.5;
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+    .tab-btn {
+      padding: 12px 24px;
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      font-size: 16px;
+      font-weight: 600;
+      color: #666;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: -2px;
+    }
+    .tab-btn:hover {
+      color: #333;
+      background: #f8f9fa;
+    }
+    .tab-btn.active {
+      color: #667eea;
+      border-bottom-color: #667eea;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    /* Floating tooltips that don't affect layout */
+    .btn-control[data-tooltip] {
+      position: relative;
+    }
+    .btn-control[data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 10px;
+      background: #333;
+      color: white;
+      font-size: 12px;
+      font-weight: normal;
+      white-space: nowrap;
+      border-radius: 4px;
+      pointer-events: none;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .btn-control[data-tooltip]:hover::before {
+      content: '';
+      position: absolute;
+      bottom: calc(100% + 2px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: #333;
+      pointer-events: none;
+      z-index: 1001;
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Presentation Presets</h1>
-    <p class="subtitle">Configure your 3 preset presentations</p>
+    <h1>${machineName}</h1>
+    <p class="subtitle">Control your presentations</p>
     
-    <div class="info">
-      These presets can be opened from Companion using "Open Presentation 1", "Open Presentation 2", or "Open Presentation 3" actions.
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="controls">Controls</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
     </div>
     
-    <form id="preset-form">
+    <!-- Controls Tab (Default) -->
+    <div id="tab-controls" class="tab-content active">
+      <div class="info">
+        Use these controls to manage your active presentation.
+      </div>
+      
+      <!-- Open Presentation -->
+      <div class="controls-section">
+        <h3>Open Presentation</h3>
+        <div class="preset-group">
+          <label for="presentation-url">Google Slides URL</label>
+          <input type="text" id="presentation-url" name="presentation-url" placeholder="https://docs.google.com/presentation/d/..." />
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn" id="btn-open-presentation" style="flex: 1;">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;">
+              <polyline points="5 12 3 12 12 3 21 12 19 12"></polyline>
+              <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path>
+              <polyline points="9 21 9 12 15 12 15 21"></polyline>
+            </svg>
+            Launch Presentation
+          </button>
+          <button type="button" class="btn" id="btn-open-presentation-with-notes" style="flex: 1;">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;">
+              <polyline points="5 12 3 12 12 3 21 12 19 12"></polyline>
+              <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path>
+              <polyline points="9 21 9 12 15 12 15 21"></polyline>
+            </svg>
+            Launch with Notes
+          </button>
+        </div>
+      </div>
+      
+      <!-- Speaker Notes Controls -->
+      <div class="controls-section">
+        <h3>Speaker Notes</h3>
+        <button type="button" class="btn-control" id="btn-start-notes" title="Start speaker notes window">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+          Start Notes
+        </button>
+      </div>
+      
+      <!-- Slide Controls -->
+      <div class="controls-section">
+        <h3>Slide Controls</h3>
+        <div class="controls-grid">
+          <button type="button" class="btn-control" id="btn-prev-slide" title="Go to previous slide">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            Previous Slide
+          </button>
+          <button type="button" class="btn-control" id="btn-next-slide" title="Go to next slide">
+            Next Slide
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+          <button type="button" class="btn-control" id="btn-reload" title="Reload presentation and return to current slide">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            Reload Presentation
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Settings Tab (Hidden by default) -->
+    <div id="tab-settings" class="tab-content">
+      <div class="info">
+        Configure preset presentations. These can be opened from Companion using "Open Presentation 1", "Open Presentation 2", or "Open Presentation 3" actions.
+      </div>
+      
+      <form id="preset-form">
       <div class="preset-group">
         <label for="preset1">Presentation 1</label>
         <input type="text" id="preset1" name="preset1" placeholder="https://docs.google.com/presentation/d/..." />
@@ -2736,9 +3122,10 @@ function startWebUiServer() {
         <input type="text" id="preset3" name="preset3" placeholder="https://docs.google.com/presentation/d/..." />
       </div>
       
-      <button type="submit" class="btn">Save Presets</button>
-      <button type="button" class="btn btn-secondary" id="load-btn">Load Current Presets</button>
-    </form>
+        <button type="submit" class="btn">Save Presets</button>
+        <button type="button" class="btn btn-secondary" id="load-btn">Load Current Presets</button>
+      </form>
+    </div>
     
     <div id="status" class="status"></div>
   </div>
@@ -2747,6 +3134,8 @@ function startWebUiServer() {
     const form = document.getElementById('preset-form');
     const loadBtn = document.getElementById('load-btn');
     const status = document.getElementById('status');
+    // Use current hostname so it works from other machines, fallback to localhost
+    const API_BASE = 'http://' + (window.location.hostname || '127.0.0.1') + ':' + ${apiPort};
     
     function showStatus(message, isError) {
       status.textContent = message;
@@ -2756,9 +3145,167 @@ function startWebUiServer() {
       }, 3000);
     }
     
+    // Prevent native tooltips and use custom floating ones
+    document.querySelectorAll('.btn-control[title]').forEach(btn => {
+      const titleText = btn.getAttribute('title');
+      btn.setAttribute('data-tooltip', titleText);
+      btn.removeAttribute('title'); // Remove native title to prevent layout shift
+      
+      // Restore title for accessibility when not hovering
+      btn.addEventListener('mouseenter', function() {
+        this.removeAttribute('title');
+      });
+      btn.addEventListener('mouseleave', function() {
+        this.setAttribute('title', titleText);
+      });
+    });
+    
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tabName = btn.getAttribute('data-tab');
+        
+        // Update buttons
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        // Update content
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('tab-' + tabName).classList.add('active');
+      });
+    });
+    
+    function apiCall(endpoint, method = 'POST') {
+      return fetch(API_BASE + endpoint, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' }
+      })
+        .then(res => {
+          if (!res.ok) {
+            throw new Error('HTTP error! status: ' + res.status);
+          }
+          return res.json();
+        })
+        .then(result => {
+          if (result.success !== false) {
+            showStatus(result.message || 'Action completed successfully', false);
+          } else {
+            showStatus(result.error || 'Action failed', true);
+          }
+          return result;
+        })
+        .catch(err => {
+          console.error('API call error:', err);
+          showStatus('Failed: ' + err.message + ' (Make sure the app is running)', true);
+          throw err;
+        });
+    }
+    
+    // Set up control buttons
+    document.getElementById('btn-next-slide').addEventListener('click', () => {
+      apiCall('/api/next-slide');
+    });
+    
+    document.getElementById('btn-prev-slide').addEventListener('click', () => {
+      apiCall('/api/previous-slide');
+    });
+    
+    document.getElementById('btn-reload').addEventListener('click', () => {
+      apiCall('/api/reload-presentation');
+    });
+    
+    // Helper function to validate and open presentation
+    function openPresentation(url, withNotes = false) {
+      if (!url) {
+        showStatus('Please enter a Google Slides URL', true);
+        document.getElementById('presentation-url').focus();
+        return;
+      }
+      
+      // Validate it looks like a Google Slides URL
+      if (!url.includes('docs.google.com/presentation')) {
+        showStatus('Please enter a valid Google Slides URL', true);
+        document.getElementById('presentation-url').focus();
+        return;
+      }
+      
+      const endpoint = withNotes ? '/api/open-presentation-with-notes' : '/api/open-presentation';
+      const btnId = withNotes ? 'btn-open-presentation-with-notes' : 'btn-open-presentation';
+      const btn = document.getElementById(btnId);
+      const originalText = btn.innerHTML;
+      
+      // Disable both buttons during request
+      document.getElementById('btn-open-presentation').disabled = true;
+      document.getElementById('btn-open-presentation-with-notes').disabled = true;
+      btn.innerHTML = 'Opening...';
+      
+      fetch(API_BASE + endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url })
+      })
+        .then(res => {
+          if (!res.ok) {
+            return res.json().then(data => {
+              throw new Error(data.error || 'HTTP error! status: ' + res.status);
+            });
+          }
+          return res.json();
+        })
+        .then(result => {
+          if (result.success) {
+            showStatus(result.message || 'Presentation opened successfully!', false);
+            document.getElementById('presentation-url').value = ''; // Clear the input
+          } else {
+            showStatus('Failed to open: ' + (result.error || 'Unknown error'), true);
+          }
+        })
+        .catch(err => {
+          console.error('Open presentation error:', err);
+          showStatus('Failed to open presentation: ' + err.message + ' (Make sure the app is running)', true);
+        })
+        .finally(() => {
+          document.getElementById('btn-open-presentation').disabled = false;
+          document.getElementById('btn-open-presentation-with-notes').disabled = false;
+          document.getElementById('btn-open-presentation').innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><polyline points="5 12 3 12 12 3 21 12 19 12"></polyline><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path><polyline points="9 21 9 12 15 12 15 21"></polyline></svg>Launch Presentation';
+          document.getElementById('btn-open-presentation-with-notes').innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><polyline points="5 12 3 12 12 3 21 12 19 12"></polyline><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path><polyline points="9 21 9 12 15 12 15 21"></polyline></svg>Launch with Notes';
+        });
+    }
+    
+    // Open presentation button (without notes)
+    document.getElementById('btn-open-presentation').addEventListener('click', () => {
+      const url = document.getElementById('presentation-url').value.trim();
+      openPresentation(url, false);
+    });
+    
+    // Open presentation with notes button
+    document.getElementById('btn-open-presentation-with-notes').addEventListener('click', () => {
+      const url = document.getElementById('presentation-url').value.trim();
+      openPresentation(url, true);
+    });
+    
+    // Start notes button
+    document.getElementById('btn-start-notes').addEventListener('click', () => {
+      apiCall('/api/open-speaker-notes');
+    });
+    
+    // Allow Enter key to trigger open (without notes)
+    document.getElementById('presentation-url').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('btn-open-presentation').click();
+      }
+    });
+    
+    // Speaker notes controls removed from default Controls tab - moved to Settings if needed later
+    
     // Load current presets on page load
-    fetch('http://127.0.0.1:9595/api/presets')
-      .then(res => res.json())
+    fetch(API_BASE + '/api/presets')
+      .then(res => {
+        if (!res.ok) {
+          throw new Error('HTTP error! status: ' + res.status);
+        }
+        return res.json();
+      })
       .then(data => {
         document.getElementById('preset1').value = data.presentation1 || '';
         document.getElementById('preset2').value = data.presentation2 || '';
@@ -2766,12 +3313,18 @@ function startWebUiServer() {
       })
       .catch(err => {
         console.error('Failed to load presets:', err);
+        // Don't show error on initial load, just log it
       });
     
     // Load button
     loadBtn.addEventListener('click', () => {
-      fetch('http://127.0.0.1:9595/api/presets')
-        .then(res => res.json())
+      fetch(API_BASE + '/api/presets')
+        .then(res => {
+          if (!res.ok) {
+            throw new Error('HTTP error! status: ' + res.status);
+          }
+          return res.json();
+        })
         .then(data => {
           document.getElementById('preset1').value = data.presentation1 || '';
           document.getElementById('preset2').value = data.presentation2 || '';
@@ -2779,7 +3332,8 @@ function startWebUiServer() {
           showStatus('Presets loaded', false);
         })
         .catch(err => {
-          showStatus('Failed to load presets: ' + err.message, true);
+          console.error('Load error:', err);
+          showStatus('Failed to load presets: ' + err.message + ' (Make sure the app is running)', true);
         });
     });
     
@@ -2793,12 +3347,17 @@ function startWebUiServer() {
         presentation3: document.getElementById('preset3').value.trim()
       };
       
-      fetch('http://127.0.0.1:9595/api/presets', {
+      fetch(API_BASE + '/api/presets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       })
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) {
+            throw new Error('HTTP error! status: ' + res.status);
+          }
+          return res.json();
+        })
         .then(result => {
           if (result.success) {
             showStatus('Presets saved successfully!', false);
@@ -2807,7 +3366,12 @@ function startWebUiServer() {
           }
         })
         .catch(err => {
-          showStatus('Failed to save presets: ' + err.message, true);
+          console.error('Fetch error:', err);
+          let errorMsg = 'Failed to save presets: ' + err.message;
+          if (err.message.includes('Failed to fetch')) {
+            errorMsg += ' (Make sure the app is running and check network connection)';
+          }
+          showStatus(errorMsg, true);
         });
     });
   </script>
@@ -2824,8 +3388,11 @@ function startWebUiServer() {
     res.end('Not found');
   });
   
-  webUiServer.listen(WEB_UI_PORT, '0.0.0.0', () => {
-    console.log(`[Web UI] Server listening on http://0.0.0.0:${WEB_UI_PORT}`);
+  const prefs = loadPreferences();
+  const webUiPort = prefs.webUiPort || DEFAULT_WEB_UI_PORT;
+  
+  webUiServer.listen(webUiPort, '0.0.0.0', () => {
+    console.log(`[Web UI] Server listening on http://0.0.0.0:${webUiPort}`);
   });
 }
 

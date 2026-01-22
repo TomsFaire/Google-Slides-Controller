@@ -27,6 +27,8 @@ body {
   color: var(--text-primary);
   overflow-y: auto;
   overflow-x: hidden;
+  position: relative;
+  min-height: 100vh;
 }
 
 .container {
@@ -348,4 +350,16 @@ label {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
+}
+
+/* Build number display */
+.build-number {
+  position: fixed;
+  bottom: 8px;
+  left: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  z-index: 10;
+  pointer-events: none;
 }

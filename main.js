@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -292,6 +292,24 @@ ipcMain.handle('get-displays', async () => {
 // Get saved preferences
 ipcMain.handle('get-preferences', async () => {
   return loadPreferences();
+});
+
+// Get build info (version and build number)
+ipcMain.handle('get-build-info', async () => {
+  try {
+    const packageJsonPath = path.join(__dirname, 'package.json');
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      return {
+        version: packageJson.version || '1.4.5',
+        buildNumber: packageJson.buildNumber || '24'
+      };
+  } catch (error) {
+    console.error('[Build Info] Error loading build info:', error);
+    return {
+      version: '1.4.5',
+      buildNumber: '24'
+    };
+  }
 });
 
 // Get network interfaces and IP addresses
@@ -663,40 +681,12 @@ ipcMain.handle('open-test-presentation', async () => {
   
   console.log('[Test] Window opened, loading URL...');
   
-  // Set up navigation listener to detect presentation mode activation
-  let sKeyPressed = false;
+  // Set up navigation listener
   const navigationListener = async (event, url) => {
     console.log('[Test] Navigated to:', url);
     
-    // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
-    const isPresentMode = (url.includes('/present/') || url.includes('/localpresent')) && !url.includes('/presentation/');
-    if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-      sKeyPressed = true;
-      console.log('[Test] Presentation mode URL detected, pressing "s" for speaker notes...');
-      
-      // Small delay to ensure presentation mode UI is ready
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      if (presentationWindow && !presentationWindow.isDestroyed()) {
-        try {
-          // Focus the window to ensure it receives the keyboard events
-          presentationWindow.focus();
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
-          // Send real keyboard input events for 's' key
-          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-          
-          console.log('[Test] "s" key sent via sendInputEvent');
-        } catch (error) {
-          console.error('[Test] Error sending "s" key:', error);
-        }
-        
-        // Remove the listener after we've pressed 's'
-        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-      }
-    }
+    // Just log navigation, don't auto-launch notes
+    console.log('[Test] Navigated to:', url);
   };
   
   presentationWindow.webContents.on('did-navigate', navigationListener);
@@ -729,30 +719,7 @@ ipcMain.handle('open-test-presentation', async () => {
       console.error('[Test] Error sending Ctrl+Shift+F5:', error);
     }
     
-    // Fallback: if navigation doesn't detect presentation mode, press 's' after a delay
-    setTimeout(async () => {
-      if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-        console.log('[Test] Fallback timer: pressing "s" for speaker notes...');
-        sKeyPressed = true;
-        
-        try {
-          presentationWindow.focus();
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
-          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-          
-          console.log('[Test] "s" key sent via sendInputEvent (fallback)');
-        } catch (error) {
-          console.error('[Test] Error sending "s" key (fallback):', error);
-        }
-        
-        if (presentationWindow && !presentationWindow.isDestroyed()) {
-          presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-        }
-      }
-    }, 1000);
+    // No auto-launch of speaker notes - user must call open-speaker-notes separately
   });
   
   return { success: true };
@@ -924,39 +891,9 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 
   // Listen for all page loads
   // Set up navigation listener to detect presentation mode activation
-  let sKeyPressed = false;
   const navigationListener = async (event, url) => {
     console.log('[Multi-Monitor] Navigated to:', url);
-    
-    // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
-    const isPresentMode = (url.includes('/present/') || url.includes('/localpresent')) && !url.includes('/presentation/');
-    if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-      sKeyPressed = true;
-      console.log('[Multi-Monitor] Presentation mode URL detected, pressing "s" for speaker notes...');
-      
-      // Small delay to ensure presentation mode UI is ready
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      if (presentationWindow && !presentationWindow.isDestroyed()) {
-        try {
-          // Focus the window to ensure it receives the keyboard events
-          presentationWindow.focus();
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
-          // Send real keyboard input events for 's' key
-          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-          
-          console.log('[Multi-Monitor] "s" key sent via sendInputEvent');
-        } catch (error) {
-          console.error('[Multi-Monitor] Error sending "s" key:', error);
-        }
-        
-        // Remove the listener after we've pressed 's'
-        presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-      }
-    }
+    // Just log navigation, don't auto-launch notes
   };
   
   presentationWindow.webContents.on('did-navigate', navigationListener);
@@ -989,30 +926,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       console.error('[Multi-Monitor] Error sending Ctrl+Shift+F5:', error);
     }
     
-    // Fallback: if navigation doesn't detect presentation mode, press 's' after a delay
-    setTimeout(async () => {
-      if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-        console.log('[Multi-Monitor] Fallback timer: pressing "s" for speaker notes...');
-        sKeyPressed = true;
-        
-        try {
-          presentationWindow.focus();
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
-          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-          presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-          
-          console.log('[Multi-Monitor] "s" key sent via sendInputEvent (fallback)');
-        } catch (error) {
-          console.error('[Multi-Monitor] Error sending "s" key (fallback):', error);
-        }
-        
-        if (presentationWindow && !presentationWindow.isDestroyed()) {
-          presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-        }
-      }
-    }, 1000);
+    // No auto-launch of speaker notes - user must call open-speaker-notes separately
   });
 
   presentationWindow.on('closed', () => {
@@ -1091,7 +1005,7 @@ function startHttpServer() {
         
         const state = {
           status: 'ok',
-          version: '1.2.5',
+          version: '1.4.5',
           presentationOpen: !!(presentationWindow && !presentationWindow.isDestroyed()),
           notesOpen: !!(notesWindow && !notesWindow.isDestroyed()),
           currentSlide: currentSlide,
@@ -1391,9 +1305,237 @@ function startHttpServer() {
               presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
             }
             
-            // Fallback timer
+            // No auto-launch of speaker notes - user must call /api/open-speaker-notes separately
+          });
+          
+          presentationWindow.on('closed', () => {
+            presentationWindow = null;
+            currentSlide = null;
+          });
+          
+          // Escape key handler for presentation window
+          presentationWindow.webContents.on('before-input-event', (event, input) => {
+          if (input.key === 'Escape' && input.type === 'keyDown') {
+            event.preventDefault();
+            if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+            if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+          }
+          });
+          
+          const presentUrl = toPresentUrl(url);
+          console.log('[API] Loading PRESENT URL:', presentUrl);
+          lastPresentationUrl = url; // Store original URL (not /present URL) for reload
+          currentSlide = 1;
+          presentationWindow.loadURL(presentUrl);
+          presentationWindow.show();
+          // Send response immediately
+          if (!res.headersSent) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Presentation opened (notes not auto-started)' }));
+          }
+        } catch (error) {
+          console.error('[API] Error:', error);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        }
+      });
+      return;
+    }
+
+    // POST /api/open-presentation-with-notes - Open a presentation and automatically launch speaker notes
+    if (req.method === 'POST' && req.url === '/api/open-presentation-with-notes') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const { url } = data;
+          
+          if (!url) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'URL is required' }));
+            return;
+          }
+          
+          console.log('[API] Opening presentation with notes:', url);
+          
+          // Close any existing presentation windows
+          try {
+            if (notesWindow && !notesWindow.isDestroyed()) {
+              console.log('[API] Closing existing notes window');
+              notesWindow.removeAllListeners('closed');
+              notesWindow.close();
+              notesWindow = null;
+            }
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              console.log('[API] Closing existing presentation window');
+              presentationWindow.removeAllListeners('closed');
+              presentationWindow.close();
+              presentationWindow = null;
+            }
+            currentSlide = null;
+          } catch (error) {
+            console.error('[API] Error closing existing windows:', error.message);
+          }
+          
+          // Load preferences for monitor selection
+          const prefs = loadPreferences();
+          const displays = screen.getAllDisplays();
+          
+          const presentationDisplayId = Number(prefs.presentationDisplayId);
+          const notesDisplayId = Number(prefs.notesDisplayId);
+          
+          const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+          const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
+          
+          console.log('[API] Using presentation display:', presentationDisplay.id);
+          console.log('[API] Using notes display:', notesDisplay.id);
+          
+          // Create the presentation window
+          presentationWindow = new BrowserWindow({
+            x: presentationDisplay.bounds.x,
+            y: presentationDisplay.bounds.y,
+            width: presentationDisplay.bounds.width,
+            height: presentationDisplay.bounds.height,
+            fullscreen: true,
+            frame: false,
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              partition: GOOGLE_SESSION_PARTITION
+            }
+          });
+          
+          // Set up window open handler for speaker notes popup
+          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
+            const windowOptions = {
+              frame: false,
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true,
+                partition: GOOGLE_SESSION_PARTITION
+              }
+            };
+            
+            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
+              windowOptions.x = notesDisplay.bounds.x;
+              windowOptions.y = notesDisplay.bounds.y;
+              windowOptions.width = notesDisplay.bounds.width;
+              windowOptions.height = notesDisplay.bounds.height;
+            } else {
+              windowOptions.width = 1280;
+              windowOptions.height = 720;
+            }
+            
+            return {
+              action: 'allow',
+              overrideBrowserWindowOptions: windowOptions
+            };
+          });
+          
+          // Listen for notes window creation
+          const windowCreatedListener = (event, window) => {
+            if (window !== presentationWindow && window !== mainWindow) {
+              console.log('[API] Notes window created');
+              notesWindow = window;
+              
+              // Add Escape key handler to notes window
+              window.webContents.on('before-input-event', (event, input) => {
+                if (input.key === 'Escape' && input.type === 'keyDown') {
+                  console.log('[API] Escape pressed in notes window, closing all windows');
+                  event.preventDefault();
+                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+                }
+              });
+              
+              // Position and maximize notes window
+              window.once('ready-to-show', () => {
+                // Minimize the left preview pane in speaker notes
+                minimizeSpeakerNotesPreviewPane(window);
+                
+                if (notesDisplay) {
+                  const targetBounds = {
+                    x: notesDisplay.bounds.x + 50,
+                    y: notesDisplay.bounds.y + 50,
+                    width: notesDisplay.bounds.width - 100,
+                    height: notesDisplay.bounds.height - 100
+                  };
+                  
+                  window.setBounds(targetBounds);
+                  
+                  setTimeout(() => {
+                    window.maximize();
+                  }, 50);
+                }
+              });
+              
+              app.removeListener('browser-window-created', windowCreatedListener);
+            }
+          };
+          app.on('browser-window-created', windowCreatedListener);
+          
+          // Navigation listener - auto-launch speaker notes when in presentation mode
+          let sKeyPressed = false;
+          const navigationListener = async (event, navUrl) => {
+            console.log('[API] Navigated to:', navUrl);
+            
+            // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
+            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('/localpresent')) && !navUrl.includes('/presentation/');
+            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
+              sKeyPressed = true;
+              console.log('[API] Presentation mode detected, auto-launching speaker notes...');
+              
+              // Small delay to ensure presentation mode UI is ready
+              await new Promise(resolve => setTimeout(resolve, 300));
+              
+              if (presentationWindow && !presentationWindow.isDestroyed()) {
+                try {
+                  presentationWindow.focus();
+                  await new Promise(resolve => setTimeout(resolve, 50));
+                  
+                  presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+                  presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+                  presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+                  
+                  console.log('[API] "s" key sent for speaker notes');
+                } catch (error) {
+                  console.error('[API] Error sending "s" key:', error);
+                }
+                
+                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+              }
+            }
+          };
+          
+          presentationWindow.webContents.on('did-navigate', navigationListener);
+          
+          // Listen for page load
+          presentationWindow.webContents.once('did-finish-load', async () => {
+            console.log('[API] Page finished loading');
+            if (!presentationWindow || presentationWindow.isDestroyed()) {
+              console.log('[API] Window destroyed before processing');
+              return;
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              console.log('[API] Triggering Ctrl+Shift+F5 for presentation mode');
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 50));
+              
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
+            }
+            
+            // Fallback: press 's' for speaker notes after delay if navigation didn't trigger it
             setTimeout(async () => {
-              console.log('[API] Fallback timer triggered, sKeyPressed:', sKeyPressed);
               if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
                 console.log('[API] Fallback: pressing "s" for speaker notes');
                 sKeyPressed = true;
@@ -1431,13 +1573,14 @@ function startHttpServer() {
           currentSlide = 1;
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
+          
           // Send response immediately
           if (!res.headersSent) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Presentation opened (notes not auto-started)' }));
+            res.end(JSON.stringify({ success: true, message: 'Presentation opened with notes' }));
           }
         } catch (error) {
-          console.error('[API] Error:', error);
+          console.error('[API] Error opening presentation with notes:', error);
           if (!res.headersSent) {
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message }));
@@ -1610,210 +1753,18 @@ function startHttpServer() {
       // Do the reload asynchronously
       (async () => {
         try {
-          // Capture current slide
+          // Step 1: Remember current slide number
           const savedSlide = typeof currentSlide === 'number' ? currentSlide : 1;
-          const urlToReload = lastPresentationUrl;
-
-          // Capture current zoom level from notes window before closing
-          let savedZoomLevel = null;
           
-          // Function to restore zoom level (will be called after notes window opens)
-          const restoreZoomLevel = async (window) => {
-            if (savedZoomLevel === null || !window || window.isDestroyed()) return;
-            
-            console.log('[API] Restoring zoom level to:', savedZoomLevel);
-            
-            // Wait for the page to fully load
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            
-            try {
-              // Get current zoom level
-              const currentZoom = await window.webContents.executeJavaScript(`
-                (function() {
-                  try {
-                    var zoomInBtn = document.querySelector('[title="Zoom in"]');
-                    var zoomOutBtn = document.querySelector('[title="Zoom out"]');
-                    var contentArea = document.querySelector('[role="main"]') || document.body;
-                    var style = window.getComputedStyle(contentArea);
-                    var fontSize = parseFloat(style.fontSize);
-                    var transform = style.transform;
-                    var scale = 1;
-                    if (transform && transform !== 'none') {
-                      var match = transform.match(/scale\\(([^)]+)\\)/);
-                      if (match) scale = parseFloat(match[1]);
-                    }
-                    var allText = document.body.innerText || '';
-                    var zoomMatch = allText.match(/(\\d+)%/);
-                    var zoomPercent = zoomMatch ? parseInt(zoomMatch[1], 10) : null;
-                    
-                    return {
-                      fontSize: fontSize,
-                      scale: scale,
-                      zoomPercent: zoomPercent,
-                      currentZoom: zoomPercent || (scale * 100) || Math.round((fontSize / 14) * 100)
-                    };
-                  } catch (e) {
-                    return { currentZoom: 100 };
-                  }
-                })()
-              `);
-              
-              const targetZoom = savedZoomLevel;
-              const currentZoomValue = currentZoom.currentZoom || 100;
-              const zoomDifference = targetZoom - currentZoomValue;
-              
-              console.log('[API] Current zoom:', currentZoomValue, 'Target zoom:', targetZoom, 'Difference:', zoomDifference);
-              
-              // Calculate how many clicks needed (each click is roughly 10-20% change)
-              // We'll use a more conservative estimate of ~15% per click
-              const clicksNeeded = Math.round(zoomDifference / 15);
-              
-              if (Math.abs(clicksNeeded) > 0 && Math.abs(zoomDifference) > 5) {
-                const buttonToClick = clicksNeeded > 0 ? 'Zoom in' : 'Zoom out';
-                const clickCount = Math.abs(clicksNeeded);
-                
-                console.log('[API] Clicking', buttonToClick, clickCount, 'times');
-                
-                for (let i = 0; i < clickCount; i++) {
-                  await new Promise(resolve => setTimeout(resolve, 250)); // Delay between clicks
-                  
-                  const result = await window.webContents.executeJavaScript(`
-                    (function() {
-                      try {
-                        var btn = document.querySelector('[title="${buttonToClick}"]');
-                        if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
-                          var mousedownEvent = new MouseEvent('mousedown', {
-                            bubbles: true,
-                            cancelable: true,
-                            view: window,
-                            button: 0
-                          });
-                          var mouseupEvent = new MouseEvent('mouseup', {
-                            bubbles: true,
-                            cancelable: true,
-                            view: window,
-                            button: 0
-                          });
-                          var clickEvent = new MouseEvent('click', {
-                            bubbles: true,
-                            cancelable: true,
-                            view: window,
-                            button: 0
-                          });
-                          
-                          btn.dispatchEvent(mousedownEvent);
-                          btn.dispatchEvent(mouseupEvent);
-                          btn.dispatchEvent(clickEvent);
-                          
-                          return { success: true };
-                        }
-                        return { success: false, error: 'Button not found or disabled' };
-                      } catch (e) {
-                        return { success: false, error: e.message };
-                      }
-                    })()
-                  `);
-                  
-                  if (!result.success) {
-                    console.log('[API] Zoom button click failed:', result.error);
-                    break; // Stop if button becomes unavailable
-                  }
-                }
-                
-                console.log('[API] Zoom restoration complete');
-              } else {
-                console.log('[API] Zoom level already correct (difference:', zoomDifference, '), no adjustment needed');
-              }
-            } catch (error) {
-              console.error('[API] Error restoring zoom level:', error);
-            }
-          };
-          if (notesWindow && !notesWindow.isDestroyed()) {
-            try {
-              const zoomInfo = await notesWindow.webContents.executeJavaScript(`
-                (function() {
-                  try {
-                    // Try to detect zoom level by checking font sizes or transform scales
-                    // Look for the main content area in speaker notes
-                    var contentArea = document.querySelector('[role="main"]') || 
-                                    document.querySelector('.speaker-notes') ||
-                                    document.body;
-                    
-                    if (contentArea) {
-                      var style = window.getComputedStyle(contentArea);
-                      var fontSize = parseFloat(style.fontSize);
-                      var transform = style.transform;
-                      
-                      // Check for zoom/scale in transform
-                      var scale = 1;
-                      if (transform && transform !== 'none') {
-                        var match = transform.match(/scale\\(([^)]+)\\)/);
-                        if (match) {
-                          scale = parseFloat(match[1]);
-                        }
-                      }
-                      
-                      // Try to find zoom buttons to see if they're disabled (at min/max)
-                      var zoomInBtn = document.querySelector('[title="Zoom in"]');
-                      var zoomOutBtn = document.querySelector('[title="Zoom out"]');
-                      var zoomInDisabled = zoomInBtn ? zoomInBtn.disabled || zoomInBtn.getAttribute('aria-disabled') === 'true' : false;
-                      var zoomOutDisabled = zoomOutBtn ? zoomOutBtn.disabled || zoomOutBtn.getAttribute('aria-disabled') === 'true' : false;
-                      
-                      // Try to find a zoom indicator in the UI
-                      var zoomText = null;
-                      var allText = document.body.innerText || '';
-                      var zoomMatch = allText.match(/(\\d+)%/);
-                      if (zoomMatch) {
-                        zoomText = parseInt(zoomMatch[1], 10);
-                      }
-                      
-                      return {
-                        fontSize: fontSize,
-                        scale: scale,
-                        zoomInDisabled: zoomInDisabled,
-                        zoomOutDisabled: zoomOutDisabled,
-                        zoomPercent: zoomText,
-                        // Calculate relative zoom: we'll use a combination of factors
-                        relativeZoom: zoomText || (scale * 100) || null
-                      };
-                    }
-                    return null;
-                  } catch (e) {
-                    return null;
-                  }
-                })()
-              `);
-              
-              if (zoomInfo && zoomInfo.relativeZoom !== null) {
-                savedZoomLevel = zoomInfo.relativeZoom;
-                console.log('[API] Captured zoom level:', savedZoomLevel);
-              } else {
-                // Fallback: try to count zoom clicks by checking button states
-                // If zoom out is disabled, we're at minimum; if zoom in is disabled, we're at maximum
-                // Otherwise, we'll try to detect from font size
-                if (zoomInfo) {
-                  if (zoomInfo.zoomOutDisabled && !zoomInfo.zoomInDisabled) {
-                    savedZoomLevel = 50; // Minimum zoom
-                  } else if (zoomInfo.zoomInDisabled && !zoomInfo.zoomOutDisabled) {
-                    savedZoomLevel = 200; // Maximum zoom
-                  } else if (zoomInfo.fontSize) {
-                    // Use font size as a proxy (default is usually around 14-16px)
-                    savedZoomLevel = Math.round((zoomInfo.fontSize / 14) * 100);
-                  } else {
-                    savedZoomLevel = 100; // Default/unknown
-                  }
-                  console.log('[API] Captured zoom level (fallback):', savedZoomLevel);
-                }
-              }
-            } catch (error) {
-              console.error('[API] Error capturing zoom level:', error);
-              savedZoomLevel = 100; // Default fallback
-            }
-          }
-
-          console.log('[API] Reloading presentation: saving slide', savedSlide, 'zoom level', savedZoomLevel, 'URL:', urlToReload);
-
-          // Close existing windows
+          // Step 2: Remember if speaker notes are open (boolean)
+          const notesWereOpen = !!(notesWindow && !notesWindow.isDestroyed());
+          
+          // Step 3: Remember the URL
+          const urlToReload = lastPresentationUrl;
+          
+          console.log('[API] Reload: Saving state - slide:', savedSlide, 'notes open:', notesWereOpen, 'URL:', urlToReload);
+          
+          // Step 4: Close the presentation
           if (notesWindow && !notesWindow.isDestroyed()) {
             notesWindow.removeAllListeners('closed');
             notesWindow.close();
@@ -1825,18 +1776,18 @@ function startHttpServer() {
             presentationWindow = null;
           }
           currentSlide = null;
-
-          // Wait a moment for windows to close
-          await new Promise(resolve => setTimeout(resolve, 500));
-
-          // Re-open the presentation (reuse the same logic as /api/open-presentation)
+          
+          // Wait for windows to close
+          await new Promise(resolve => setTimeout(resolve, 200));
+          
+          // Step 5: Reopen the presentation (using same logic as /api/open-presentation)
           const prefs = loadPreferences();
           const displays = screen.getAllDisplays();
           const presentationDisplayId = Number(prefs.presentationDisplayId);
           const notesDisplayId = Number(prefs.notesDisplayId);
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-
+          
           presentationWindow = new BrowserWindow({
             x: presentationDisplay.bounds.x,
             y: presentationDisplay.bounds.y,
@@ -1850,8 +1801,8 @@ function startHttpServer() {
               partition: GOOGLE_SESSION_PARTITION
             }
           });
-
-          // Set up window handlers (same as open-presentation)
+          
+          // Set up window open handler for speaker notes popup
           presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
             const windowOptions = {
               frame: false,
@@ -1861,6 +1812,7 @@ function startHttpServer() {
                 partition: GOOGLE_SESSION_PARTITION
               }
             };
+            
             if (notesDisplay && notesDisplayId !== presentationDisplayId) {
               windowOptions.x = notesDisplay.bounds.x;
               windowOptions.y = notesDisplay.bounds.y;
@@ -1870,12 +1822,20 @@ function startHttpServer() {
               windowOptions.width = 1280;
               windowOptions.height = 720;
             }
-            return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
+            
+            return {
+              action: 'allow',
+              overrideBrowserWindowOptions: windowOptions
+            };
           });
-
+          
+          // Listen for notes window creation
           const windowCreatedListener = (event, window) => {
             if (window !== presentationWindow && window !== mainWindow) {
+              console.log('[API] Reload: Notes window created');
               notesWindow = window;
+              
+              // Add Escape key handler to notes window
               window.webContents.on('before-input-event', (event, input) => {
                 if (input.key === 'Escape' && input.type === 'keyDown') {
                   event.preventDefault();
@@ -1883,8 +1843,9 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
+              
+              // Position and maximize notes window
               window.once('ready-to-show', () => {
-                // Minimize the left preview pane in speaker notes
                 minimizeSpeakerNotesPreviewPane(window);
                 
                 if (notesDisplay) {
@@ -1894,121 +1855,71 @@ function startHttpServer() {
                     width: notesDisplay.bounds.width - 100,
                     height: notesDisplay.bounds.height - 100
                   };
+                  
                   window.setBounds(targetBounds);
-                  setTimeout(() => { window.maximize(); }, 50);
-                }
-                
-                // Restore zoom level if we saved one
-                if (savedZoomLevel !== null) {
-                  // Wait for the page to fully load before restoring zoom
-                  window.webContents.once('did-finish-load', () => {
-                    restoreZoomLevel(window);
-                  });
+                  
+                  setTimeout(() => {
+                    window.maximize();
+                  }, 50);
                 }
               });
+              
               app.removeListener('browser-window-created', windowCreatedListener);
             }
           };
           app.on('browser-window-created', windowCreatedListener);
-
-          // Set up navigation listener for speaker notes
-          let sKeyPressed = false;
-          const navigationListener = async (event, navUrl) => {
-            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
-            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              sKeyPressed = true;
-              await new Promise(resolve => setTimeout(resolve, 300));
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                presentationWindow.focus();
-                await new Promise(resolve => setTimeout(resolve, 50));
-                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
-            }
-          };
-          presentationWindow.webContents.on('did-navigate', navigationListener);
-
-          // Load the presentation
-          const presentUrl = toPresentUrl(urlToReload);
-          lastPresentationUrl = urlToReload; // Re-store it
-          currentSlide = 1; // Will be updated after navigation
           
-          // Ensure fullscreen on macOS (sometimes needed after programmatic window creation)
-          // Set up fullscreen handler before loading
-          presentationWindow.once('ready-to-show', () => {
-            if (process.platform === 'darwin' && presentationWindow && !presentationWindow.isDestroyed()) {
-              // Ensure window is on correct display and set fullscreen
-              presentationWindow.setBounds({
-                x: presentationDisplay.bounds.x,
-                y: presentationDisplay.bounds.y,
-                width: presentationDisplay.bounds.width,
-                height: presentationDisplay.bounds.height
-              });
-              setTimeout(() => {
-                if (presentationWindow && !presentationWindow.isDestroyed()) {
-                  presentationWindow.setFullScreen(true);
-                }
-              }, 50);
+          // Set up window event handlers
+          presentationWindow.on('closed', () => {
+            presentationWindow = null;
+            currentSlide = null;
+          });
+          
+          // Escape key handler for presentation window
+          presentationWindow.webContents.on('before-input-event', (event, input) => {
+            if (input.key === 'Escape' && input.type === 'keyDown') {
+              event.preventDefault();
+              if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+              if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
             }
           });
+          
+          // Load the presentation
+          const presentUrl = toPresentUrl(urlToReload);
+          lastPresentationUrl = urlToReload;
+          currentSlide = 1; // Will be updated after navigation
           
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
           
-          // Fallback: set fullscreen after a short delay if ready-to-show already fired
-          if (process.platform === 'darwin') {
-            setTimeout(() => {
-              if (presentationWindow && !presentationWindow.isDestroyed() && !presentationWindow.isFullScreen()) {
-                presentationWindow.setBounds({
-                  x: presentationDisplay.bounds.x,
-                  y: presentationDisplay.bounds.y,
-                  width: presentationDisplay.bounds.width,
-                  height: presentationDisplay.bounds.height
-                });
-                presentationWindow.setFullScreen(true);
-              }
-            }, 200);
-          }
-
-          // Wait for presentation to load and enter presentation mode
-          await new Promise(resolve => setTimeout(resolve, 2000));
-
-          // Trigger presentation mode (Ctrl+Shift+F5)
+          // Trigger presentation mode when page loads
           presentationWindow.webContents.once('did-finish-load', async () => {
+            console.log('[API] Reload: Page finished loading');
+            if (!presentationWindow || presentationWindow.isDestroyed()) {
+              return;
+            }
+            
             await new Promise(resolve => setTimeout(resolve, 200));
+            
             if (presentationWindow && !presentationWindow.isDestroyed()) {
+              console.log('[API] Reload: Triggering Ctrl+Shift+F5 for presentation mode');
               presentationWindow.focus();
               await new Promise(resolve => setTimeout(resolve, 50));
+              
               presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
               presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
             }
           });
-
-          // Fallback: press 's' for speaker notes after delay
-          setTimeout(async () => {
-            if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              sKeyPressed = true;
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 50));
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
-            }
-          }, 1000);
-
-          // Wait for presentation mode to be ready, then navigate to saved slide
-          await new Promise(resolve => setTimeout(resolve, 3000));
-
+          
+          // Wait for presentation mode to be ready
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Step 6: Navigate to the saved slide number
           if (presentationWindow && !presentationWindow.isDestroyed() && savedSlide > 1) {
-            console.log('[API] Navigating to saved slide:', savedSlide);
+            console.log('[API] Reload: Navigating to saved slide:', savedSlide);
             presentationWindow.focus();
             await new Promise(resolve => setTimeout(resolve, 100));
-
+            
             // Navigate to the saved slide (from slide 1)
             const slidesToMove = savedSlide - 1;
             for (let i = 0; i < slidesToMove; i++) {
@@ -2019,22 +1930,28 @@ function startHttpServer() {
               }
             }
             currentSlide = savedSlide;
-            console.log('[API] Reload complete: returned to slide', savedSlide);
+            console.log('[API] Reload: Returned to slide', savedSlide);
           }
-
-          presentationWindow.on('closed', () => {
-            presentationWindow = null;
-            currentSlide = null;
-          });
-
-          presentationWindow.webContents.on('before-input-event', (event, input) => {
-            if (input.key === 'Escape' && input.type === 'keyDown') {
-              event.preventDefault();
-              if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-              if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-            }
-          });
-
+          
+          // Step 7: Reopen speaker notes if they were previously open
+          if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
+            console.log('[API] Reload: Speaker notes were previously open, launching them now');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            presentationWindow.focus();
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+            presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+            presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+            
+            console.log('[API] Reload: Speaker notes launch command sent');
+          } else {
+            console.log('[API] Reload: Speaker notes were not previously open, skipping');
+          }
+          
+          console.log('[API] Reload: Complete');
+          
         } catch (error) {
           console.error('[API] Error during reload:', error);
         }
@@ -2066,7 +1983,7 @@ function startHttpServer() {
       return;
     }
 
-    // POST /api/open-speaker-notes - Toggle speaker notes (s key)
+    // POST /api/open-speaker-notes - Open/start speaker notes (s key)
     if (req.method === 'POST' && req.url === '/api/open-speaker-notes') {
       if (!presentationWindow || presentationWindow.isDestroyed()) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -2075,13 +1992,15 @@ function startHttpServer() {
       }
 
       try {
+        console.log('[API] Opening speaker notes');
         presentationWindow.focus();
+        await new Promise(resolve => setTimeout(resolve, 50));
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
         presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Speaker notes toggled' }));
+        res.end(JSON.stringify({ success: true, message: 'Speaker notes opened' }));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
@@ -2353,6 +2272,99 @@ function startHttpServer() {
       return;
     }
     
+    // GET /api/get-speaker-notes - Get current speaker notes content
+    if (req.method === 'GET' && req.url === '/api/get-speaker-notes') {
+      if (!notesWindow || notesWindow.isDestroyed()) {
+        res.writeHead(200, { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({ success: false, notes: '', error: 'No speaker notes window is open' }));
+        return;
+      }
+
+      (async () => {
+        try {
+          const notesContent = await notesWindow.webContents.executeJavaScript(`
+            (function(){
+              // Google Slides uses a specific table element for speaker notes
+              // Look for the table with class/id containing "punch-viewer-speakernotes"
+              var notesTable = document.querySelector('table.punch-viewer-speakernotes, table[id*="speakernotes"], table[class*="speakernotes"]');
+              
+              if (!notesTable) {
+                // Try alternative selectors
+                notesTable = document.querySelector('[class*="punch-viewer-speakernotes"]');
+              }
+              
+              if (!notesTable) {
+                // Try finding by ID
+                notesTable = document.getElementById('punch-viewer-speakernotes');
+              }
+              
+              if (notesTable) {
+                // Get all text content from the table
+                var notesText = notesTable.innerText || notesTable.textContent || '';
+                
+                // Clean up the text - remove any UI artifacts
+                notesText = notesText.trim();
+                
+                // Remove common UI patterns that might leak through
+                notesText = notesText.replace(/Slide \\d+ of \\d+/gi, '');
+                notesText = notesText.replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, '');
+                notesText = notesText.replace(/Pause|Reset|Zoom|Previous|Next|Timer|Presenter/gi, '');
+                notesText = notesText.replace(/AUDIENCE TOOLS|SPEAKER NOTES/gi, '');
+                notesText = notesText.replace(/Q&A|Questions|Answers/gi, '');
+                
+                // Clean up multiple newlines and whitespace
+                notesText = notesText.replace(/\\n{3,}/g, '\\n\\n');
+                notesText = notesText.replace(/[ \\t]{2,}/g, ' ');
+                notesText = notesText.trim();
+                
+                if (notesText.length > 0) {
+                  return notesText;
+                }
+              }
+              
+              // Fallback: try to find any element with that class/id pattern
+              var notesElement = document.querySelector('[class*="punch-viewer-speakernotes"], [id*="speakernotes"]');
+              if (notesElement) {
+                var notesText = notesElement.innerText || notesElement.textContent || '';
+                notesText = notesText.trim();
+                
+                // Clean up
+                notesText = notesText.replace(/Slide \\d+ of \\d+/gi, '');
+                notesText = notesText.replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, '');
+                notesText = notesText.replace(/Pause|Reset|Zoom|Previous|Next|Timer|Presenter/gi, '');
+                notesText = notesText.replace(/AUDIENCE TOOLS|SPEAKER NOTES/gi, '');
+                notesText = notesText.replace(/Q&A|Questions|Answers/gi, '');
+                notesText = notesText.replace(/\\n{3,}/g, '\\n\\n').trim();
+                
+                if (notesText.length > 0) {
+                  return notesText;
+                }
+              }
+              
+              return 'No notes available for this slide.';
+            })()
+          `);
+          
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ success: true, notes: notesContent || 'No notes available for this slide.' }));
+        } catch (error) {
+          console.error('[API] Error getting speaker notes:', error);
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ success: false, notes: '', error: error.message }));
+        }
+      })();
+      return;
+    }
+
     // GET /api/presets - Get all preset presentations
     if (req.method === 'GET' && req.url === '/api/presets') {
       console.log('[API] GET /api/presets - Loading presets');
@@ -2746,6 +2758,21 @@ function startHttpServer() {
   
   httpServer.listen(apiPort, '0.0.0.0', () => {
     console.log(`[API] HTTP server listening on http://0.0.0.0:${apiPort}`);
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[API] Port ${apiPort} is already in use`);
+      dialog.showErrorBox(
+        'Port Already in Use',
+        `Port ${apiPort} is already in use. Another instance of Google Slides Opener may be running.\n\nPlease quit the other instance or change the API port in settings.`
+      );
+      // Don't exit the app, but the server won't start
+    } else {
+      console.error('[API] Server error:', err);
+      dialog.showErrorBox(
+        'Server Error',
+        `Failed to start API server: ${err.message}`
+      );
+    }
   });
 }
 
@@ -2769,6 +2796,12 @@ function startWebUiServer() {
       const prefs = loadPreferences();
       const apiPort = prefs.apiPort || DEFAULT_API_PORT;
       const webUiPort = prefs.webUiPort || DEFAULT_WEB_UI_PORT;
+      
+      // Get version and build number
+      const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+      const version = packageJson.version || '1.4.5';
+      const buildNumber = packageJson.buildNumber || '1';
+      const versionString = `v${version}.${buildNumber}`;
       
       // Get machine name or fallback to hostname
       // Escape HTML to prevent XSS
@@ -2808,11 +2841,21 @@ function startWebUiServer() {
       color: #333;
       margin-bottom: 10px;
       font-size: 28px;
+      transition: all 0.3s;
+    }
+    body.notes-visible h1 {
+      font-size: 20px;
+      margin-bottom: 5px;
     }
     .subtitle {
       color: #666;
       margin-bottom: 30px;
       font-size: 14px;
+      transition: all 0.3s;
+    }
+    body.notes-visible .subtitle {
+      font-size: 11px;
+      margin-bottom: 15px;
     }
     .preset-group {
       margin-bottom: 24px;
@@ -2863,24 +2906,38 @@ function startWebUiServer() {
       background: #5a6268;
     }
     .status {
-      margin-top: 20px;
-      padding: 12px;
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      padding: 12px 20px;
       border-radius: 8px;
       text-align: center;
       font-size: 14px;
-      display: none;
+      font-weight: 500;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 1000;
+      min-width: 200px;
+      max-width: 90%;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      transition: all 0.3s ease;
     }
     .status.success {
       background: #d4edda;
       color: #155724;
       border: 1px solid #c3e6cb;
-      display: block;
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+      pointer-events: auto;
     }
     .status.error {
       background: #f8d7da;
       color: #721c24;
       border: 1px solid #f5c6cb;
-      display: block;
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+      pointer-events: auto;
     }
     .info {
       background: #e7f3ff;
@@ -2952,6 +3009,11 @@ function startWebUiServer() {
       gap: 8px;
       margin-bottom: 24px;
       border-bottom: 2px solid #e0e0e0;
+      transition: all 0.3s;
+    }
+    body.notes-visible .tabs {
+      margin-bottom: 12px;
+      border-bottom-width: 1px;
     }
     .tab-btn {
       padding: 12px 24px;
@@ -2962,8 +3024,13 @@ function startWebUiServer() {
       font-weight: 600;
       color: #666;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.3s;
       margin-bottom: -2px;
+    }
+    body.notes-visible .tab-btn {
+      padding: 8px 16px;
+      font-size: 13px;
+      border-bottom-width: 2px;
     }
     .tab-btn:hover {
       color: #333;
@@ -3011,6 +3078,177 @@ function startWebUiServer() {
       pointer-events: none;
       z-index: 1001;
     }
+    /* Build number display */
+    .build-number {
+      position: fixed;
+      bottom: 8px;
+      left: 8px;
+      font-size: 11px;
+      color: #999;
+      opacity: 0.7;
+      z-index: 10;
+    }
+    /* Remote tab - big buttons for mobile */
+    .remote-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+    .remote-header h2 {
+      margin: 0;
+      font-size: 20px;
+      color: #333;
+    }
+    .notes-toggle-btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .notes-toggle-btn:hover {
+      background: #5568d3;
+    }
+    .notes-toggle-btn.active {
+      background: #764ba2;
+    }
+    .notes-toggle-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+    .remote-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      padding: 20px 0;
+      transition: all 0.3s;
+    }
+    .remote-controls.with-notes {
+      gap: 12px;
+    }
+    .remote-btn {
+      width: 100%;
+      padding: 40px 20px;
+      font-size: 24px;
+      font-weight: 700;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      min-height: 120px;
+    }
+    .remote-controls.with-notes .remote-btn {
+      padding: 20px 16px;
+      font-size: 18px;
+      min-height: 70px;
+    }
+    .remote-btn-prev {
+      background: #667eea;
+      color: white;
+    }
+    .remote-btn-prev:hover {
+      background: #5568d3;
+      transform: scale(1.02);
+    }
+    .remote-btn-next {
+      background: #667eea;
+      color: white;
+    }
+    .remote-btn-next:hover {
+      background: #5568d3;
+      transform: scale(1.02);
+    }
+    .remote-btn:active {
+      transform: scale(0.98);
+    }
+    .remote-btn svg {
+      width: 32px;
+      height: 32px;
+      transition: all 0.3s;
+    }
+    .remote-controls.with-notes .remote-btn svg {
+      width: 24px;
+      height: 24px;
+    }
+    /* Speaker notes display */
+    .speaker-notes-container {
+      display: none;
+      margin-top: 12px;
+      transition: all 0.3s;
+    }
+    .speaker-notes-container.visible {
+      display: block;
+    }
+    .speaker-notes-content-wrapper {
+      background: #f8f9fa;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      padding: 16px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .speaker-notes-content {
+      color: #333;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .speaker-notes-content.zoom-small {
+      font-size: 12px;
+    }
+    .speaker-notes-content.zoom-large {
+      font-size: 18px;
+    }
+    .notes-zoom-controls {
+      display: none;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 12px;
+      position: sticky;
+      bottom: 0;
+      background: white;
+      padding: 8px 0;
+      z-index: 10;
+    }
+    .notes-zoom-controls.visible {
+      display: flex;
+    }
+    .notes-zoom-btn {
+      background: #f8f9fa;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      transition: all 0.2s;
+    }
+    .notes-zoom-btn:hover {
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
+    }
+    /* Bigger slide control buttons */
+    .btn-control-large {
+      padding: 20px 24px;
+      font-size: 18px;
+      min-height: 60px;
+    }
   </style>
 </head>
 <body>
@@ -3020,12 +3258,49 @@ function startWebUiServer() {
     
     <!-- Tabs -->
     <div class="tabs">
-      <button class="tab-btn active" data-tab="controls">Controls</button>
+      <button class="tab-btn active" data-tab="remote">Remote</button>
+      <button class="tab-btn" data-tab="controls">Controls</button>
       <button class="tab-btn" data-tab="settings">Settings</button>
     </div>
     
-    <!-- Controls Tab (Default) -->
-    <div id="tab-controls" class="tab-content active">
+    <!-- Remote Tab (Default) -->
+    <div id="tab-remote" class="tab-content active">
+      <div class="remote-header">
+        <h2>Remote Control</h2>
+        <button type="button" class="notes-toggle-btn" id="notes-toggle-btn" title="Toggle speaker notes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          Notes
+        </button>
+      </div>
+      <div class="remote-controls" id="remote-controls">
+        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          Previous Slide
+        </button>
+        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next">
+          Next Slide
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
+      <div class="speaker-notes-container" id="speaker-notes-container">
+        <div class="notes-zoom-controls" id="notes-zoom-controls">
+          <button type="button" class="notes-zoom-btn" id="notes-zoom-out">Zoom Out</button>
+          <button type="button" class="notes-zoom-btn" id="notes-zoom-in">Zoom In</button>
+        </div>
+        <div class="speaker-notes-content-wrapper">
+          <div class="speaker-notes-content" id="speaker-notes-content">Loading notes...</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Controls Tab -->
+    <div id="tab-controls" class="tab-content">
       <div class="info">
         Use these controls to manage your active presentation.
       </div>
@@ -3057,6 +3332,14 @@ function startWebUiServer() {
         </div>
       </div>
       
+      <!-- Preset Presentations -->
+      <div class="controls-section">
+        <h3>Preset Presentations</h3>
+        <div id="preset-buttons-container" style="display: flex; flex-direction: column; gap: 10px;">
+          <!-- Preset buttons will be dynamically loaded here -->
+        </div>
+      </div>
+      
       <!-- Speaker Notes Controls -->
       <div class="controls-section">
         <h3>Speaker Notes</h3>
@@ -3072,29 +3355,24 @@ function startWebUiServer() {
         </button>
       </div>
       
-      <!-- Slide Controls -->
+      <!-- Presentation Controls -->
       <div class="controls-section">
-        <h3>Slide Controls</h3>
+        <h3>Presentation Controls</h3>
         <div class="controls-grid">
-          <button type="button" class="btn-control" id="btn-prev-slide" title="Go to previous slide">
-            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="15 18 9 12 15 6"></polyline>
-            </svg>
-            Previous Slide
-          </button>
-          <button type="button" class="btn-control" id="btn-next-slide" title="Go to next slide">
-            Next Slide
-            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="9 18 15 12 9 6"></polyline>
-            </svg>
-          </button>
-          <button type="button" class="btn-control" id="btn-reload" title="Reload presentation and return to current slide">
+          <button type="button" class="btn-control" id="btn-reload" data-tooltip="Reload presentation and return to current slide">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="23 4 23 10 17 10"></polyline>
               <polyline points="1 20 1 14 7 14"></polyline>
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
             </svg>
             Reload Presentation
+          </button>
+          <button type="button" class="btn-control" id="btn-close-presentation" data-tooltip="Close current presentation">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+            Close Presentation
           </button>
         </div>
       </div>
@@ -3128,6 +3406,7 @@ function startWebUiServer() {
     </div>
     
     <div id="status" class="status"></div>
+    <div class="build-number">${versionString}</div>
   </div>
   
   <script>
@@ -3142,11 +3421,18 @@ function startWebUiServer() {
       status.className = 'status ' + (isError ? 'error' : 'success');
       setTimeout(() => {
         status.className = 'status';
+        status.textContent = ''; // Clear text when hidden
       }, 3000);
     }
     
-    // Prevent native tooltips and use custom floating ones
+    // Prevent native tooltips and use custom floating ones (skip prev/next slide buttons)
     document.querySelectorAll('.btn-control[title]').forEach(btn => {
+      // Skip prev/next slide buttons - no tooltips for those
+      if (btn.id === 'btn-prev-slide' || btn.id === 'btn-next-slide') {
+        btn.removeAttribute('title');
+        return;
+      }
+      
       const titleText = btn.getAttribute('title');
       btn.setAttribute('data-tooltip', titleText);
       btn.removeAttribute('title'); // Remove native title to prevent layout shift
@@ -3201,17 +3487,120 @@ function startWebUiServer() {
         });
     }
     
+    // Haptic feedback function for mobile devices
+    function triggerHapticFeedback() {
+      if ('vibrate' in navigator) {
+        // Light vibration for button press
+        navigator.vibrate(10);
+      }
+    }
+    
     // Set up control buttons
-    document.getElementById('btn-next-slide').addEventListener('click', () => {
-      apiCall('/api/next-slide');
-    });
-    
-    document.getElementById('btn-prev-slide').addEventListener('click', () => {
-      apiCall('/api/previous-slide');
-    });
-    
     document.getElementById('btn-reload').addEventListener('click', () => {
       apiCall('/api/reload-presentation');
+    });
+    
+    document.getElementById('btn-close-presentation').addEventListener('click', () => {
+      apiCall('/api/close-presentation');
+    });
+    
+    // Remote tab buttons
+    // Speaker notes functionality
+    let notesVisible = false;
+    let notesZoomLevel = 'normal'; // 'small', 'normal', 'large'
+    
+    function loadSpeakerNotes() {
+      fetch(API_BASE + '/api/get-speaker-notes')
+        .then(res => res.json())
+        .then(data => {
+          const notesContent = document.getElementById('speaker-notes-content');
+          if (data.success && data.notes) {
+            notesContent.textContent = data.notes;
+          } else {
+            notesContent.textContent = data.notes || 'No notes available. Make sure speaker notes are open.';
+          }
+        })
+        .catch(err => {
+          console.error('Failed to load speaker notes:', err);
+          document.getElementById('speaker-notes-content').textContent = 'Failed to load notes.';
+        });
+    }
+    
+    function updateNotesZoom() {
+      const notesContent = document.getElementById('speaker-notes-content');
+      notesContent.className = 'speaker-notes-content zoom-' + notesZoomLevel;
+    }
+    
+    document.getElementById('notes-toggle-btn').addEventListener('click', () => {
+      notesVisible = !notesVisible;
+      const btn = document.getElementById('notes-toggle-btn');
+      const container = document.getElementById('speaker-notes-container');
+      const controls = document.getElementById('remote-controls');
+      const zoomControls = document.getElementById('notes-zoom-controls');
+      const body = document.body;
+      
+      if (notesVisible) {
+        btn.classList.add('active');
+        container.classList.add('visible');
+        controls.classList.add('with-notes');
+        zoomControls.classList.add('visible');
+        body.classList.add('notes-visible');
+        loadSpeakerNotes();
+        // Refresh notes every 2 seconds when visible
+        if (window.notesRefreshInterval) clearInterval(window.notesRefreshInterval);
+        window.notesRefreshInterval = setInterval(loadSpeakerNotes, 2000);
+      } else {
+        btn.classList.remove('active');
+        container.classList.remove('visible');
+        controls.classList.remove('with-notes');
+        zoomControls.classList.remove('visible');
+        body.classList.remove('notes-visible');
+        if (window.notesRefreshInterval) {
+          clearInterval(window.notesRefreshInterval);
+          window.notesRefreshInterval = null;
+        }
+      }
+    });
+    
+    // Notes zoom controls
+    document.getElementById('notes-zoom-out').addEventListener('click', () => {
+      if (notesZoomLevel === 'large') {
+        notesZoomLevel = 'normal';
+      } else if (notesZoomLevel === 'normal') {
+        notesZoomLevel = 'small';
+      }
+      updateNotesZoom();
+      apiCall('/api/zoom-out-notes').catch(() => {}); // Try API zoom too
+    });
+    
+    document.getElementById('notes-zoom-in').addEventListener('click', () => {
+      if (notesZoomLevel === 'small') {
+        notesZoomLevel = 'normal';
+      } else if (notesZoomLevel === 'normal') {
+        notesZoomLevel = 'large';
+      }
+      updateNotesZoom();
+      apiCall('/api/zoom-in-notes').catch(() => {}); // Try API zoom too
+    });
+    
+    document.getElementById('remote-btn-next').addEventListener('click', () => {
+      triggerHapticFeedback();
+      apiCall('/api/next-slide').then(() => {
+        // Refresh notes after slide change
+        if (notesVisible) {
+          loadSpeakerNotes();
+        }
+      });
+    });
+    
+    document.getElementById('remote-btn-prev').addEventListener('click', () => {
+      triggerHapticFeedback();
+      apiCall('/api/previous-slide').then(() => {
+        // Refresh notes after slide change
+        if (notesVisible) {
+          loadSpeakerNotes();
+        }
+      });
     });
     
     // Helper function to validate and open presentation
@@ -3298,6 +3687,58 @@ function startWebUiServer() {
     
     // Speaker notes controls removed from default Controls tab - moved to Settings if needed later
     
+    // Function to create preset buttons
+    function createPresetButtons(presets) {
+      const container = document.getElementById('preset-buttons-container');
+      container.innerHTML = '';
+      
+      for (let i = 1; i <= 3; i++) {
+        const presetUrl = presets[\`presentation\${i}\`];
+        if (!presetUrl || presetUrl.trim() === '') {
+          continue; // Skip empty presets
+        }
+        
+        const presetGroup = document.createElement('div');
+        presetGroup.style.cssText = 'display: flex; gap: 10px; margin-bottom: 10px;';
+        
+        const label = document.createElement('div');
+        label.textContent = \`Presentation \${i}:\`;
+        label.style.cssText = 'font-weight: 600; color: #333; padding: 12px 0; min-width: 120px; font-size: 14px;';
+        
+        const buttonGroup = document.createElement('div');
+        buttonGroup.style.cssText = 'display: flex; gap: 10px; flex: 1;';
+        
+        const launchBtn = document.createElement('button');
+        launchBtn.type = 'button';
+        launchBtn.className = 'btn';
+        launchBtn.style.cssText = 'flex: 1;';
+        launchBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><polyline points="5 12 3 12 12 3 21 12 19 12"></polyline><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path><polyline points="9 21 9 12 15 12 15 21"></polyline></svg>Launch';
+        launchBtn.addEventListener('click', () => {
+          openPresentation(presetUrl, false);
+        });
+        
+        const launchWithNotesBtn = document.createElement('button');
+        launchWithNotesBtn.type = 'button';
+        launchWithNotesBtn.className = 'btn';
+        launchWithNotesBtn.style.cssText = 'flex: 1;';
+        launchWithNotesBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><polyline points="5 12 3 12 12 3 21 12 19 12"></polyline><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path><polyline points="9 21 9 12 15 12 15 21"></polyline></svg>Launch with Notes';
+        launchWithNotesBtn.addEventListener('click', () => {
+          openPresentation(presetUrl, true);
+        });
+        
+        buttonGroup.appendChild(launchBtn);
+        buttonGroup.appendChild(launchWithNotesBtn);
+        
+        presetGroup.appendChild(label);
+        presetGroup.appendChild(buttonGroup);
+        container.appendChild(presetGroup);
+      }
+      
+      if (container.children.length === 0) {
+        container.innerHTML = '<div style="color: #999; font-style: italic; padding: 20px; text-align: center;">No preset presentations configured. Go to Settings to add presets.</div>';
+      }
+    }
+    
     // Load current presets on page load
     fetch(API_BASE + '/api/presets')
       .then(res => {
@@ -3310,6 +3751,8 @@ function startWebUiServer() {
         document.getElementById('preset1').value = data.presentation1 || '';
         document.getElementById('preset2').value = data.presentation2 || '';
         document.getElementById('preset3').value = data.presentation3 || '';
+        // Create preset buttons in Controls tab
+        createPresetButtons(data);
       })
       .catch(err => {
         console.error('Failed to load presets:', err);
@@ -3330,6 +3773,8 @@ function startWebUiServer() {
           document.getElementById('preset2').value = data.presentation2 || '';
           document.getElementById('preset3').value = data.presentation3 || '';
           showStatus('Presets loaded', false);
+          // Update preset buttons in Controls tab
+          createPresetButtons(data);
         })
         .catch(err => {
           console.error('Load error:', err);
@@ -3361,6 +3806,13 @@ function startWebUiServer() {
         .then(result => {
           if (result.success) {
             showStatus('Presets saved successfully!', false);
+            // Reload presets to update the preset buttons
+            fetch(API_BASE + '/api/presets')
+              .then(res => res.json())
+              .then(data => {
+                createPresetButtons(data);
+              })
+              .catch(err => console.error('Failed to reload presets:', err));
           } else {
             showStatus('Failed to save: ' + (result.error || 'Unknown error'), true);
           }
@@ -3393,6 +3845,21 @@ function startWebUiServer() {
   
   webUiServer.listen(webUiPort, '0.0.0.0', () => {
     console.log(`[Web UI] Server listening on http://0.0.0.0:${webUiPort}`);
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[Web UI] Port ${webUiPort} is already in use`);
+      dialog.showErrorBox(
+        'Port Already in Use',
+        `Port ${webUiPort} is already in use. Another instance of Google Slides Opener may be running.\n\nPlease quit the other instance or change the Web UI port in settings.`
+      );
+      // Don't exit the app, but the server won't start
+    } else {
+      console.error('[Web UI] Server error:', err);
+      dialog.showErrorBox(
+        'Server Error',
+        `Failed to start Web UI server: ${err.message}`
+      );
+    }
   });
 }
 

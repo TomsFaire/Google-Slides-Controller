@@ -9,5 +9,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openPresentation: (data) => ipcRenderer.invoke('open-presentation', data),
   getPreferences: () => ipcRenderer.invoke('get-preferences'),
   savePreferences: (prefs) => ipcRenderer.invoke('save-preferences', prefs),
-  getNetworkInfo: () => ipcRenderer.invoke('get-network-info')
+  getNetworkInfo: () => ipcRenderer.invoke('get-network-info'),
+  getBuildInfo: () => ipcRenderer.invoke('get-build-info')
 });

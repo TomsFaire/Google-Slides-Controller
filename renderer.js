@@ -1,6 +1,7 @@
 // DOM Elements
 const presentationDisplay = document.getElementById('presentation-display');
 const notesDisplay = document.getElementById('notes-display');
+const machineNameInput = document.getElementById('machine-name');
 const apiPortInput = document.getElementById('api-port');
 const webUiPortInput = document.getElementById('web-ui-port');
 const signinBtn = document.getElementById('signin-btn');
@@ -45,7 +46,6 @@ async function initDisplays() {
     }
     
     // Restore machine name
-    const machineNameInput = document.getElementById('machine-name');
     if (preferences.machineName) {
       machineNameInput.value = preferences.machineName;
     }
@@ -141,21 +141,21 @@ async function saveMonitorPreferences() {
   }
 }
 
-  // Save machine name
-  async function saveMachineName() {
-    try {
-      const machineName = machineNameInput.value.trim();
-      await window.electronAPI.savePreferences({
-        machineName: machineName || null
-      });
-      showStatus('Machine name saved', 'info');
-    } catch (error) {
-      console.error('Failed to save machine name:', error);
-      showStatus('Failed to save machine name', 'error');
-    }
+// Save machine name
+async function saveMachineName() {
+  try {
+    const machineName = machineNameInput.value.trim();
+    await window.electronAPI.savePreferences({
+      machineName: machineName || null
+    });
+    showStatus('Machine name saved', 'info');
+  } catch (error) {
+    console.error('Failed to save machine name:', error);
+    showStatus('Failed to save machine name', 'error');
   }
+}
 
-  // Save port preferences
+// Save port preferences
   async function savePortPreferences() {
   try {
     const apiPort = parseInt(apiPortInput.value, 10);
@@ -297,6 +297,28 @@ async function checkSignInStatus() {
   }
 }
 
+// Load and display build number
+async function displayBuildNumber() {
+  try {
+    const buildInfo = await window.electronAPI.getBuildInfo();
+    const version = buildInfo.version || '1.4.5';
+    const buildNumber = buildInfo.buildNumber || '24';
+    const versionString = `v${version}.${buildNumber}`;
+    
+    const buildNumberEl = document.getElementById('build-number');
+    if (buildNumberEl) {
+      buildNumberEl.textContent = versionString;
+    }
+  } catch (error) {
+    console.error('Failed to load build number:', error);
+    const buildNumberEl = document.getElementById('build-number');
+    if (buildNumberEl) {
+      buildNumberEl.textContent = 'v1.4.5.24';
+    }
+  }
+}
+
 // Initialize on load
 initDisplays();
 checkSignInStatus();
+displayBuildNumber();

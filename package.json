@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
   "version": "1.4.5",
-  "buildNumber": "38",
+  "buildNumber": "39",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -66,7 +66,7 @@
     "mac": {
       "target": [
         {
-          "target": "dir",
+          "target": "zip",
           "arch": [
             "arm64"
           ]

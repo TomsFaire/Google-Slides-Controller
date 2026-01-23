@@ -43,13 +43,35 @@ function setSpeakerNotesFullscreen(window) {
   const showFullscreen = () => {
     if (window.isDestroyed()) return;
     
-    const display = screen.getDisplayMatching(window.getBounds());
-    window.setBounds(display.bounds);
-    if (process.platform === 'darwin') {
-      window.setFullScreen(true);
+    try {
+      // Get display - use primary display if window bounds are invalid (e.g., on Windows when hidden)
+      let display;
+      try {
+        const bounds = window.getBounds();
+        if (bounds.width > 0 && bounds.height > 0) {
+          display = screen.getDisplayMatching(bounds);
+        } else {
+          // Window bounds invalid, use primary display
+          display = screen.getPrimaryDisplay();
+        }
+      } catch (e) {
+        // Fallback to primary display if getDisplayMatching fails
+        display = screen.getPrimaryDisplay();
+      }
+      
+      window.setBounds(display.bounds);
+      if (process.platform === 'darwin') {
+        window.setFullScreen(true);
+      }
+      window.show();
+      console.log('[Notes] Set speaker notes window to fullscreen');
+    } catch (error) {
+      console.error('[Notes] Error setting fullscreen:', error);
+      // Fallback: just show the window
+      if (!window.isDestroyed()) {
+        window.show();
+      }
     }
-    window.show();
-    console.log('[Notes] Set speaker notes window to fullscreen');
   };
   
   // Wait for page to finish loading, then wait a bit more for layout to stabilize

@@ -77,14 +77,39 @@ jobs:
       
       - name: Re-create ZIP with signed app
         run: |
-          cd dist/mac-arm64
-          ZIP_NAME="Google Slides Opener-1.4.6-arm64-mac.zip"
-          # Remove old ZIP if it exists
-          rm -f "../../$ZIP_NAME" || true
-          # Create new ZIP with signed app
-          ditto -c -k --keepParent "Google Slides Opener.app" "../../$ZIP_NAME"
-          echo "Created signed ZIP: $ZIP_NAME"
-          ls -lh "../../$ZIP_NAME"
+          cd dist
+          # Find the ZIP file that electron-builder created
+          ZIP_FILE=$(ls -1 *.zip | head -1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in dist/"
+            ls -la dist/
+            exit 1
+          fi
+          echo "Found ZIP file: $ZIP_FILE"
+          
+          # Extract the ZIP temporarily
+          TEMP_DIR=$(mktemp -d)
+          unzip -q "$ZIP_FILE" -d "$TEMP_DIR"
+          
+          # Sign the app inside
+          APP_PATH="$TEMP_DIR/Google Slides Opener.app"
+          if [ -d "$APP_PATH" ]; then
+            echo "Signing app in extracted ZIP..."
+            xattr -cr "$APP_PATH" || true
+            codesign --force --deep --sign - "$APP_PATH"
+            codesign --verify --verbose "$APP_PATH" || echo "Verification warning"
+          fi
+          
+          # Remove old ZIP and create new one with signed app
+          rm -f "$ZIP_FILE"
+          cd "$TEMP_DIR"
+          ditto -c -k --keepParent "Google Slides Opener.app" "../$ZIP_FILE"
+          cd ..
+          
+          # Cleanup
+          rm -rf "$TEMP_DIR"
+          echo "Created signed ZIP: $ZIP_FILE"
+          ls -lh "$ZIP_FILE"
       
       - name: Install Companion Module dependencies
         run: npm ci

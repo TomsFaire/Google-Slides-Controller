@@ -46,6 +46,23 @@ jobs:
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
       
+      - name: Verify app structure
+        run: |
+          echo "Checking app structure..."
+          APP_PATH="dist/mac-arm64/Google Slides Opener.app"
+          if [ -d "$APP_PATH" ]; then
+            echo "App exists at: $APP_PATH"
+            ls -la "$APP_PATH/Contents/"
+            echo "Checking Electron Framework symlink..."
+            ls -la "$APP_PATH/Contents/Frameworks/Electron Framework.framework/" || echo "Framework check failed"
+            echo "Checking executable..."
+            ls -la "$APP_PATH/Contents/MacOS/" || echo "MacOS check failed"
+          else
+            echo "ERROR: App not found at $APP_PATH"
+            ls -la dist/
+            exit 1
+          fi
+      
       - name: Install Companion Module dependencies
         run: npm ci
         working-directory: ./companion-module-gslide-opener

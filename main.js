@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, screen, session, dialog } = require('electr
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const os = require('os');
 
 let mainWindow;
@@ -2543,6 +2544,209 @@ function startHttpServer() {
       return;
     }
     
+    // GET /api/get-stagetimer-status - Get live timer data from stagetimer.io
+    if (req.method === 'GET' && req.url === '/api/get-stagetimer-status') {
+      const prefs = loadPreferences();
+      const roomId = prefs.stagetimerRoomId;
+      const apiKey = prefs.stagetimerApiKey;
+      
+      if (!roomId || !apiKey) {
+        res.writeHead(200, { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({ 
+          success: false, 
+          error: 'Stagetimer not configured. Please set Room ID and API Key in Settings.',
+          configured: false
+        }));
+        return;
+      }
+      
+      // Call stagetimer.io API for status
+      const statusUrl = `https://api.stagetimer.io/v1/get_status?room_id=${encodeURIComponent(roomId)}&api_key=${encodeURIComponent(apiKey)}`;
+      const messagesUrl = `https://api.stagetimer.io/v1/get_all_messages?room_id=${encodeURIComponent(roomId)}&api_key=${encodeURIComponent(apiKey)}`;
+      
+      // Fetch both status and messages in parallel
+      let statusData = null;
+      let messagesData = null;
+      let completed = 0;
+      const totalRequests = 2;
+      
+      function sendResponse() {
+        if (completed < totalRequests) return;
+        
+        try {
+          if (statusData && statusData.ok && statusData.data) {
+            const status = statusData.data;
+            const now = status.server_time || Date.now();
+            
+            // Calculate remaining/elapsed time
+            let remainingMs = 0;
+            let elapsedMs = 0;
+            let displayTime = '0:00';
+            let isRunning = status.running || false;
+            
+            if (status.finish && status.start) {
+              const duration = status.finish - status.start;
+              
+              if (isRunning) {
+                remainingMs = status.finish - now; // Allow negative values
+                elapsedMs = now - status.start;
+              } else if (status.pause) {
+                // Timer is paused
+                elapsedMs = status.pause - status.start;
+                remainingMs = duration - elapsedMs;
+              } else {
+                // Timer not started
+                remainingMs = duration;
+                elapsedMs = 0;
+              }
+              
+              // Format time as MM:SS or HH:MM:SS (allow negative)
+              const totalSeconds = Math.floor(remainingMs / 1000);
+              const isNegative = totalSeconds < 0;
+              const absSeconds = Math.abs(totalSeconds);
+              const hours = Math.floor(absSeconds / 3600);
+              const minutes = Math.floor((absSeconds % 3600) / 60);
+              const seconds = absSeconds % 60;
+              
+              const sign = isNegative ? '-' : '';
+              const minStr = String(minutes).padStart(2, '0');
+              const secStr = String(seconds).padStart(2, '0');
+              
+              if (hours > 0) {
+                displayTime = sign + hours + ':' + minStr + ':' + secStr;
+              } else {
+                displayTime = sign + minutes + ':' + secStr;
+              }
+            }
+            
+            // Process messages
+            let activeMessages = [];
+            if (messagesData && messagesData.ok && messagesData.data) {
+              // Check if messages is an array directly or nested in data.messages
+              let messages = [];
+              if (Array.isArray(messagesData.data)) {
+                messages = messagesData.data;
+              } else if (messagesData.data.messages && Array.isArray(messagesData.data.messages)) {
+                messages = messagesData.data.messages;
+              }
+              
+              console.log('[API] Processing messages, found:', messages.length, 'total messages');
+              activeMessages = messages
+                .filter(msg => msg && msg.showing === true)
+                .map(msg => ({
+                  text: msg.text || '',
+                  color: msg.color || 'white',
+                  bold: msg.bold || false,
+                  uppercase: msg.uppercase || false
+                }));
+              console.log('[API] Active messages:', activeMessages.length);
+            } else {
+              console.log('[API] No messages data or not ok:', messagesData);
+            }
+            
+            res.writeHead(200, { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            });
+            res.end(JSON.stringify({
+              success: true,
+              configured: true,
+              running: isRunning,
+              displayTime: displayTime,
+              remainingMs: remainingMs,
+              elapsedMs: elapsedMs,
+              timerId: status.timer_id || null,
+              start: status.start,
+              finish: status.finish,
+              pause: status.pause,
+              serverTime: status.server_time,
+              messages: activeMessages
+            }));
+          } else {
+            res.writeHead(200, { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            });
+            res.end(JSON.stringify({ 
+              success: false, 
+              error: statusData ? (statusData.message || 'Failed to get timer status') : 'Failed to get timer status',
+              configured: true
+            }));
+          }
+        } catch (error) {
+          console.error('[API] Error processing stagetimer response:', error);
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ 
+            success: false, 
+            error: 'Failed to process response: ' + error.message,
+            configured: true
+          }));
+        }
+      }
+      
+      // Fetch status
+      https.get(statusUrl, (apiRes) => {
+        let data = '';
+        
+        apiRes.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        apiRes.on('end', () => {
+          try {
+            statusData = JSON.parse(data);
+            completed++;
+            sendResponse();
+          } catch (error) {
+            console.error('[API] Error parsing stagetimer status response:', error);
+            statusData = { ok: false, message: 'Failed to parse status response' };
+            completed++;
+            sendResponse();
+          }
+        });
+      }).on('error', (error) => {
+        console.error('[API] Error calling stagetimer.io status:', error);
+        statusData = { ok: false, message: 'Failed to connect: ' + error.message };
+        completed++;
+        sendResponse();
+      });
+      
+      // Fetch messages
+      https.get(messagesUrl, (apiRes) => {
+        let data = '';
+        
+        apiRes.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        apiRes.on('end', () => {
+          try {
+            messagesData = JSON.parse(data);
+            console.log('[API] Stagetimer messages response:', JSON.stringify(messagesData, null, 2));
+            completed++;
+            sendResponse();
+          } catch (error) {
+            console.error('[API] Error parsing stagetimer messages response:', error);
+            messagesData = { ok: false, data: { messages: [] } };
+            completed++;
+            sendResponse();
+          }
+        });
+      }).on('error', (error) => {
+        console.error('[API] Error calling stagetimer.io messages:', error);
+        messagesData = { ok: false, data: { messages: [] } };
+        completed++;
+        sendResponse();
+      });
+      return;
+    }
+    
     // GET /api/presets - Get all preset presentations
     if (req.method === 'GET' && req.url === '/api/presets') {
       console.log('[API] GET /api/presets - Loading presets');
@@ -2625,6 +2829,68 @@ function startHttpServer() {
       return;
     }
 
+    // POST /api/stagetimer-settings - Save stagetimer configuration
+    if (req.method === 'POST' && req.url === '/api/stagetimer-settings') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const prefs = loadPreferences();
+          
+          if (data.roomId !== undefined) {
+            prefs.stagetimerRoomId = data.roomId || null;
+          }
+          if (data.apiKey !== undefined) {
+            prefs.stagetimerApiKey = data.apiKey || null;
+          }
+          if (data.enabled !== undefined) {
+            prefs.stagetimerEnabled = data.enabled !== false;
+          }
+          if (data.visible !== undefined) {
+            prefs.stagetimerVisible = data.visible !== false;
+          } else {
+            // Default to true if not set
+            prefs.stagetimerVisible = true;
+          }
+          
+          savePreferences(prefs);
+          
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ success: true, message: 'Stagetimer settings saved' }));
+        } catch (error) {
+          console.error('[API] Error saving stagetimer settings:', error);
+          res.writeHead(500, { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          });
+          res.end(JSON.stringify({ success: false, error: error.message }));
+        }
+      });
+      return;
+    }
+    
+    // GET /api/stagetimer-settings - Get stagetimer configuration
+    if (req.method === 'GET' && req.url === '/api/stagetimer-settings') {
+      const prefs = loadPreferences();
+      res.writeHead(200, { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.end(JSON.stringify({
+        roomId: prefs.stagetimerRoomId || '',
+        apiKey: prefs.stagetimerApiKey || '',
+        enabled: prefs.stagetimerEnabled !== false,
+        visible: prefs.stagetimerVisible !== false && prefs.stagetimerVisible !== undefined ? prefs.stagetimerVisible : true
+      }));
+      return;
+    }
+    
     // POST /api/presets - Set preset presentations
     if (req.method === 'POST' && req.url === '/api/presets') {
       let body = '';
@@ -3432,6 +3698,112 @@ function startWebUiServer() {
       font-size: 18px;
       min-height: 60px;
     }
+    /* Stagetimer display */
+    .stagetimer-container {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 12px;
+      padding: 24px;
+      padding-bottom: 24px;
+      margin-bottom: 20px;
+      text-align: center;
+      color: white;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      position: relative;
+      height: 180px;
+      overflow: visible;
+    }
+    .stagetimer-container.error {
+      background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+    }
+    .stagetimer-container.disabled {
+      background: #e0e0e0;
+      color: #666;
+    }
+    .stagetimer-label {
+      font-size: 14px;
+      opacity: 0.9;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .stagetimer-time {
+      font-size: 48px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 2px;
+      margin: 8px 0;
+      line-height: 1.2;
+    }
+    .stagetimer-status {
+      font-size: 12px;
+      opacity: 0.8;
+      margin-top: 8px;
+    }
+    .stagetimer-name {
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 8px;
+      opacity: 0.95;
+    }
+    .stagetimer-container.running {
+      background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%);
+    }
+    .stagetimer-container.warning {
+      background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+    }
+    .stagetimer-container.critical {
+      background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+    }
+    /* Stagetimer messages - absolutely positioned to prevent layout shift */
+    .stagetimer-messages {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      margin: 0;
+      padding: 12px 24px 16px 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.3);
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.2) 50%, transparent 100%);
+      border-radius: 0 0 12px 12px;
+      max-height: 100px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: none;
+      backdrop-filter: blur(8px);
+      z-index: 10;
+    }
+    .stagetimer-messages.visible {
+      display: block;
+    }
+    .stagetimer-message {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+      backdrop-filter: blur(10px);
+    }
+    .stagetimer-message:last-child {
+      margin-bottom: 0;
+    }
+    .stagetimer-message.white {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+    }
+    .stagetimer-message.green {
+      background: rgba(76, 175, 80, 0.3);
+      color: #c8e6c9;
+    }
+    .stagetimer-message.red {
+      background: rgba(244, 67, 54, 0.3);
+      color: #ffcdd2;
+    }
+    .stagetimer-message.bold {
+      font-weight: 700;
+    }
+    .stagetimer-message.uppercase {
+      text-transform: uppercase;
+    }
   </style>
 </head>
 <body>
@@ -3456,6 +3828,13 @@ function startWebUiServer() {
           </svg>
           Notes
         </button>
+      </div>
+      <div class="stagetimer-container disabled" id="stagetimer-container" style="display: none;">
+        <div class="stagetimer-label">Stage Timer</div>
+        <div class="stagetimer-time" id="stagetimer-time">--:--</div>
+        <div class="stagetimer-status" id="stagetimer-status">Not configured</div>
+        <div class="stagetimer-name" id="stagetimer-name"></div>
+        <div class="stagetimer-messages" id="stagetimer-messages"></div>
       </div>
       <div class="remote-controls" id="remote-controls">
         <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
@@ -3586,6 +3965,44 @@ function startWebUiServer() {
         <button type="submit" class="btn">Save Presets</button>
         <button type="button" class="btn btn-secondary" id="load-btn">Load Current Presets</button>
       </form>
+      
+      <!-- Stagetimer Integration -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>Stagetimer.io Integration</h3>
+        <div class="info" style="margin-bottom: 20px;">
+          Connect to your stagetimer.io room to display live timer data. Get your Room ID and API Key from the stagetimer.io controller page.
+        </div>
+        <div class="preset-group">
+          <label for="stagetimer-room-id">Room ID</label>
+          <input type="text" id="stagetimer-room-id" name="stagetimer-room-id" placeholder="Enter your stagetimer.io Room ID" />
+        </div>
+        <div class="preset-group">
+          <label for="stagetimer-api-key">API Key</label>
+          <input type="password" id="stagetimer-api-key" name="stagetimer-api-key" placeholder="Enter your stagetimer.io API Key" />
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+          <input type="checkbox" id="stagetimer-enabled" style="width: auto;" />
+          <label for="stagetimer-enabled" style="margin: 0; font-weight: normal;">Enable timer display</label>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+          <input type="checkbox" id="stagetimer-visible" style="width: auto;" checked />
+          <label for="stagetimer-visible" style="margin: 0; font-weight: normal;">Show timer on Remote tab</label>
+        </div>
+        <button type="button" class="btn" id="btn-save-stagetimer" style="margin-top: 12px;">Save Stagetimer Settings</button>
+        <button type="button" class="btn btn-secondary" id="btn-load-stagetimer" style="margin-top: 8px;">Load Current Settings</button>
+      </div>
+      
+      <!-- Debug Console -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>Debug Console</h3>
+        <div class="info" style="margin-bottom: 10px;">
+          Console output for debugging stagetimer integration and other issues.
+        </div>
+        <div style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 12px; max-height: 300px; overflow-y: auto; margin-bottom: 10px;" id="debug-console">
+          <div style="color: #888;">Console ready. Logs will appear here...</div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btn-clear-console" style="margin-top: 8px;">Clear Console</button>
+      </div>
     </div>
     
     <div id="status" class="status"></div>
@@ -4047,6 +4464,284 @@ function startWebUiServer() {
           console.error('Load error:', err);
           showStatus('Failed to load presets: ' + err.message + ' (Make sure the app is running)', true);
         });
+    });
+    
+    // Stagetimer integration
+    let stagetimerPollInterval = null;
+    let stagetimerEnabled = false;
+    let stagetimerVisible = true;
+    
+    function loadStagetimerSettings() {
+      fetch(API_BASE + '/api/stagetimer-settings')
+        .then(res => res.json())
+        .then(data => {
+          document.getElementById('stagetimer-room-id').value = data.roomId || '';
+          document.getElementById('stagetimer-api-key').value = data.apiKey || '';
+          document.getElementById('stagetimer-enabled').checked = data.enabled !== false;
+          document.getElementById('stagetimer-visible').checked = data.visible !== false;
+          stagetimerEnabled = data.enabled !== false;
+          stagetimerVisible = data.visible !== false;
+          
+          // Update display based on visibility and configuration
+          updateStagetimerVisibility();
+          
+          if (stagetimerEnabled && data.roomId && data.apiKey) {
+            startStagetimerPolling();
+          } else {
+            stopStagetimerPolling();
+            updateStagetimerDisplay(null, 'Not configured');
+          }
+        })
+        .catch(err => {
+          console.error('Failed to load stagetimer settings:', err);
+        });
+    }
+    
+    function updateStagetimerVisibility() {
+      const container = document.getElementById('stagetimer-container');
+      const hasApiKey = document.getElementById('stagetimer-api-key').value.trim().length > 0;
+      const hasRoomId = document.getElementById('stagetimer-room-id').value.trim().length > 0;
+      
+      // Hide if: not visible OR not enabled OR missing API key/room ID
+      if (!stagetimerVisible || !stagetimerEnabled || !hasApiKey || !hasRoomId) {
+        container.style.display = 'none';
+      } else {
+        container.style.display = 'block';
+      }
+    }
+    
+    function saveStagetimerSettings() {
+      const roomId = document.getElementById('stagetimer-room-id').value.trim();
+      const apiKey = document.getElementById('stagetimer-api-key').value.trim();
+      const enabled = document.getElementById('stagetimer-enabled').checked;
+      const visible = document.getElementById('stagetimer-visible').checked;
+      
+      fetch(API_BASE + '/api/stagetimer-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roomId, apiKey, enabled, visible })
+      })
+        .then(res => res.json())
+        .then(result => {
+          if (result.success) {
+            showStatus('Stagetimer settings saved', false);
+            stagetimerEnabled = enabled;
+            stagetimerVisible = visible;
+            
+            // Update visibility
+            updateStagetimerVisibility();
+            
+            if (stagetimerEnabled && roomId && apiKey) {
+              startStagetimerPolling();
+            } else {
+              stopStagetimerPolling();
+              updateStagetimerDisplay(null, enabled ? 'Please configure Room ID and API Key' : 'Disabled');
+            }
+          } else {
+            showStatus('Failed to save: ' + (result.error || 'Unknown error'), true);
+          }
+        })
+        .catch(err => {
+          console.error('Save stagetimer settings error:', err);
+          showStatus('Failed to save settings: ' + err.message, true);
+        });
+    }
+    
+    function updateStagetimerDisplay(data, errorMessage) {
+      const container = document.getElementById('stagetimer-container');
+      const timeEl = document.getElementById('stagetimer-time');
+      const statusEl = document.getElementById('stagetimer-status');
+      const nameEl = document.getElementById('stagetimer-name');
+      const messagesEl = document.getElementById('stagetimer-messages');
+      
+      // Check visibility and configuration
+      updateStagetimerVisibility();
+      
+      // If not visible or not enabled, don't update content
+      if (!stagetimerVisible || !stagetimerEnabled) {
+        return;
+      }
+      
+      // If there's an error and no API key, hide it
+      if (errorMessage && errorMessage.includes('not configured')) {
+        container.style.display = 'none';
+        return;
+      }
+      
+      container.style.display = 'block';
+      
+      if (errorMessage || !data || !data.success) {
+        container.className = 'stagetimer-container error';
+        timeEl.textContent = '--:--';
+        statusEl.textContent = errorMessage || 'Error loading timer';
+        nameEl.textContent = '';
+        messagesEl.style.display = 'none';
+        messagesEl.innerHTML = '';
+        return;
+      }
+      
+      timeEl.textContent = data.displayTime || '0:00';
+      
+      // Determine state and styling
+      if (data.running) {
+        container.className = 'stagetimer-container running';
+        statusEl.textContent = 'Running';
+      } else if (data.pause) {
+        container.className = 'stagetimer-container';
+        statusEl.textContent = 'Paused';
+      } else {
+        container.className = 'stagetimer-container';
+        statusEl.textContent = 'Stopped';
+      }
+      
+      // Color coding based on remaining time (if available)
+      if (data.remainingMs !== undefined) {
+        const remainingSeconds = Math.floor(data.remainingMs / 1000);
+        if (remainingSeconds <= 15) {
+          container.className = 'stagetimer-container critical';
+        } else if (remainingSeconds <= 60) {
+          container.className = 'stagetimer-container warning';
+        }
+      }
+      
+      nameEl.textContent = data.timerName || '';
+      
+      // Display messages - positioned absolutely so buttons don't move
+      console.log('[Stagetimer Display] Updating display, messages:', data.messages);
+      if (data.messages && data.messages.length > 0) {
+        console.log('[Stagetimer Display] Showing', data.messages.length, 'messages');
+        messagesEl.innerHTML = '';
+        data.messages.forEach((msg, index) => {
+          console.log('[Stagetimer Display] Message', index + ':', msg);
+          const messageDiv = document.createElement('div');
+          messageDiv.className = 'stagetimer-message ' + (msg.color || 'white');
+          if (msg.bold) messageDiv.classList.add('bold');
+          if (msg.uppercase) messageDiv.classList.add('uppercase');
+          messageDiv.textContent = msg.text || '';
+          messagesEl.appendChild(messageDiv);
+        });
+        messagesEl.classList.add('visible');
+      } else {
+        console.log('[Stagetimer Display] No messages to display');
+        messagesEl.innerHTML = '';
+        messagesEl.classList.remove('visible');
+      }
+    }
+    
+    function fetchStagetimerStatus() {
+      fetch(API_BASE + '/api/get-stagetimer-status')
+        .then(res => res.json())
+        .then(data => {
+          console.log('[Stagetimer] Status response:', JSON.stringify(data, null, 2));
+          
+          if (!data.configured) {
+            updateStagetimerDisplay(null, data.error || 'Not configured');
+            return;
+          }
+          
+          if (data.success) {
+            console.log('[Stagetimer] Messages in response:', data.messages ? data.messages.length : 0, data.messages);
+            updateStagetimerDisplay(data, null);
+          } else {
+            console.error('[Stagetimer] Error:', data.error);
+            updateStagetimerDisplay(null, data.error || 'Error loading timer');
+          }
+        })
+        .catch(err => {
+          console.error('Failed to fetch stagetimer status:', err);
+          updateStagetimerDisplay(null, 'Connection error');
+        });
+    }
+    
+    function startStagetimerPolling() {
+      stopStagetimerPolling();
+      fetchStagetimerStatus(); // Initial fetch
+      stagetimerPollInterval = setInterval(fetchStagetimerStatus, 2000); // Poll every 2 seconds
+    }
+    
+    function stopStagetimerPolling() {
+      if (stagetimerPollInterval) {
+        clearInterval(stagetimerPollInterval);
+        stagetimerPollInterval = null;
+      }
+    }
+    
+    // Debug console functionality
+    const debugConsole = document.getElementById('debug-console');
+    const originalConsoleLog = console.log;
+    const originalConsoleError = console.error;
+    const originalConsoleWarn = console.warn;
+    
+    function addToDebugConsole(message, type = 'log') {
+      const timestamp = new Date().toLocaleTimeString();
+      const color = type === 'error' ? '#f44336' : type === 'warn' ? '#ff9800' : '#4caf50';
+      const prefix = type === 'error' ? '[ERROR]' : type === 'warn' ? '[WARN]' : '[LOG]';
+      
+      const logEntry = document.createElement('div');
+      logEntry.style.marginBottom = '4px';
+      logEntry.style.color = color;
+      logEntry.innerHTML = '<span style="color: #888;">[' + timestamp + ']</span> ' + prefix + ' ' + message;
+      
+      // Remove "Console ready" message if it exists
+      const readyMsg = debugConsole.querySelector('div[style*="color: #888"]');
+      if (readyMsg && readyMsg.textContent.includes('Console ready')) {
+        readyMsg.remove();
+      }
+      
+      debugConsole.appendChild(logEntry);
+      debugConsole.scrollTop = debugConsole.scrollHeight;
+      
+      // Keep only last 100 entries
+      while (debugConsole.children.length > 100) {
+        debugConsole.removeChild(debugConsole.firstChild);
+      }
+    }
+    
+    // Override console methods to also log to debug console
+    console.log = function(...args) {
+      originalConsoleLog.apply(console, arguments);
+      addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'log');
+    };
+    
+    console.error = function(...args) {
+      originalConsoleError.apply(console, arguments);
+      addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'error');
+    };
+    
+    console.warn = function(...args) {
+      originalConsoleWarn.apply(console, arguments);
+      addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'warn');
+    };
+    
+    // Clear console button
+    document.getElementById('btn-clear-console').addEventListener('click', () => {
+      debugConsole.innerHTML = '<div style="color: #888;">Console cleared...</div>';
+    });
+    
+    // Load stagetimer settings on page load
+    loadStagetimerSettings();
+    
+    // Save stagetimer settings button
+    document.getElementById('btn-save-stagetimer').addEventListener('click', saveStagetimerSettings);
+    document.getElementById('btn-load-stagetimer').addEventListener('click', loadStagetimerSettings);
+    
+    // Update visibility in real-time when settings change
+    document.getElementById('stagetimer-visible').addEventListener('change', () => {
+      stagetimerVisible = document.getElementById('stagetimer-visible').checked;
+      updateStagetimerVisibility();
+    });
+    
+    document.getElementById('stagetimer-enabled').addEventListener('change', () => {
+      stagetimerEnabled = document.getElementById('stagetimer-enabled').checked;
+      updateStagetimerVisibility();
+    });
+    
+    document.getElementById('stagetimer-api-key').addEventListener('input', () => {
+      updateStagetimerVisibility();
+    });
+    
+    document.getElementById('stagetimer-room-id').addEventListener('input', () => {
+      updateStagetimerVisibility();
     });
     
     // Save form

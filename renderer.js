@@ -63,6 +63,7 @@ async function initDisplays() {
       webUiPortInput.value = '80'; // Default
     }
     
+    
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
     notesDisplay.addEventListener('change', saveMonitorPreferences);

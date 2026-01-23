@@ -1,5 +1,5 @@
 Google Slides Opener
-Version: 1.4.7
-Build Number: 45
+Version: 1.4.9
+Build Number: 47
 
 Build Date: 2026-01-22

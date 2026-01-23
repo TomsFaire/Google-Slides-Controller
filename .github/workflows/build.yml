@@ -63,16 +63,24 @@ jobs:
             exit 1
           fi
       
-      - name: Remove quarantine and ad-hoc sign app
+      - name: Remove quarantine and ad-hoc sign app bundle
         run: |
           APP_PATH="dist/mac-arm64/Google Slides Opener.app"
           if [ -d "$APP_PATH" ]; then
             echo "Removing quarantine attribute..."
-            xattr -cr "$APP_PATH" || true
+            xattr -cr "$APP_PATH"
+            
             echo "Ad-hoc signing app (allows it to run without real certificate)..."
-            codesign --force --deep --sign - "$APP_PATH" || echo "Signing failed, but continuing..."
+            codesign --force --deep --sign - "$APP_PATH"
+            
             echo "Verifying signature..."
-            codesign --verify --verbose "$APP_PATH" || echo "Verification failed, but continuing..."
+            codesign --verify --verbose "$APP_PATH"
+            
+            echo "Checking signature details..."
+            codesign -dv "$APP_PATH"
+          else
+            echo "ERROR: App not found at $APP_PATH"
+            exit 1
           fi
       
       - name: Re-create ZIP with signed app
@@ -82,34 +90,34 @@ jobs:
           ZIP_FILE=$(ls -1 *.zip | head -1)
           if [ -z "$ZIP_FILE" ]; then
             echo "ERROR: No ZIP file found in dist/"
-            ls -la dist/
+            ls -la
             exit 1
           fi
           echo "Found ZIP file: $ZIP_FILE"
           
-          # Extract the ZIP temporarily
-          TEMP_DIR=$(mktemp -d)
-          unzip -q "$ZIP_FILE" -d "$TEMP_DIR"
-          
-          # Sign the app inside
-          APP_PATH="$TEMP_DIR/Google Slides Opener.app"
-          if [ -d "$APP_PATH" ]; then
-            echo "Signing app in extracted ZIP..."
-            xattr -cr "$APP_PATH" || true
-            codesign --force --deep --sign - "$APP_PATH"
-            codesign --verify --verbose "$APP_PATH" || echo "Verification warning"
+          # The app is already signed in dist/mac-arm64, so just re-zip it
+          APP_PATH="mac-arm64/Google Slides Opener.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Signed app not found at $APP_PATH"
+            exit 1
           fi
           
-          # Remove old ZIP and create new one with signed app
+          # Remove old ZIP
           rm -f "$ZIP_FILE"
-          cd "$TEMP_DIR"
+          
+          # Create new ZIP with signed app using ditto (preserves symlinks and metadata)
+          cd mac-arm64
           ditto -c -k --keepParent "Google Slides Opener.app" "../$ZIP_FILE"
           cd ..
           
-          # Cleanup
-          rm -rf "$TEMP_DIR"
           echo "Created signed ZIP: $ZIP_FILE"
           ls -lh "$ZIP_FILE"
+          
+          # Verify the app in the new ZIP is signed
+          TEMP_DIR=$(mktemp -d)
+          unzip -q "$ZIP_FILE" -d "$TEMP_DIR"
+          codesign --verify --verbose "$TEMP_DIR/Google Slides Opener.app" && echo "✓ App in ZIP is properly signed"
+          rm -rf "$TEMP_DIR"
       
       - name: Install Companion Module dependencies
         run: npm ci

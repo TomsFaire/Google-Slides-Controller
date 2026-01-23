@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
-      - name: Build macOS app
+      - name: Build macOS app (unsigned)
         run: npm run build:mac
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
@@ -74,6 +74,17 @@ jobs:
             echo "Verifying signature..."
             codesign --verify --verbose "$APP_PATH" || echo "Verification failed, but continuing..."
           fi
+      
+      - name: Re-create ZIP with signed app
+        run: |
+          cd dist/mac-arm64
+          ZIP_NAME="Google Slides Opener-1.4.6-arm64-mac.zip"
+          # Remove old ZIP if it exists
+          rm -f "../../$ZIP_NAME" || true
+          # Create new ZIP with signed app
+          ditto -c -k --keepParent "Google Slides Opener.app" "../../$ZIP_NAME"
+          echo "Created signed ZIP: $ZIP_NAME"
+          ls -lh "../../$ZIP_NAME"
       
       - name: Install Companion Module dependencies
         run: npm ci

@@ -12,7 +12,6 @@ const { app, BrowserWindow, ipcMain, screen, session, dialog } = require('electr
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const https = require('https');
 const os = require('os');
 
 let mainWindow;
@@ -3270,6 +3269,7 @@ function startWebUiServer() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Google Slides Opener - Preset Manager</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -3601,16 +3601,16 @@ function startWebUiServer() {
     }
     .remote-controls {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       gap: 20px;
       padding: 20px 0;
       transition: all 0.3s;
     }
     .remote-controls.with-notes {
-      gap: 12px;
+      gap: 20px;
     }
     .remote-btn {
-      width: 100%;
+      flex: 0 0 calc(50% - 10px);
       padding: 40px 20px;
       font-size: 24px;
       font-weight: 700;
@@ -3953,6 +3953,18 @@ function startWebUiServer() {
       <div class="controls-section">
         <h3>Presentation Controls</h3>
         <div class="controls-grid">
+          <button type="button" class="btn-control" id="btn-prev-slide" data-tooltip="Go to previous slide">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+            Previous Slide
+          </button>
+          <button type="button" class="btn-control" id="btn-next-slide" data-tooltip="Go to next slide">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+            Next Slide
+          </button>
           <button type="button" class="btn-control" id="btn-reload" data-tooltip="Reload presentation and return to current slide">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="23 4 23 10 17 10"></polyline>
@@ -4146,12 +4158,28 @@ function startWebUiServer() {
     }
     
     // Set up control buttons
+    document.getElementById('btn-prev-slide').addEventListener('click', () => {
+      apiCall('/api/previous-slide').then(() => {
+        updateSlideButtons();
+      });
+    });
+    
+    document.getElementById('btn-next-slide').addEventListener('click', () => {
+      apiCall('/api/next-slide').then(() => {
+        updateSlideButtons();
+      });
+    });
+    
     document.getElementById('btn-reload').addEventListener('click', () => {
-      apiCall('/api/reload-presentation');
+      apiCall('/api/reload-presentation').then(() => {
+        updateSlideButtons();
+      });
     });
     
     document.getElementById('btn-close-presentation').addEventListener('click', () => {
-      apiCall('/api/close-presentation');
+      apiCall('/api/close-presentation').then(() => {
+        updateSlideButtons();
+      });
     });
     
     // Remote tab buttons
@@ -4285,6 +4313,8 @@ function startWebUiServer() {
         if (notesVisible) {
           loadSpeakerNotes();
         }
+        // Update slide button text
+        updateSlideButtons();
       });
     });
     
@@ -4295,8 +4325,73 @@ function startWebUiServer() {
         if (notesVisible) {
           loadSpeakerNotes();
         }
+        // Update slide button text
+        updateSlideButtons();
       });
     });
+    
+    // Function to update slide button text with current slide information
+    function updateSlideButtons() {
+      fetch(API_BASE + '/api/status')
+        .then(res => {
+          if (!res.ok) {
+            throw new Error('HTTP error! status: ' + res.status);
+          }
+          return res.json();
+        })
+        .then(data => {
+          const prevBtn = document.getElementById('remote-btn-prev');
+          const nextBtn = document.getElementById('remote-btn-next');
+          const prevBtnControls = document.getElementById('btn-prev-slide');
+          const nextBtnControls = document.getElementById('btn-next-slide');
+          
+          // SVG icons for buttons
+          const prevIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+          const nextIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+          const prevIconSmall = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>';
+          const nextIconSmall = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+          
+          // Update Remote tab Previous button
+          if (prevBtn) {
+            if (data.previousSlide) {
+              prevBtn.innerHTML = prevIcon + ' Previous Slide (' + data.previousSlide + ')';
+            } else {
+              prevBtn.innerHTML = prevIcon + ' Previous Slide';
+            }
+          }
+          
+          // Update Remote tab Next button
+          if (nextBtn) {
+            if (data.nextSlide) {
+              nextBtn.innerHTML = 'Next Slide (' + data.nextSlide + ') ' + nextIcon;
+            } else {
+              nextBtn.innerHTML = 'Next Slide ' + nextIcon;
+            }
+          }
+          
+          // Update Controls tab Previous button
+          if (prevBtnControls) {
+            if (data.previousSlide) {
+              prevBtnControls.innerHTML = prevIconSmall + ' Previous Slide (' + data.previousSlide + ')';
+            } else {
+              prevBtnControls.innerHTML = prevIconSmall + ' Previous Slide';
+            }
+          }
+          
+          // Update Controls tab Next button
+          if (nextBtnControls) {
+            if (data.nextSlide) {
+              nextBtnControls.innerHTML = nextIconSmall + ' Next Slide (' + data.nextSlide + ')';
+            } else {
+              nextBtnControls.innerHTML = nextIconSmall + ' Next Slide';
+            }
+          }
+        })
+        .catch(err => {
+          // Silently fail - connection might be down, don't spam logs
+          console.debug('[Web UI] Failed to update slide buttons:', err.message);
+        });
+    }
     
     // Helper function to validate and open presentation
     function openPresentation(url, withNotes = false) {
@@ -4444,6 +4539,8 @@ function startWebUiServer() {
       })
       .then(data => {
         console.log('[Web UI] API connection successful:', data);
+        // Update slide buttons on initial load
+        updateSlideButtons();
         // API is reachable, now load presets
         return fetch(API_BASE + '/api/presets');
       })
@@ -4475,6 +4572,16 @@ function startWebUiServer() {
         }
       });
     
+    // Poll for slide updates every 2 seconds
+    let slideUpdateInterval = setInterval(updateSlideButtons, 2000);
+    
+    // Clear interval when page unloads
+    window.addEventListener('beforeunload', () => {
+      if (slideUpdateInterval) {
+        clearInterval(slideUpdateInterval);
+      }
+    });
+    
     // Load button
     loadBtn.addEventListener('click', () => {
       fetch(API_BASE + '/api/presets')
@@ -4498,15 +4605,14 @@ function startWebUiServer() {
         });
     });
     
-    // Stagetimer integration
-    let stagetimerPollInterval = null;
-    let stagetimerTimerInfoInterval = null;
+    // Stagetimer integration - Socket.io based
+    let stagetimerSocket = null;
     let stagetimerDisplayInterval = null; // For local time updates
     let stagetimerEnabled = false;
     let stagetimerVisible = true;
     let stagetimerState = null; // Store timer state for local calculation
-    let stagetimerBackoffDelay = 10000; // Start with 10 second delay, increases on 429 errors
-    let stagetimerIsBackingOff = false;
+    let stagetimerMessages = []; // Store messages separately
+    let stagetimerCurrentTimer = null; // Current timer info (name, speaker, etc.)
     
     function loadStagetimerSettings() {
       fetch(API_BASE + '/api/stagetimer-settings')
@@ -4523,9 +4629,9 @@ function startWebUiServer() {
           updateStagetimerVisibility();
           
           if (stagetimerEnabled && data.roomId && data.apiKey) {
-            startStagetimerPolling();
+            connectStagetimerSocket(data.roomId, data.apiKey);
           } else {
-            stopStagetimerPolling();
+            disconnectStagetimerSocket();
             updateStagetimerDisplay(null, 'Not configured');
           }
         })
@@ -4569,9 +4675,9 @@ function startWebUiServer() {
             updateStagetimerVisibility();
             
             if (stagetimerEnabled && roomId && apiKey) {
-              startStagetimerPolling();
+              connectStagetimerSocket(roomId, apiKey);
             } else {
-              stopStagetimerPolling();
+              disconnectStagetimerSocket();
               updateStagetimerDisplay(null, enabled ? 'Please configure Room ID and API Key' : 'Disabled');
             }
           } else {
@@ -4617,13 +4723,13 @@ function startWebUiServer() {
         return;
       }
       
-      // Update timer name (label) - use name from API, fallback to empty if not available
-      labelEl.textContent = data.timerName || '';
+      // Update timer name (label) - use name from data or current timer, fallback to empty
+      labelEl.textContent = data.timerName || stagetimerCurrentTimer?.name || '';
       
       timeEl.textContent = data.displayTime || '0:00';
       
       // Show speaker name below the timer
-      statusEl.textContent = data.speaker || '';
+      statusEl.textContent = data.speaker || stagetimerCurrentTimer?.speaker || '';
       
       // Determine state and styling (but don't show status text)
       if (data.running) {
@@ -4666,122 +4772,232 @@ function startWebUiServer() {
       }
     }
     
-    function fetchStagetimerStatus() {
-      fetch(API_BASE + '/api/get-stagetimer-status')
-        .then(res => res.json())
-        .then(data => {
-          console.log('[Stagetimer] Status response:', JSON.stringify(data, null, 2));
+    // Socket.io connection for real-time stagetimer updates
+    function connectStagetimerSocket(roomId, apiKey) {
+      // Disconnect existing connection if any
+      disconnectStagetimerSocket();
+      
+      if (!window.io) {
+        console.error('[Stagetimer] Socket.io library not loaded');
+        updateStagetimerDisplay(null, 'Socket.io library not available');
+        return;
+      }
+      
+      console.log('[Stagetimer] Connecting to socket.io...');
+      
+      try {
+        stagetimerSocket = io('https://api.stagetimer.io', {
+          path: '/v1/socket.io',
+          auth: {
+            room_id: roomId,
+            api_key: apiKey
+          },
+          transports: ['websocket', 'polling'], // Try websocket first, fallback to polling
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000,
+          reconnectionAttempts: Infinity
+        });
+        
+        // Connection successful
+        stagetimerSocket.on('connect', () => {
+          console.log('[Stagetimer] Socket.io connected');
+          updateStagetimerDisplay(null, null); // Clear any error messages
           
-          if (!data.configured) {
-            updateStagetimerDisplay(null, data.error || 'Not configured');
-            return;
+          // Start local time updates
+          if (!stagetimerDisplayInterval) {
+            stagetimerDisplayInterval = setInterval(updateStagetimerDisplayFromState, 1000);
           }
+        });
+        
+        // Connection error
+        stagetimerSocket.on('connect_error', (error) => {
+          console.error('[Stagetimer] Socket.io connection error:', error);
+          updateStagetimerDisplay(null, 'Connection error: ' + (error.message || 'Failed to connect'));
+        });
+        
+        // Disconnected
+        stagetimerSocket.on('disconnect', (reason) => {
+          console.warn('[Stagetimer] Socket.io disconnected:', reason);
+          if (reason === 'io server disconnect') {
+            // Server disconnected, try to reconnect
+            stagetimerSocket.connect();
+          }
+        });
+        
+        // Reconnection attempt
+        stagetimerSocket.on('reconnect_attempt', (attemptNumber) => {
+          console.log('[Stagetimer] Reconnection attempt', attemptNumber);
+        });
+        
+        // Reconnected
+        stagetimerSocket.on('reconnect', (attemptNumber) => {
+          console.log('[Stagetimer] Reconnected after', attemptNumber, 'attempts');
+        });
+        
+        // Playback status updates (timer start/stop/pause/reset)
+        stagetimerSocket.on('playback_status', (data) => {
+          console.log('[Stagetimer] playback_status event:', data);
           
-          if (data.success) {
-            console.log('[Stagetimer] Messages in response:', data.messages ? data.messages.length : 0, data.messages);
+          if (data && data._model === 'playback_status') {
+            // Update state with new playback status
+            const now = data.server_time || (data._updated_at ? new Date(data._updated_at).getTime() : Date.now());
             
-            // Success - reset backoff delay if we were backing off
-            if (stagetimerIsBackingOff) {
-              stagetimerIsBackingOff = false;
-              stagetimerBackoffDelay = 10000; // Reset to 10 seconds
-              console.log('[Stagetimer] Rate limit cleared, resetting to 10 second polling');
-            }
+            // Preserve existing timer info if state already exists
+            const existingTimerName = stagetimerState?.timerName || stagetimerCurrentTimer?.name || '';
+            const existingSpeaker = stagetimerState?.speaker || stagetimerCurrentTimer?.speaker || '';
+            const existingMessages = stagetimerState?.messages || stagetimerMessages.filter(m => m.showing).map(m => ({
+              text: m.text || '',
+              color: m.color || 'white',
+              bold: m.bold || false,
+              uppercase: m.uppercase || false
+            })) || [];
             
-            // Store state for local time calculation
             stagetimerState = {
               success: true,
-              running: data.running,
+              running: data.running || false,
               start: data.start,
               finish: data.finish,
               pause: data.pause,
-              serverTime: data.serverTime,
-              timerId: data.timerId,
-              timerName: data.timerName,
-              speaker: data.speaker,
-              messages: data.messages || [],
-              lastSyncTime: Date.now() // Store when we got this data
+              serverTime: now,
+              timerId: data.timer_id,
+              timerName: existingTimerName,
+              speaker: existingSpeaker,
+              messages: existingMessages,
+              lastSyncTime: Date.now()
             };
             
-            // Update display with fresh data (includes messages)
-            updateStagetimerDisplay(data, null);
-            
-            // Also trigger immediate local update to sync display
+            // Update display immediately
             updateStagetimerDisplayFromState();
-          } else {
-            console.error('[Stagetimer] Error:', data.error);
-            
-            // Handle 429 rate limit errors with exponential backoff
-            if (data.error && data.error.includes('429')) {
-              if (!stagetimerIsBackingOff) {
-                stagetimerIsBackingOff = true;
-                // Increase backoff delay exponentially (10s -> 20s -> 40s -> 60s max)
-                stagetimerBackoffDelay = Math.min(stagetimerBackoffDelay * 2, 60000);
-                console.warn('[Stagetimer] Rate limited (429), backing off to', stagetimerBackoffDelay / 1000, 'seconds');
-                // Reschedule with new delay
-                scheduleNextStagetimerFetch();
-              }
-              // Don't clear state on 429 - keep showing last known time
-              return;
-            }
-            
-            // For other errors, clear state
-            stagetimerState = null;
-            updateStagetimerDisplay(null, data.error || 'Error loading timer');
-          }
-        })
-        .catch(err => {
-          console.error('Failed to fetch stagetimer status:', err);
-          // Don't clear state on network error - keep showing last known time
-          // Only update if we have no state at all
-          if (!stagetimerState) {
-            updateStagetimerDisplay(null, 'Connection error');
           }
         });
+        
+        // Current timer updates (name, speaker, notes, etc.)
+        stagetimerSocket.on('current_timer', (data) => {
+          console.log('[Stagetimer] current_timer event:', data);
+          
+          if (data && data._model === 'timer') {
+            stagetimerCurrentTimer = {
+              timerId: data._id,
+              name: data.name || '',
+              speaker: data.speaker || '',
+              notes: data.notes || ''
+            };
+            
+            // Update state with timer info
+            if (stagetimerState) {
+              stagetimerState.timerName = stagetimerCurrentTimer.name;
+              stagetimerState.speaker = stagetimerCurrentTimer.speaker;
+            } else {
+              // If no state yet, create a minimal state (will be updated by playback_status)
+              stagetimerState = {
+                success: true,
+                running: false,
+                timerName: stagetimerCurrentTimer.name,
+                speaker: stagetimerCurrentTimer.speaker,
+                messages: stagetimerMessages.filter(m => m.showing).map(m => ({
+                  text: m.text || '',
+                  color: m.color || 'white',
+                  bold: m.bold || false,
+                  uppercase: m.uppercase || false
+                })) || [],
+                lastSyncTime: Date.now()
+              };
+            }
+            
+            // Update display
+            updateStagetimerDisplayFromState();
+          }
+        });
+        
+        // Message updates (show/hide/update)
+        stagetimerSocket.on('message', (data) => {
+          console.log('[Stagetimer] message event:', data);
+          
+          if (data && data._model === 'message') {
+            // Update messages array
+            if (data.showing) {
+              // Add or update message
+              const existingIndex = stagetimerMessages.findIndex(m => m._id === data._id);
+              if (existingIndex >= 0) {
+                stagetimerMessages[existingIndex] = data;
+              } else {
+                stagetimerMessages.push(data);
+              }
+            } else {
+              // Remove message
+              stagetimerMessages = stagetimerMessages.filter(m => m._id !== data._id);
+            }
+            
+            // Update state
+            if (stagetimerState) {
+              stagetimerState.messages = stagetimerMessages.filter(m => m.showing).map(m => ({
+                text: m.text || '',
+                color: m.color || 'white',
+                bold: m.bold || false,
+                uppercase: m.uppercase || false
+              }));
+            } else {
+              // If no state yet, create a minimal state
+              stagetimerState = {
+                success: true,
+                running: false,
+                timerName: stagetimerCurrentTimer?.name || '',
+                speaker: stagetimerCurrentTimer?.speaker || '',
+                messages: stagetimerMessages.filter(m => m.showing).map(m => ({
+                  text: m.text || '',
+                  color: m.color || 'white',
+                  bold: m.bold || false,
+                  uppercase: m.uppercase || false
+                })) || [],
+                lastSyncTime: Date.now()
+              };
+            }
+            
+            // Update display
+            updateStagetimerDisplayFromState();
+          }
+        });
+        
+        // Room updates (blackout, focus, on-air, etc.)
+        stagetimerSocket.on('room', (data) => {
+          console.log('[Stagetimer] room event:', data);
+          // We don't currently use room state, but log it for debugging
+        });
+        
+        // Flash events
+        stagetimerSocket.on('flash', (data) => {
+          console.log('[Stagetimer] flash event:', data);
+          // We don't currently handle flash events, but log them
+        });
+        
+        // Listen to all events for debugging
+        stagetimerSocket.onAny((event, ...args) => {
+          console.log('[Stagetimer] Event received:', event, args);
+        });
+        
+      } catch (error) {
+        console.error('[Stagetimer] Error creating socket connection:', error);
+        updateStagetimerDisplay(null, 'Failed to connect: ' + error.message);
+      }
     }
     
-    function startStagetimerPolling() {
-      stopStagetimerPolling();
-      stagetimerBackoffDelay = 10000; // Reset backoff on restart
-      stagetimerIsBackingOff = false;
-      fetchStagetimerStatus(); // Initial fetch
-      // Poll API every 10 seconds to sync with server (reduces API calls significantly)
-      // This reduces requests to 6/min (much better for rate limits)
-      // Will back off further if we get 429 errors
-      scheduleNextStagetimerFetch();
-      
-      // Update display locally every second for smooth counting
-      stagetimerDisplayInterval = setInterval(updateStagetimerDisplayFromState, 1000);
-    }
-    
-    function scheduleNextStagetimerFetch() {
-      // Clear any existing interval
-      if (stagetimerPollInterval) {
-        clearTimeout(stagetimerPollInterval);
-        stagetimerPollInterval = null;
+    function disconnectStagetimerSocket() {
+      if (stagetimerSocket) {
+        console.log('[Stagetimer] Disconnecting socket...');
+        stagetimerSocket.disconnect();
+        stagetimerSocket = null;
       }
       
-      // Schedule next fetch with current backoff delay
-      stagetimerPollInterval = setTimeout(() => {
-        fetchStagetimerStatus();
-        scheduleNextStagetimerFetch(); // Schedule next one
-      }, stagetimerBackoffDelay);
-    }
-    
-    function stopStagetimerPolling() {
-      if (stagetimerPollInterval) {
-        clearTimeout(stagetimerPollInterval); // Changed from clearInterval to clearTimeout
-        stagetimerPollInterval = null;
-      }
-      if (stagetimerTimerInfoInterval) {
-        clearInterval(stagetimerTimerInfoInterval);
-        stagetimerTimerInfoInterval = null;
-      }
       if (stagetimerDisplayInterval) {
         clearInterval(stagetimerDisplayInterval);
         stagetimerDisplayInterval = null;
       }
-      stagetimerBackoffDelay = 10000; // Reset backoff
-      stagetimerIsBackingOff = false;
+      
+      // Clear state
+      stagetimerState = null;
+      stagetimerMessages = [];
+      stagetimerCurrentTimer = null;
     }
     
     // Calculate and display time locally based on stored state
@@ -4854,9 +5070,9 @@ function startWebUiServer() {
       
       if (!container || !labelEl || !timeEl || !statusEl) return;
       
-      labelEl.textContent = state.timerName || '';
+      labelEl.textContent = state.timerName || stagetimerCurrentTimer?.name || '';
       timeEl.textContent = displayTime;
-      statusEl.textContent = state.speaker || '';
+      statusEl.textContent = state.speaker || stagetimerCurrentTimer?.speaker || '';
       
       // Update styling
       if (isRunning) {

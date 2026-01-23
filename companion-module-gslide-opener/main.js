@@ -352,6 +352,48 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 					return this.state.currentSlide !== null && this.state.currentSlide === targetSlide
 				},
 				showInvert: true
+			},
+			is_first_slide: {
+				type: 'boolean',
+				name: 'Is First Slide',
+				description: 'Indicates when the presentation is on the first slide',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(100, 200, 100)
+				},
+				options: [],
+				callback: (feedback) => {
+					return this.state.isFirstSlide === true
+				},
+				showInvert: true
+			},
+			is_last_slide: {
+				type: 'boolean',
+				name: 'Is Last Slide',
+				description: 'Indicates when the presentation is on the last slide',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(200, 100, 100)
+				},
+				options: [],
+				callback: (feedback) => {
+					return this.state.isLastSlide === true
+				},
+				showInvert: true
+			},
+			login_state: {
+				type: 'boolean',
+				name: 'Logged In to Google',
+				description: 'Indicates when logged in to Google account',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(66, 133, 244)
+				},
+				options: [],
+				callback: (feedback) => {
+					return this.state.loginState === true
+				},
+				showInvert: true
 			}
 		}
 		
@@ -437,7 +479,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			})
 			
 			// Trigger feedback updates
-			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide')
+			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state')
 			
 			this.log('debug', `State updated: presentation=${this.state.presentationOpen}, notes=${this.state.notesOpen}, slide=${this.state.currentSlide}/${this.state.totalSlides}, title=${this.state.presentationTitle || 'N/A'}`)
 		}

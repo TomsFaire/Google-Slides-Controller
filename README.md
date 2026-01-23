@@ -1,8 +1,14 @@
 # Google Slides Opener
 
 A desktop application for quickly switching between Google Slides presentations across multiple monitors, with Bitfocus Companion integration.
-Based on 
-https://github.com/nerif-tafu/gslide-opener
+
+![Demo](docs/images/demo.gif)
+
+## Attribution
+
+This project is based on [nerif-tafu/gslide-opener](https://github.com/nerif-tafu/gslide-opener).
+
+Original work by [nerif-tafu](https://github.com/nerif-tafu). This fork includes additional features and improvements.
 
 ## Installation
 

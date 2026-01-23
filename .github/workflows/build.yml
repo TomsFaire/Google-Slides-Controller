@@ -63,6 +63,18 @@ jobs:
             exit 1
           fi
       
+      - name: Remove quarantine and ad-hoc sign app
+        run: |
+          APP_PATH="dist/mac-arm64/Google Slides Opener.app"
+          if [ -d "$APP_PATH" ]; then
+            echo "Removing quarantine attribute..."
+            xattr -cr "$APP_PATH" || true
+            echo "Ad-hoc signing app (allows it to run without real certificate)..."
+            codesign --force --deep --sign - "$APP_PATH" || echo "Signing failed, but continuing..."
+            echo "Verifying signature..."
+            codesign --verify --verbose "$APP_PATH" || echo "Verification failed, but continuing..."
+          fi
+      
       - name: Install Companion Module dependencies
         run: npm ci
         working-directory: ./companion-module-gslide-opener

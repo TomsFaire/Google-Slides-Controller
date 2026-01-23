@@ -62,6 +62,109 @@
         </div>
       </section>
 
+      <!-- Primary/Backup Configuration Section -->
+      <section class="card">
+        <h2>Primary/Backup Configuration</h2>
+        <p class="card-description">Configure this instance as primary (controls backups) or backup (follows primary)</p>
+        
+        <div class="form-group">
+          <label>Mode</label>
+          <div style="display: flex; gap: 20px; margin-top: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="radio" name="primary-backup-mode" id="mode-primary" value="primary" />
+              <span>Primary</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="radio" name="primary-backup-mode" id="mode-backup" value="backup" />
+              <span>Backup</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="radio" name="primary-backup-mode" id="mode-standalone" value="standalone" checked />
+              <span>Standalone</span>
+            </label>
+          </div>
+          <small class="field-hint">Primary: Controls backup machines. Backup: Follows primary commands. Standalone: Independent operation.</small>
+        </div>
+
+        <div id="backup-config" style="display: none;">
+          <div class="form-group">
+            <label for="backup-port">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+              Backup Communication Port
+            </label>
+            <input type="number" id="backup-port" class="input-field" min="1024" max="65535" placeholder="9595" />
+            <small class="field-hint">Port used to communicate with backup machines (default: 9595, same as API port)</small>
+          </div>
+
+          <div class="form-group">
+            <label for="backup-ip-1">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="2" x2="12" y2="6"></line>
+                <line x1="12" y1="18" x2="12" y2="22"></line>
+                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                <line x1="2" y1="12" x2="6" y2="12"></line>
+                <line x1="18" y1="12" x2="22" y2="12"></line>
+                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+              </svg>
+              Backup Machine 1 IP Address
+            </label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="text" id="backup-ip-1" class="input-field" placeholder="192.168.1.100" pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$" />
+              <span id="backup-status-1" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center;">-</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="backup-ip-2">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="2" x2="12" y2="6"></line>
+                <line x1="12" y1="18" x2="12" y2="22"></line>
+                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                <line x1="2" y1="12" x2="6" y2="12"></line>
+                <line x1="18" y1="12" x2="22" y2="12"></line>
+                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+              </svg>
+              Backup Machine 2 IP Address (Optional)
+            </label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="text" id="backup-ip-2" class="input-field" placeholder="192.168.1.101" pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$" />
+              <span id="backup-status-2" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center;">-</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="backup-ip-3">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="2" x2="12" y2="6"></line>
+                <line x1="12" y1="18" x2="12" y2="22"></line>
+                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                <line x1="2" y1="12" x2="6" y2="12"></line>
+                <line x1="18" y1="12" x2="22" y2="12"></line>
+                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+              </svg>
+              Backup Machine 3 IP Address (Optional)
+            </label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="text" id="backup-ip-3" class="input-field" placeholder="192.168.1.102" pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$" />
+              <span id="backup-status-3" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center;">-</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Port Configuration Section -->
       <section class="card">
         <h2>Network Ports</h2>
@@ -124,6 +227,63 @@
             Sign in with Google
           </button>
         </div>
+      </section>
+
+      <!-- Preset Presentations Section -->
+      <section class="card">
+        <h2>Preset Presentations</h2>
+        <p class="card-description">Configure preset presentations that can be opened from Companion or the web UI</p>
+        
+        <div class="form-group">
+          <label for="preset1">Presentation 1</label>
+          <input type="text" id="preset1" class="input-field" placeholder="https://docs.google.com/presentation/d/..." />
+        </div>
+        
+        <div class="form-group">
+          <label for="preset2">Presentation 2</label>
+          <input type="text" id="preset2" class="input-field" placeholder="https://docs.google.com/presentation/d/..." />
+        </div>
+        
+        <div class="form-group">
+          <label for="preset3">Presentation 3</label>
+          <input type="text" id="preset3" class="input-field" placeholder="https://docs.google.com/presentation/d/..." />
+        </div>
+        
+        <button id="save-presets-btn" class="btn">Save Presets</button>
+        <button id="load-presets-btn" class="btn btn-secondary">Load Current Presets</button>
+      </section>
+
+      <!-- Stagetimer.io Integration Section -->
+      <section class="card">
+        <h2>Stagetimer.io Integration</h2>
+        <p class="card-description">Connect to your stagetimer.io room to display live timer data. Get your Room ID and API Key from the stagetimer.io controller page.</p>
+        
+        <div class="form-group">
+          <label for="stagetimer-room-id">Room ID</label>
+          <input type="text" id="stagetimer-room-id" class="input-field" placeholder="Enter your stagetimer.io Room ID" />
+        </div>
+        
+        <div class="form-group">
+          <label for="stagetimer-api-key">API Key</label>
+          <input type="password" id="stagetimer-api-key" class="input-field" placeholder="Enter your stagetimer.io API Key" />
+        </div>
+        
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="stagetimer-enabled" style="width: auto;" />
+            <span>Enable timer display</span>
+          </label>
+        </div>
+        
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="stagetimer-visible" style="width: auto;" checked />
+            <span>Show timer on Remote tab</span>
+          </label>
+        </div>
+        
+        <button id="save-stagetimer-btn" class="btn">Save Stagetimer Settings</button>
+        <button id="load-stagetimer-btn" class="btn btn-secondary">Load Current Settings</button>
       </section>
 
       <!-- Test Presentation Section -->

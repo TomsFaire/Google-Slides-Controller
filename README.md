@@ -7,7 +7,8 @@ A desktop application for quickly switching between Google Slides presentations 
 ## Installation
 
 1. Download the latest release of the Google Slides Opener (exe or Appimage) on your presentation machine, and download the `companion-module-gslide-opener.tgz` on your Companion machine.
-2. Open the Google Slides Opener executable and make any config changes you want:
+2. **macOS users:** On first launch, you may see a security warning. This is expected behavior. Right-click the app and select "Open" to launch it. See [README-SECURITY.md](README-SECURITY.md) for details.
+3. Open the Google Slides Opener executable and make any config changes you want:
    - Select your presentation and notes monitors
    - Configure network ports (API and Web UI)
    - View available network IP addresses for accessing the Web UI

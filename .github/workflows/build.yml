@@ -63,13 +63,15 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       
-      - name: Clean up problematic Icon files
+      - name: Clean up problematic Icon files (Windows)
+        shell: pwsh
         run: |
-          git ls-files | grep -i "Icon" | while read file; do
-            if [ -f "$file" ] || [ -d "$file" ]; then
-              git rm --cached "$file" 2>/dev/null || true
-            fi
-          done || true
+          $iconFiles = git ls-files | Select-String -Pattern "Icon" | ForEach-Object { $_.Line.Trim() }
+          foreach ($file in $iconFiles) {
+            if (Test-Path $file) {
+              git rm --cached $file 2>$null
+            }
+          }
       
       - name: Setup Node.js
         uses: actions/setup-node@v4

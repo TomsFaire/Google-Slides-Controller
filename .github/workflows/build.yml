@@ -159,38 +159,17 @@ jobs:
       contents: write
     
     steps:
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: gslide-opener-windows-portable
-          path: artifacts/windows
-      
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: gslide-opener-linux-appimage
-          path: artifacts/linux
-      
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
           name: gslide-opener-macos-zip
           path: artifacts/macos
       
-      - name: Download Companion Module artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: companion-module-gslide-opener
-          path: artifacts/companion
-      
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/windows/*.exe
-            artifacts/linux/*.AppImage
             artifacts/macos/*.zip
-            artifacts/companion/*.tgz
           draft: false
           prerelease: false
         env:

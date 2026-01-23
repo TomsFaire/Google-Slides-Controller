@@ -21,6 +21,8 @@ pkg/
 Icon
 **/Icon
 **/Icon?
+**/Icon\r
+**/.Icon
 
 # Test files
 test-*.js

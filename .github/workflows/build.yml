@@ -14,6 +14,45 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      
+      - name: Clean up problematic Icon files
+        run: |
+          git ls-files | grep -i "Icon" | while read file; do
+            if [ -f "$file" ] || [ -d "$file" ]; then
+              git rm --cached "$file" 2>/dev/null || true
+            fi
+          done || true
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build macOS app
+        run: npm run build:mac
+        env:
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+      
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gslide-opener-macos-zip
+          path: dist/*.zip
+          retention-days: 30
+  
   build-windows:
     runs-on: windows-latest
     
@@ -23,6 +62,14 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      
+      - name: Clean up problematic Icon files
+        run: |
+          git ls-files | grep -i "Icon" | while read file; do
+            if [ -f "$file" ] || [ -d "$file" ]; then
+              git rm --cached "$file" 2>/dev/null || true
+            fi
+          done || true
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -56,6 +103,14 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      
+      - name: Clean up problematic Icon files
+        run: |
+          git ls-files | grep -i "Icon" | while read file; do
+            if [ -f "$file" ] || [ -d "$file" ]; then
+              git rm --cached "$file" 2>/dev/null || true
+            fi
+          done || true
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -95,7 +150,7 @@ jobs:
           retention-days: 30
   
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -114,6 +169,12 @@ jobs:
           name: gslide-opener-linux-appimage
           path: artifacts/linux
       
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gslide-opener-macos-zip
+          path: artifacts/macos
+      
       - name: Download Companion Module artifact
         uses: actions/download-artifact@v4
         with:
@@ -126,6 +187,7 @@ jobs:
           files: |
             artifacts/windows/*.exe
             artifacts/linux/*.AppImage
+            artifacts/macos/*.zip
             artifacts/companion/*.tgz
           draft: false
           prerelease: false

@@ -7,6 +7,28 @@ const webUiPortInput = document.getElementById('web-ui-port');
 const signinBtn = document.getElementById('signin-btn');
 const testBtn = document.getElementById('test-btn');
 const statusMessage = document.getElementById('status-message');
+const modePrimary = document.getElementById('mode-primary');
+const modeBackup = document.getElementById('mode-backup');
+const modeStandalone = document.getElementById('mode-standalone');
+const backupConfig = document.getElementById('backup-config');
+const backupPortInput = document.getElementById('backup-port');
+const backupIp1Input = document.getElementById('backup-ip-1');
+const backupIp2Input = document.getElementById('backup-ip-2');
+const backupIp3Input = document.getElementById('backup-ip-3');
+const backupStatus1 = document.getElementById('backup-status-1');
+const backupStatus2 = document.getElementById('backup-status-2');
+const backupStatus3 = document.getElementById('backup-status-3');
+const preset1Input = document.getElementById('preset1');
+const preset2Input = document.getElementById('preset2');
+const preset3Input = document.getElementById('preset3');
+const savePresetsBtn = document.getElementById('save-presets-btn');
+const loadPresetsBtn = document.getElementById('load-presets-btn');
+const stagetimerRoomIdInput = document.getElementById('stagetimer-room-id');
+const stagetimerApiKeyInput = document.getElementById('stagetimer-api-key');
+const stagetimerEnabledCheckbox = document.getElementById('stagetimer-enabled');
+const stagetimerVisibleCheckbox = document.getElementById('stagetimer-visible');
+const saveStagetimerBtn = document.getElementById('save-stagetimer-btn');
+const loadStagetimerBtn = document.getElementById('load-stagetimer-btn');
 
 let isSignedIn = false;
 
@@ -63,6 +85,38 @@ async function initDisplays() {
       webUiPortInput.value = '80'; // Default
     }
     
+    // Restore primary/backup mode
+    const mode = preferences.primaryBackupMode || 'standalone';
+    if (mode === 'primary') {
+      modePrimary.checked = true;
+      backupConfig.style.display = 'block';
+    } else if (mode === 'backup') {
+      modeBackup.checked = true;
+      backupConfig.style.display = 'none';
+    } else {
+      modeStandalone.checked = true;
+      backupConfig.style.display = 'none';
+    }
+    
+    // Restore backup configuration
+    if (preferences.backupPort) {
+      backupPortInput.value = preferences.backupPort;
+    } else {
+      backupPortInput.value = '9595'; // Default
+    }
+    
+    if (preferences.backupIp1) {
+      backupIp1Input.value = preferences.backupIp1;
+    }
+    if (preferences.backupIp2) {
+      backupIp2Input.value = preferences.backupIp2;
+    }
+    if (preferences.backupIp3) {
+      backupIp3Input.value = preferences.backupIp3;
+    }
+    
+    // Update backup status indicators
+    updateBackupStatusIndicators(preferences);
     
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
@@ -71,8 +125,55 @@ async function initDisplays() {
     apiPortInput.addEventListener('change', savePortPreferences);
     webUiPortInput.addEventListener('change', savePortPreferences);
     
+    // Primary/Backup mode change handlers
+    modePrimary.addEventListener('change', () => {
+      if (modePrimary.checked) {
+        backupConfig.style.display = 'block';
+        savePrimaryBackupPreferences();
+      }
+    });
+    
+    modeBackup.addEventListener('change', () => {
+      if (modeBackup.checked) {
+        backupConfig.style.display = 'none';
+        savePrimaryBackupPreferences();
+      }
+    });
+    
+    modeStandalone.addEventListener('change', () => {
+      if (modeStandalone.checked) {
+        backupConfig.style.display = 'none';
+        savePrimaryBackupPreferences();
+      }
+    });
+    
+    // Backup configuration change handlers
+    backupPortInput.addEventListener('change', savePrimaryBackupPreferences);
+    backupIp1Input.addEventListener('change', savePrimaryBackupPreferences);
+    backupIp2Input.addEventListener('change', savePrimaryBackupPreferences);
+    backupIp3Input.addEventListener('change', savePrimaryBackupPreferences);
+    
     // Load and display network info
     await updateNetworkInfo();
+    
+    // Start polling backup status if in primary mode
+    if (mode === 'primary') {
+      startBackupStatusPolling();
+    }
+    
+    // Load preset presentations
+    await loadPresets();
+    
+    // Load stagetimer settings
+    await loadStagetimerSettings();
+    
+    // Set up event handlers for presets
+    savePresetsBtn.addEventListener('click', savePresets);
+    loadPresetsBtn.addEventListener('click', loadPresets);
+    
+    // Set up event handlers for stagetimer
+    saveStagetimerBtn.addEventListener('click', saveStagetimerSettings);
+    loadStagetimerBtn.addEventListener('click', loadStagetimerSettings);
     
   } catch (error) {
     showStatus('Failed to load displays', 'error');
@@ -185,6 +286,208 @@ async function saveMachineName() {
   } catch (error) {
     console.error('Failed to save port preferences:', error);
     showStatus('Failed to save port preferences', 'error');
+  }
+}
+
+// Save primary/backup preferences
+async function savePrimaryBackupPreferences() {
+  try {
+    let mode = 'standalone';
+    if (modePrimary.checked) {
+      mode = 'primary';
+    } else if (modeBackup.checked) {
+      mode = 'backup';
+    }
+    
+    const backupPort = parseInt(backupPortInput.value, 10);
+    
+    // Validate backup port
+    if (mode === 'primary' && (isNaN(backupPort) || backupPort < 1024 || backupPort > 65535)) {
+      showStatus('Backup port must be between 1024 and 65535', 'error');
+      return;
+    }
+    
+    const prefs = {
+      primaryBackupMode: mode,
+      backupPort: mode === 'primary' ? backupPort : null,
+      backupIp1: mode === 'primary' ? backupIp1Input.value.trim() : null,
+      backupIp2: mode === 'primary' ? backupIp2Input.value.trim() : null,
+      backupIp3: mode === 'primary' ? backupIp3Input.value.trim() : null
+    };
+    
+    await window.electronAPI.savePreferences(prefs);
+    
+    // Restart backup status polling if needed
+    if (mode === 'primary') {
+      startBackupStatusPolling();
+    } else {
+      stopBackupStatusPolling();
+    }
+    
+    showStatus('Primary/Backup configuration saved', 'info');
+  } catch (error) {
+    console.error('Failed to save primary/backup preferences:', error);
+    showStatus('Failed to save primary/backup preferences', 'error');
+  }
+}
+
+// Update backup status indicators
+function updateBackupStatusIndicators(preferences) {
+  const statuses = [
+    { element: backupStatus1, ip: preferences.backupIp1, status: preferences.backupStatus1 },
+    { element: backupStatus2, ip: preferences.backupIp2, status: preferences.backupStatus2 },
+    { element: backupStatus3, ip: preferences.backupIp3, status: preferences.backupStatus3 }
+  ];
+  
+  statuses.forEach(({ element, ip, status }) => {
+    if (!element) return;
+    
+    if (!ip || ip.trim() === '') {
+      element.textContent = '-';
+      element.style.background = 'transparent';
+      element.style.color = 'var(--text-secondary)';
+    } else if (status === 'connected') {
+      element.textContent = 'Connected';
+      element.style.background = '#4caf50';
+      element.style.color = 'white';
+    } else if (status === 'disconnected') {
+      element.textContent = 'Disconnected';
+      element.style.background = '#f44336';
+      element.style.color = 'white';
+    } else {
+      element.textContent = 'Checking...';
+      element.style.background = '#ff9800';
+      element.style.color = 'white';
+    }
+  });
+}
+
+// Backup status polling
+let backupStatusInterval = null;
+
+function startBackupStatusPolling() {
+  stopBackupStatusPolling();
+  
+  // Poll immediately, then every 5 seconds
+  updateBackupStatus();
+  backupStatusInterval = setInterval(updateBackupStatus, 5000);
+}
+
+function stopBackupStatusPolling() {
+  if (backupStatusInterval) {
+    clearInterval(backupStatusInterval);
+    backupStatusInterval = null;
+  }
+}
+
+async function updateBackupStatus() {
+  try {
+    const preferences = await window.electronAPI.getPreferences();
+    const apiPort = preferences.apiPort || 9595;
+    
+    const response = await fetch(`http://127.0.0.1:${apiPort}/api/backup-status`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch backup status');
+    }
+    const data = await response.json();
+    
+    // Update status indicators
+    preferences.backupStatus1 = data.backup1?.status || null;
+    preferences.backupStatus2 = data.backup2?.status || null;
+    preferences.backupStatus3 = data.backup3?.status || null;
+    
+    updateBackupStatusIndicators(preferences);
+  } catch (error) {
+    console.error('Failed to update backup status:', error);
+  }
+}
+
+// Preset Presentations Functions
+async function loadPresets() {
+  try {
+    const preferences = await window.electronAPI.getPreferences();
+    preset1Input.value = preferences.presentation1 || '';
+    preset2Input.value = preferences.presentation2 || '';
+    preset3Input.value = preferences.presentation3 || '';
+  } catch (error) {
+    console.error('Failed to load presets:', error);
+  }
+}
+
+async function savePresets() {
+  try {
+    const prefs = {
+      presentation1: preset1Input.value.trim(),
+      presentation2: preset2Input.value.trim(),
+      presentation3: preset3Input.value.trim()
+    };
+    
+    await window.electronAPI.savePreferences(prefs);
+    showStatus('Presets saved successfully', 'info');
+  } catch (error) {
+    console.error('Failed to save presets:', error);
+    showStatus('Failed to save presets', 'error');
+  }
+}
+
+// Stagetimer Settings Functions
+async function loadStagetimerSettings() {
+  try {
+    const preferences = await window.electronAPI.getPreferences();
+    const apiPort = preferences.apiPort || 9595;
+    
+    const response = await fetch(`http://127.0.0.1:${apiPort}/api/stagetimer-settings`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch stagetimer settings');
+    }
+    const data = await response.json();
+    
+    stagetimerRoomIdInput.value = data.roomId || '';
+    stagetimerApiKeyInput.value = data.apiKey || '';
+    stagetimerEnabledCheckbox.checked = data.enabled !== false;
+    stagetimerVisibleCheckbox.checked = data.visible !== false && data.visible !== undefined ? data.visible : true;
+  } catch (error) {
+    console.error('Failed to load stagetimer settings:', error);
+    // If API call fails, try loading from preferences directly
+    const preferences = await window.electronAPI.getPreferences();
+    stagetimerRoomIdInput.value = preferences.stagetimerRoomId || '';
+    stagetimerApiKeyInput.value = preferences.stagetimerApiKey || '';
+    stagetimerEnabledCheckbox.checked = preferences.stagetimerEnabled !== false;
+    stagetimerVisibleCheckbox.checked = preferences.stagetimerVisible !== false && preferences.stagetimerVisible !== undefined ? preferences.stagetimerVisible : true;
+  }
+}
+
+async function saveStagetimerSettings() {
+  try {
+    const preferences = await window.electronAPI.getPreferences();
+    const apiPort = preferences.apiPort || 9595;
+    
+    const settings = {
+      roomId: stagetimerRoomIdInput.value.trim(),
+      apiKey: stagetimerApiKeyInput.value.trim(),
+      enabled: stagetimerEnabledCheckbox.checked,
+      visible: stagetimerVisibleCheckbox.checked
+    };
+    
+    const response = await fetch(`http://127.0.0.1:${apiPort}/api/stagetimer-settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings)
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to save stagetimer settings');
+    }
+    
+    const result = await response.json();
+    if (result.success) {
+      showStatus('Stagetimer settings saved successfully', 'info');
+    } else {
+      showStatus('Failed to save stagetimer settings: ' + (result.error || 'Unknown error'), 'error');
+    }
+  } catch (error) {
+    console.error('Failed to save stagetimer settings:', error);
+    showStatus('Failed to save stagetimer settings: ' + error.message, 'error');
   }
 }
 

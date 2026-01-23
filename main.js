@@ -70,10 +70,12 @@ function setSpeakerNotesFullscreen(window) {
       
       window.setBounds(display.bounds);
       if (process.platform === 'darwin') {
-        window.setFullScreen(true);
+        // Use setSimpleFullScreen instead of setFullScreen to avoid creating a new Space
+        // This prevents window management conflicts when "Displays have separate Spaces" is enabled
+        window.setSimpleFullScreen(true);
       }
       window.show();
-      console.log('[Notes] Set speaker notes window to fullscreen');
+      console.log('[Notes] Set speaker notes window to fullscreen (simple fullscreen to avoid Spaces conflicts)');
     } catch (error) {
       console.error('[Notes] Error setting fullscreen:', error);
       // Fallback: just show the window
@@ -166,6 +168,183 @@ function savePreferences(prefs) {
       stack: error.stack
     });
     throw error; // Re-throw so caller can handle it
+  }
+}
+
+// Primary/Backup System Functions
+
+// Check if current instance is in backup mode
+function isBackupMode() {
+  const prefs = loadPreferences();
+  return prefs.primaryBackupMode === 'backup';
+}
+
+// Get list of configured backup IP addresses
+function getBackupIps() {
+  const prefs = loadPreferences();
+  if (prefs.primaryBackupMode !== 'primary') {
+    return [];
+  }
+  
+  const ips = [
+    prefs.backupIp1,
+    prefs.backupIp2,
+    prefs.backupIp3
+  ].filter(ip => ip && ip.trim() !== '');
+  
+  return ips;
+}
+
+// Send command to all backup machines (fire and forget)
+async function sendToBackups(endpoint, data = null) {
+  const prefs = loadPreferences();
+  if (prefs.primaryBackupMode !== 'primary') {
+    return; // Not in primary mode
+  }
+  
+  const backupIps = getBackupIps();
+  if (backupIps.length === 0) {
+    return; // No backups configured
+  }
+  
+  const port = prefs.backupPort || DEFAULT_API_PORT;
+  
+  console.log(`[Backup] Broadcasting ${endpoint} to ${backupIps.length} backup(s)`);
+  
+  // Send to all backups in parallel (fire and forget - don't wait for responses)
+  backupIps.forEach(ip => {
+    const options = {
+      hostname: ip,
+      port: port,
+      path: endpoint,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 2000
+    };
+    
+    const req = http.request(options, (res) => {
+      // Success - backup received command
+      console.log(`[Backup] Successfully sent to ${ip}:${port}${endpoint}`);
+    });
+    
+    req.on('error', (err) => {
+      // Error - backup didn't receive command (log but don't fail)
+      console.error(`[Backup] Failed to send to ${ip}:${port}${endpoint}:`, err.message);
+    });
+    
+    req.on('timeout', () => {
+      req.destroy();
+      console.error(`[Backup] Timeout sending to ${ip}:${port}${endpoint}`);
+    });
+    
+    if (data) {
+      req.write(JSON.stringify(data));
+    }
+    req.end();
+  });
+}
+
+// Check connection status of all backup machines
+async function checkBackupStatus() {
+  const prefs = loadPreferences();
+  if (prefs.primaryBackupMode !== 'primary') {
+    return {};
+  }
+  
+  const backupIps = getBackupIps();
+  if (backupIps.length === 0) {
+    return {};
+  }
+  
+  const port = prefs.backupPort || DEFAULT_API_PORT;
+  const status = {};
+  
+  // Check each backup in parallel
+  const promises = backupIps.map((ip, index) => {
+    return new Promise((resolve) => {
+      const options = {
+        hostname: ip,
+        port: port,
+        path: '/api/status',
+        method: 'GET',
+        timeout: 2000
+      };
+      
+      const req = http.request(options, (res) => {
+        let responseData = '';
+        res.on('data', (chunk) => {
+          responseData += chunk.toString();
+        });
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            status[`backup${index + 1}`] = { ip, status: 'connected' };
+            resolve();
+          } else {
+            status[`backup${index + 1}`] = { ip, status: 'disconnected' };
+            resolve();
+          }
+        });
+      });
+      
+      req.on('error', () => {
+        status[`backup${index + 1}`] = { ip, status: 'disconnected' };
+        resolve();
+      });
+      
+      req.on('timeout', () => {
+        req.destroy();
+        status[`backup${index + 1}`] = { ip, status: 'disconnected' };
+        resolve();
+      });
+      
+      req.end();
+    });
+  });
+  
+  await Promise.all(promises);
+  
+  // Update preferences with status
+  const updatedPrefs = loadPreferences();
+  updatedPrefs.backupStatus1 = status.backup1?.status || null;
+  updatedPrefs.backupStatus2 = status.backup2?.status || null;
+  updatedPrefs.backupStatus3 = status.backup3?.status || null;
+  savePreferences(updatedPrefs);
+  
+  return status;
+}
+
+// Start backup status polling (called when app starts in primary mode)
+let backupStatusInterval = null;
+
+function startBackupStatusPolling() {
+  stopBackupStatusPolling();
+  
+  const prefs = loadPreferences();
+  if (prefs.primaryBackupMode !== 'primary') {
+    return;
+  }
+  
+  // Poll immediately, then every 5 seconds
+  checkBackupStatus().catch(err => {
+    console.error('[Backup] Error checking backup status:', err);
+  });
+  
+  backupStatusInterval = setInterval(() => {
+    checkBackupStatus().catch(err => {
+      console.error('[Backup] Error checking backup status:', err);
+    });
+  }, 5000);
+  
+  console.log('[Backup] Started backup status polling (5s interval)');
+}
+
+function stopBackupStatusPolling() {
+  if (backupStatusInterval) {
+    clearInterval(backupStatusInterval);
+    backupStatusInterval = null;
+    console.log('[Backup] Stopped backup status polling');
   }
 }
 
@@ -449,12 +628,13 @@ ipcMain.handle('open-test-presentation', async () => {
   console.log('[Test] Resolved notes display:', notesDisplay.id, 'Bounds:', notesDisplay.bounds);
   
   if (!presentationWindow) {
+    // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
+    // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
     presentationWindow = new BrowserWindow({
       x: presentationDisplay.bounds.x,
       y: presentationDisplay.bounds.y,
       width: presentationDisplay.bounds.width,
       height: presentationDisplay.bounds.height,
-      fullscreen: true,
       frame: false,
       webPreferences: {
         nodeIntegration: false,
@@ -462,6 +642,11 @@ ipcMain.handle('open-test-presentation', async () => {
         partition: GOOGLE_SESSION_PARTITION
       }
     });
+    
+    // Set simple fullscreen on macOS to avoid Spaces conflicts
+    if (process.platform === 'darwin') {
+      presentationWindow.setSimpleFullScreen(true);
+    }
 
     presentationWindow.on('closed', () => {
       presentationWindow = null;
@@ -621,12 +806,13 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   currentSlide = null;
 
   // Open presentation window
+  // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
+  // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
   presentationWindow = new BrowserWindow({
     x: presentationDisplay.bounds.x,
     y: presentationDisplay.bounds.y,
     width: presentationDisplay.bounds.width,
     height: presentationDisplay.bounds.height,
-    fullscreen: true,
     frame: false,
     webPreferences: {
       nodeIntegration: false,
@@ -634,6 +820,11 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       partition: GOOGLE_SESSION_PARTITION
     }
   });
+  
+  // Set simple fullscreen on macOS to avoid Spaces conflicts
+  if (process.platform === 'darwin') {
+    presentationWindow.setSimpleFullScreen(true);
+  }
 
   // Handle the speaker notes popup window
   presentationWindow.webContents.setWindowOpenHandler((details) => {
@@ -955,6 +1146,79 @@ function startHttpServer() {
       return;
     }
     
+    // GET /api/backup-status - Get connection status of backup machines (primary mode only)
+    if (req.method === 'GET' && req.url === '/api/backup-status') {
+      (async () => {
+        try {
+          const status = await checkBackupStatus();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(status));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      })();
+      return;
+    }
+    
+    // GET /api/preferences - Get all preferences
+    if (req.method === 'GET' && req.url === '/api/preferences') {
+      try {
+        const prefs = loadPreferences();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(prefs));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    
+    // POST /api/preferences - Save preferences
+    if (req.method === 'POST' && req.url === '/api/preferences') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+      
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const prefs = loadPreferences();
+          
+          // Merge new preferences with existing ones
+          Object.assign(prefs, data);
+          savePreferences(prefs);
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Preferences saved' }));
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message }));
+        }
+      });
+      return;
+    }
+    
+    // GET /api/displays - Get available displays
+    if (req.method === 'GET' && req.url === '/api/displays') {
+      try {
+        const displays = screen.getAllDisplays();
+        const displayList = displays.map(display => ({
+          id: display.id,
+          bounds: display.bounds,
+          label: `${display.bounds.width}x${display.bounds.height} @ (${display.bounds.x}, ${display.bounds.y})`,
+          primary: display.id === screen.getPrimaryDisplay().id
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(displayList));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+    
     // POST /api/open-presentation - Open a presentation with URL
     if (req.method === 'POST' && req.url === '/api/open-presentation') {
       let body = '';
@@ -1009,12 +1273,13 @@ function startHttpServer() {
           
           // Open the presentation using the same logic as the IPC handler
           // Create the presentation window
+          // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
+          // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow({
             x: presentationDisplay.bounds.x,
             y: presentationDisplay.bounds.y,
             width: presentationDisplay.bounds.width,
             height: presentationDisplay.bounds.height,
-            fullscreen: true,
             frame: false,
             webPreferences: {
               nodeIntegration: false,
@@ -1022,6 +1287,11 @@ function startHttpServer() {
               partition: GOOGLE_SESSION_PARTITION
             }
           });
+          
+          // Set simple fullscreen on macOS to avoid Spaces conflicts
+          if (process.platform === 'darwin') {
+            presentationWindow.setSimpleFullScreen(true);
+          }
           
           // Set up window open handler for speaker notes popup
           presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
@@ -1128,6 +1398,12 @@ function startHttpServer() {
           currentSlide = 1;
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
+          
+          // Broadcast to backups (async, don't wait)
+          sendToBackups('/api/open-presentation', { url: url }).catch(err => {
+            console.error('[Backup] Error broadcasting open-presentation:', err);
+          });
+          
           // Send response immediately
           if (!res.headersSent) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1197,12 +1473,13 @@ function startHttpServer() {
           console.log('[API] Using notes display:', notesDisplay.id);
           
           // Create the presentation window
+          // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
+          // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow({
             x: presentationDisplay.bounds.x,
             y: presentationDisplay.bounds.y,
             width: presentationDisplay.bounds.width,
             height: presentationDisplay.bounds.height,
-            fullscreen: true,
             frame: false,
             webPreferences: {
               nodeIntegration: false,
@@ -1210,6 +1487,11 @@ function startHttpServer() {
               partition: GOOGLE_SESSION_PARTITION
             }
           });
+          
+          // Set simple fullscreen on macOS to avoid Spaces conflicts
+          if (process.platform === 'darwin') {
+            presentationWindow.setSimpleFullScreen(true);
+          }
           
           // Set up window open handler for speaker notes popup
           presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
@@ -1356,6 +1638,11 @@ function startHttpServer() {
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
           
+          // Broadcast to backups (async, don't wait)
+          sendToBackups('/api/open-presentation-with-notes', { url: url }).catch(err => {
+            console.error('[Backup] Error broadcasting open-presentation-with-notes:', err);
+          });
+          
           // Send response immediately
           if (!res.headersSent) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1375,6 +1662,11 @@ function startHttpServer() {
     // POST /api/close-presentation - Close current presentation
     if (req.method === 'POST' && req.url === '/api/close-presentation') {
       console.log('[API] Closing presentation');
+      
+      // Broadcast to backups (async, don't wait)
+      sendToBackups('/api/close-presentation', {}).catch(err => {
+        console.error('[Backup] Error broadcasting close-presentation:', err);
+      });
       
       // Send response first before closing windows
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1415,6 +1707,12 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
         currentSlide = (typeof currentSlide === 'number' ? currentSlide + 1 : 1);
+        
+        // Broadcast to backups (async, don't wait)
+        sendToBackups('/api/next-slide', {}).catch(err => {
+          console.error('[Backup] Error broadcasting next-slide:', err);
+        });
+        
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Next slide' }));
       } catch (error) {
@@ -1437,6 +1735,12 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
         currentSlide = (typeof currentSlide === 'number' && currentSlide > 1 ? currentSlide - 1 : 1);
+        
+        // Broadcast to backups (async, don't wait)
+        sendToBackups('/api/previous-slide', {}).catch(err => {
+          console.error('[Backup] Error broadcasting previous-slide:', err);
+        });
+        
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Previous slide' }));
       } catch (error) {
@@ -1475,6 +1779,11 @@ function startHttpServer() {
           const slidesToMove = targetSlide - current;
 
           if (slidesToMove === 0) {
+            // Broadcast to backups even if already on target slide (for sync)
+            sendToBackups('/api/go-to-slide', { slide: targetSlide }).catch(err => {
+              console.error('[Backup] Error broadcasting go-to-slide:', err);
+            });
+            
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, message: 'Already on slide ' + targetSlide }));
             return;
@@ -1498,6 +1807,11 @@ function startHttpServer() {
 
           // Update our tracking
           currentSlide = targetSlide;
+          
+          // Broadcast to backups (async, don't wait)
+          sendToBackups('/api/go-to-slide', { slide: targetSlide }).catch(err => {
+            console.error('[Backup] Error broadcasting go-to-slide:', err);
+          });
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ 
@@ -1570,12 +1884,13 @@ function startHttpServer() {
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
 
+          // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
+          // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow({
             x: presentationDisplay.bounds.x,
             y: presentationDisplay.bounds.y,
             width: presentationDisplay.bounds.width,
             height: presentationDisplay.bounds.height,
-            fullscreen: true,
             frame: false,
             webPreferences: {
               nodeIntegration: false,
@@ -1583,6 +1898,11 @@ function startHttpServer() {
               partition: GOOGLE_SESSION_PARTITION
             }
           });
+          
+          // Set simple fullscreen on macOS to avoid Spaces conflicts
+          if (process.platform === 'darwin') {
+            presentationWindow.setSimpleFullScreen(true);
+          }
 
           // Set up window open handler for speaker notes popup
           presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
@@ -1804,6 +2124,11 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 'k' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K' });
         
+        // Broadcast to backups (async, don't wait)
+        sendToBackups('/api/toggle-video', {}).catch(err => {
+          console.error('[Backup] Error broadcasting toggle-video:', err);
+        });
+        
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Video toggled' }));
       } catch (error) {
@@ -1828,6 +2153,11 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
         presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+        
+        // Broadcast to backups (async, don't wait)
+        sendToBackups('/api/open-speaker-notes', {}).catch(err => {
+          console.error('[Backup] Error broadcasting open-speaker-notes:', err);
+        });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Speaker notes opened' }));
@@ -1849,6 +2179,12 @@ function startHttpServer() {
       try {
         notesWindow.close();
         notesWindow = null;
+        
+        // Broadcast to backups (async, don't wait)
+        sendToBackups('/api/close-speaker-notes', {}).catch(err => {
+          console.error('[Backup] Error broadcasting close-speaker-notes:', err);
+        });
+        
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Speaker notes closed' }));
       } catch (error) {
@@ -1896,6 +2232,11 @@ function startHttpServer() {
           })()
         `).then(result => {
           if (result.success && result.scrolled) {
+            // Broadcast to backups (async, don't wait)
+            sendToBackups('/api/scroll-notes-down', {}).catch(err => {
+              console.error('[Backup] Error broadcasting scroll-notes-down:', err);
+            });
+            
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, message: 'Notes scrolled down' }));
           } else {
@@ -1951,6 +2292,11 @@ function startHttpServer() {
           })()
         `).then(result => {
           if (result.success && result.scrolled) {
+            // Broadcast to backups (async, don't wait)
+            sendToBackups('/api/scroll-notes-up', {}).catch(err => {
+              console.error('[Backup] Error broadcasting scroll-notes-up:', err);
+            });
+            
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, message: 'Notes scrolled up' }));
           } else {
@@ -2015,6 +2361,12 @@ function startHttpServer() {
         `).then(result => {
           if (result.success) {
             console.log('[API] ✓ Dispatched mouse events to zoom in button');
+            
+            // Broadcast to backups (async, don't wait)
+            sendToBackups('/api/zoom-in-notes', {}).catch(err => {
+              console.error('[Backup] Error broadcasting zoom-in-notes:', err);
+            });
+            
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, message: 'Zoomed in on notes' }));
           } else {
@@ -2082,6 +2434,12 @@ function startHttpServer() {
         `).then(result => {
           if (result.success) {
             console.log('[API] ✓ Dispatched mouse events to zoom out button');
+            
+            // Broadcast to backups (async, don't wait)
+            sendToBackups('/api/zoom-out-notes', {}).catch(err => {
+              console.error('[Backup] Error broadcasting zoom-out-notes:', err);
+            });
+            
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, message: 'Zoomed out on notes' }));
           } else {
@@ -3040,12 +3398,13 @@ function startHttpServer() {
           console.log('[API] Using notes display:', notesDisplay.id);
           
           // Create the presentation window (reuse open-presentation logic)
+          // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
+          // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow({
             x: presentationDisplay.bounds.x,
             y: presentationDisplay.bounds.y,
             width: presentationDisplay.bounds.width,
             height: presentationDisplay.bounds.height,
-            fullscreen: true,
             frame: false,
             webPreferences: {
               nodeIntegration: false,
@@ -3053,6 +3412,11 @@ function startHttpServer() {
               partition: GOOGLE_SESSION_PARTITION
             }
           });
+          
+          // Set simple fullscreen on macOS to avoid Spaces conflicts
+          if (process.platform === 'darwin') {
+            presentationWindow.setSimpleFullScreen(true);
+          }
           
           // Set up window handlers (same as open-presentation)
           presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
@@ -3169,7 +3533,8 @@ function startHttpServer() {
               });
               setTimeout(() => {
                 if (presentationWindow && !presentationWindow.isDestroyed()) {
-                  presentationWindow.setFullScreen(true);
+                  // Use setSimpleFullScreen to avoid Spaces conflicts
+                  presentationWindow.setSimpleFullScreen(true);
                 }
               }, 50);
             }
@@ -3177,17 +3542,23 @@ function startHttpServer() {
           
           if (process.platform === 'darwin') {
             setTimeout(() => {
-              if (presentationWindow && !presentationWindow.isDestroyed() && !presentationWindow.isFullScreen()) {
+              if (presentationWindow && !presentationWindow.isDestroyed() && !presentationWindow.isSimpleFullScreen()) {
                 presentationWindow.setBounds({
                   x: presentationDisplay.bounds.x,
                   y: presentationDisplay.bounds.y,
                   width: presentationDisplay.bounds.width,
                   height: presentationDisplay.bounds.height
                 });
-                presentationWindow.setFullScreen(true);
+                // Use setSimpleFullScreen to avoid Spaces conflicts
+                presentationWindow.setSimpleFullScreen(true);
               }
             }, 200);
           }
+          
+          // Broadcast to backups (async, don't wait)
+          sendToBackups('/api/open-preset', { preset: presetNumber }).catch(err => {
+            console.error('[Backup] Error broadcasting open-preset:', err);
+          });
           
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, message: `Preset ${presetNumber} opened`, url: url }));
@@ -3986,9 +4357,129 @@ function startWebUiServer() {
     
     <!-- Settings Tab (Hidden by default) -->
     <div id="tab-settings" class="tab-content">
-      <div class="info">
-        Configure preset presentations. These can be opened from Companion using "Open Presentation 1", "Open Presentation 2", or "Open Presentation 3" actions.
+      <!-- Monitor Setup Section -->
+      <div class="controls-section">
+        <h3>Monitor Setup</h3>
+        <div class="info" style="margin-bottom: 15px;">
+          Select which monitors to use for the presentation and speaker notes windows.
+        </div>
+        <div class="preset-group">
+          <label for="web-presentation-display">Presentation Monitor</label>
+          <select id="web-presentation-display" class="input-field" style="width: 100%; padding: 8px;">
+            <option value="">Loading displays...</option>
+          </select>
+        </div>
+        <div class="preset-group">
+          <label for="web-notes-display">Notes Monitor</label>
+          <select id="web-notes-display" class="input-field" style="width: 100%; padding: 8px;">
+            <option value="">Loading displays...</option>
+          </select>
+        </div>
+        <button type="button" class="btn" id="btn-save-displays" style="margin-top: 10px;">Save Monitor Settings</button>
       </div>
+      
+      <!-- Machine Name Section -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>Machine Name</h3>
+        <div class="info" style="margin-bottom: 15px;">
+          Set a name for this machine (shown in web UI header).
+        </div>
+        <div class="preset-group">
+          <label for="web-machine-name">Machine Name</label>
+          <input type="text" id="web-machine-name" class="input-field" placeholder="Enter machine name..." maxlength="50" />
+          <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Leave empty to use system hostname</small>
+        </div>
+        <button type="button" class="btn" id="btn-save-machine-name" style="margin-top: 10px;">Save Machine Name</button>
+      </div>
+      
+      <!-- Primary/Backup Configuration Section -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>Primary/Backup Configuration</h3>
+        <div class="info" style="margin-bottom: 15px;">
+          Configure this instance as primary (controls backups) or backup (follows primary).
+        </div>
+        <div class="preset-group">
+          <label>Mode</label>
+          <div style="display: flex; gap: 20px; margin-top: 8px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="radio" name="web-primary-backup-mode" id="web-mode-primary" value="primary" />
+              <span>Primary</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="radio" name="web-primary-backup-mode" id="web-mode-backup" value="backup" />
+              <span>Backup</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="radio" name="web-primary-backup-mode" id="web-mode-standalone" value="standalone" checked />
+              <span>Standalone</span>
+            </label>
+          </div>
+          <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Primary: Controls backup machines. Backup: Follows primary commands. Standalone: Independent operation.</small>
+        </div>
+        
+        <div id="web-backup-config" style="display: none; margin-top: 15px;">
+          <div class="preset-group">
+            <label for="web-backup-port">Backup Communication Port</label>
+            <input type="number" id="web-backup-port" class="input-field" min="1024" max="65535" placeholder="9595" />
+            <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Port used to communicate with backup machines (default: 9595)</small>
+          </div>
+          
+          <div class="preset-group">
+            <label for="web-backup-ip-1">Backup Machine 1 IP Address</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="text" id="web-backup-ip-1" class="input-field" placeholder="192.168.1.100" style="flex: 1;" />
+              <span id="web-backup-status-1" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center; background: transparent; color: #888;">-</span>
+            </div>
+          </div>
+          
+          <div class="preset-group">
+            <label for="web-backup-ip-2">Backup Machine 2 IP Address (Optional)</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="text" id="web-backup-ip-2" class="input-field" placeholder="192.168.1.101" style="flex: 1;" />
+              <span id="web-backup-status-2" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center; background: transparent; color: #888;">-</span>
+            </div>
+          </div>
+          
+          <div class="preset-group">
+            <label for="web-backup-ip-3">Backup Machine 3 IP Address (Optional)</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <input type="text" id="web-backup-ip-3" class="input-field" placeholder="192.168.1.102" style="flex: 1;" />
+              <span id="web-backup-status-3" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center; background: transparent; color: #888;">-</span>
+            </div>
+          </div>
+        </div>
+        
+        <button type="button" class="btn" id="btn-save-primary-backup" style="margin-top: 15px;">Save Primary/Backup Settings</button>
+      </div>
+      
+      <!-- Network Ports Section -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>Network Ports</h3>
+        <div class="info" style="margin-bottom: 15px;">
+          Configure ports for API and Web UI (restart required for changes to take effect).
+        </div>
+        <div class="preset-group">
+          <label for="web-api-port">API Port (Companion)</label>
+          <input type="number" id="web-api-port" class="input-field" min="1024" max="65535" placeholder="9595" />
+          <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Port for Companion module API (default: 9595)</small>
+        </div>
+        <div class="preset-group">
+          <label for="web-web-ui-port">Web UI Port</label>
+          <input type="number" id="web-web-ui-port" class="input-field" min="1" max="65535" placeholder="80" />
+          <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Port for web interface (default: 80, requires admin for ports &lt;1024)</small>
+        </div>
+        <button type="button" class="btn" id="btn-save-ports" style="margin-top: 10px;">Save Port Settings</button>
+        <div style="margin-top: 10px; padding: 10px; background: #ff9800; color: white; border-radius: 4px; font-size: 12px;">
+          ⚠️ Port changes require restarting the app to take effect.
+        </div>
+      </div>
+      
+      <!-- Preset Presentations Section -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>Preset Presentations</h3>
+        <div class="info" style="margin-bottom: 15px;">
+          Configure preset presentations. These can be opened from Companion using "Open Presentation 1", "Open Presentation 2", or "Open Presentation 3" actions.
+        </div>
       
       <form id="preset-form">
       <div class="preset-group">
@@ -5167,6 +5658,321 @@ function startWebUiServer() {
     document.getElementById('btn-save-stagetimer').addEventListener('click', saveStagetimerSettings);
     document.getElementById('btn-load-stagetimer').addEventListener('click', loadStagetimerSettings);
     
+    // Load all settings when Settings tab is opened
+    let settingsLoaded = false;
+    document.querySelector('[data-tab="settings"]').addEventListener('click', () => {
+      if (!settingsLoaded) {
+        loadAllSettings();
+        settingsLoaded = true;
+      }
+    });
+    
+    // Load settings immediately if Settings tab is already active
+    if (document.getElementById('tab-settings').classList.contains('active')) {
+      loadAllSettings();
+      settingsLoaded = true;
+    }
+    
+    // Function to load all settings
+    async function loadAllSettings() {
+      try {
+        // Load displays
+        const displaysRes = await fetch(API_BASE + '/api/displays');
+        const displays = await displaysRes.json();
+        
+        const presentationSelect = document.getElementById('web-presentation-display');
+        const notesSelect = document.getElementById('web-notes-display');
+        
+        presentationSelect.innerHTML = '';
+        notesSelect.innerHTML = '';
+        
+        displays.forEach(display => {
+          const option1 = document.createElement('option');
+          option1.value = display.id;
+          option1.textContent = display.label + (display.primary ? ' (Primary)' : '');
+          presentationSelect.appendChild(option1);
+          
+          const option2 = document.createElement('option');
+          option2.value = display.id;
+          option2.textContent = display.label + (display.primary ? ' (Primary)' : '');
+          notesSelect.appendChild(option2);
+        });
+        
+        // Load preferences
+        const prefsRes = await fetch(API_BASE + '/api/preferences');
+        const prefs = await prefsRes.json();
+        
+        // Set display values
+        if (prefs.presentationDisplayId) {
+          presentationSelect.value = prefs.presentationDisplayId;
+        }
+        if (prefs.notesDisplayId) {
+          notesSelect.value = prefs.notesDisplayId;
+        }
+        
+        // Set machine name
+        document.getElementById('web-machine-name').value = prefs.machineName || '';
+        
+        // Set primary/backup mode
+        const mode = prefs.primaryBackupMode || 'standalone';
+        document.getElementById('web-mode-primary').checked = mode === 'primary';
+        document.getElementById('web-mode-backup').checked = mode === 'backup';
+        document.getElementById('web-mode-standalone').checked = mode === 'standalone';
+        
+        const backupConfig = document.getElementById('web-backup-config');
+        if (mode === 'primary') {
+          backupConfig.style.display = 'block';
+        } else {
+          backupConfig.style.display = 'none';
+        }
+        
+        // Set backup configuration
+        document.getElementById('web-backup-port').value = prefs.backupPort || '9595';
+        document.getElementById('web-backup-ip-1').value = prefs.backupIp1 || '';
+        document.getElementById('web-backup-ip-2').value = prefs.backupIp2 || '';
+        document.getElementById('web-backup-ip-3').value = prefs.backupIp3 || '';
+        
+        // Update backup status indicators
+        updateWebBackupStatusIndicators(prefs);
+        
+        // Set network ports
+        document.getElementById('web-api-port').value = prefs.apiPort || '9595';
+        document.getElementById('web-web-ui-port').value = prefs.webUiPort || '80';
+        
+        // Set up primary/backup mode change handlers
+        document.getElementById('web-mode-primary').addEventListener('change', () => {
+          if (document.getElementById('web-mode-primary').checked) {
+            backupConfig.style.display = 'block';
+          }
+        });
+        document.getElementById('web-mode-backup').addEventListener('change', () => {
+          if (document.getElementById('web-mode-backup').checked) {
+            backupConfig.style.display = 'none';
+          }
+        });
+        document.getElementById('web-mode-standalone').addEventListener('change', () => {
+          if (document.getElementById('web-mode-standalone').checked) {
+            backupConfig.style.display = 'none';
+          }
+        });
+        
+        // Start backup status polling if in primary mode
+        if (mode === 'primary') {
+          startWebBackupStatusPolling();
+        }
+      } catch (error) {
+        console.error('Failed to load settings:', error);
+        showStatus('Failed to load settings: ' + error.message, true);
+      }
+    }
+    
+    // Save monitor settings
+    document.getElementById('btn-save-displays').addEventListener('click', async () => {
+      try {
+        const prefs = {
+          presentationDisplayId: parseInt(document.getElementById('web-presentation-display').value),
+          notesDisplayId: parseInt(document.getElementById('web-notes-display').value)
+        };
+        
+        const res = await fetch(API_BASE + '/api/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prefs)
+        });
+        
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Monitor settings saved', false);
+        } else {
+          showStatus('Failed to save monitor settings: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Failed to save monitor settings: ' + error.message, true);
+      }
+    });
+    
+    // Save machine name
+    document.getElementById('btn-save-machine-name').addEventListener('click', async () => {
+      try {
+        const prefs = {
+          machineName: document.getElementById('web-machine-name').value.trim()
+        };
+        
+        const res = await fetch(API_BASE + '/api/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prefs)
+        });
+        
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Machine name saved', false);
+          // Reload page to update header
+          setTimeout(() => {
+            window.location.reload();
+          }, 1000);
+        } else {
+          showStatus('Failed to save machine name: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Failed to save machine name: ' + error.message, true);
+      }
+    });
+    
+    // Save primary/backup settings
+    document.getElementById('btn-save-primary-backup').addEventListener('click', async () => {
+      try {
+        let mode = 'standalone';
+        if (document.getElementById('web-mode-primary').checked) {
+          mode = 'primary';
+        } else if (document.getElementById('web-mode-backup').checked) {
+          mode = 'backup';
+        }
+        
+        const backupPort = parseInt(document.getElementById('web-backup-port').value);
+        if (mode === 'primary' && (isNaN(backupPort) || backupPort < 1024 || backupPort > 65535)) {
+          showStatus('Backup port must be between 1024 and 65535', true);
+          return;
+        }
+        
+        const prefs = {
+          primaryBackupMode: mode,
+          backupPort: mode === 'primary' ? backupPort : null,
+          backupIp1: mode === 'primary' ? document.getElementById('web-backup-ip-1').value.trim() : null,
+          backupIp2: mode === 'primary' ? document.getElementById('web-backup-ip-2').value.trim() : null,
+          backupIp3: mode === 'primary' ? document.getElementById('web-backup-ip-3').value.trim() : null
+        };
+        
+        const res = await fetch(API_BASE + '/api/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prefs)
+        });
+        
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Primary/Backup settings saved', false);
+          
+          // Restart backup status polling if needed
+          if (mode === 'primary') {
+            startWebBackupStatusPolling();
+          } else {
+            stopWebBackupStatusPolling();
+          }
+        } else {
+          showStatus('Failed to save Primary/Backup settings: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Failed to save Primary/Backup settings: ' + error.message, true);
+      }
+    });
+    
+    // Save port settings
+    document.getElementById('btn-save-ports').addEventListener('click', async () => {
+      try {
+        const apiPort = parseInt(document.getElementById('web-api-port').value);
+        const webUiPort = parseInt(document.getElementById('web-web-ui-port').value);
+        
+        if (isNaN(apiPort) || apiPort < 1024 || apiPort > 65535) {
+          showStatus('API port must be between 1024 and 65535', true);
+          return;
+        }
+        
+        if (isNaN(webUiPort) || webUiPort < 1 || webUiPort > 65535) {
+          showStatus('Web UI port must be between 1 and 65535', true);
+          return;
+        }
+        
+        const prefs = {
+          apiPort: apiPort,
+          webUiPort: webUiPort
+        };
+        
+        const res = await fetch(API_BASE + '/api/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prefs)
+        });
+        
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Port settings saved. Please restart the app for changes to take effect.', false);
+        } else {
+          showStatus('Failed to save port settings: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Failed to save port settings: ' + error.message, true);
+      }
+    });
+    
+    // Backup status polling
+    let webBackupStatusInterval = null;
+    
+    function startWebBackupStatusPolling() {
+      stopWebBackupStatusPolling();
+      
+      updateWebBackupStatus();
+      webBackupStatusInterval = setInterval(updateWebBackupStatus, 5000);
+    }
+    
+    function stopWebBackupStatusPolling() {
+      if (webBackupStatusInterval) {
+        clearInterval(webBackupStatusInterval);
+        webBackupStatusInterval = null;
+      }
+    }
+    
+    async function updateWebBackupStatus() {
+      try {
+        const response = await fetch(API_BASE + '/api/backup-status');
+        if (!response.ok) {
+          throw new Error('Failed to fetch backup status');
+        }
+        const data = await response.json();
+        
+        // Update status indicators
+        const prefsRes = await fetch(API_BASE + '/api/preferences');
+        const prefs = await prefsRes.json();
+        prefs.backupStatus1 = data.backup1?.status || null;
+        prefs.backupStatus2 = data.backup2?.status || null;
+        prefs.backupStatus3 = data.backup3?.status || null;
+        
+        updateWebBackupStatusIndicators(prefs);
+      } catch (error) {
+        console.error('Failed to update backup status:', error);
+      }
+    }
+    
+    function updateWebBackupStatusIndicators(prefs) {
+      const statuses = [
+        { element: document.getElementById('web-backup-status-1'), ip: prefs.backupIp1, status: prefs.backupStatus1 },
+        { element: document.getElementById('web-backup-status-2'), ip: prefs.backupIp2, status: prefs.backupStatus2 },
+        { element: document.getElementById('web-backup-status-3'), ip: prefs.backupIp3, status: prefs.backupStatus3 }
+      ];
+      
+      statuses.forEach(({ element, ip, status }) => {
+        if (!element) return;
+        
+        if (!ip || ip.trim() === '') {
+          element.textContent = '-';
+          element.style.background = 'transparent';
+          element.style.color = '#888';
+        } else if (status === 'connected') {
+          element.textContent = 'Connected';
+          element.style.background = '#4caf50';
+          element.style.color = 'white';
+        } else if (status === 'disconnected') {
+          element.textContent = 'Disconnected';
+          element.style.background = '#f44336';
+          element.style.color = 'white';
+        } else {
+          element.textContent = 'Checking...';
+          element.style.background = '#ff9800';
+          element.style.color = 'white';
+        }
+      });
+    }
+    
     // Update visibility in real-time when settings change
     document.getElementById('stagetimer-visible').addEventListener('change', () => {
       stagetimerVisible = document.getElementById('stagetimer-visible').checked;
@@ -5312,6 +6118,9 @@ app.whenReady().then(() => {
   createWindow();
   startHttpServer();
   startWebUiServer();
+  
+  // Start backup status polling if in primary mode
+  startBackupStatusPolling();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

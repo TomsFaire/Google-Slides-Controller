@@ -1,3 +1,13 @@
+/**
+ * Google Slides Opener
+ * 
+ * Copyright (c) 2026 TomsFaire and contributors
+ * Based on https://github.com/nerif-tafu/gslide-opener
+ * Original work by nerif-tafu
+ * 
+ * Licensed under the MIT License
+ */
+
 const { app, BrowserWindow, ipcMain, screen, session, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');

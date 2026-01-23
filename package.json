@@ -17,8 +17,12 @@
     "google-slides",
     "presentation"
   ],
-  "author": "",
+  "author": "TomsFaire (based on work by nerif-tafu)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TomsFaire/Google-Slides-Controller.git"
+  },
   "devDependencies": {
     "cross-env": "^10.1.0",
     "electron": "^28.1.0",

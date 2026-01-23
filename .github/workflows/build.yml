@@ -70,7 +70,13 @@ jobs:
             echo "Removing quarantine attribute..."
             xattr -cr "$APP_PATH"
             
-            echo "Ad-hoc signing app (allows it to run without real certificate)..."
+            # Sign all nested frameworks and helper apps first
+            echo "Signing nested frameworks and helpers..."
+            find "$APP_PATH" -name "*.framework" -exec codesign --force --sign - {} \;
+            find "$APP_PATH" -name "*Helper*.app" -exec codesign --force --sign - {} \;
+            
+            # Then sign the main app bundle
+            echo "Ad-hoc signing main app (allows it to run without real certificate)..."
             codesign --force --deep --sign - "$APP_PATH"
             
             echo "Verifying signature..."

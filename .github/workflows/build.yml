@@ -75,9 +75,9 @@ jobs:
             find "$APP_PATH" -name "*.framework" -exec codesign --force --sign - {} \;
             find "$APP_PATH" -name "*Helper*.app" -exec codesign --force --sign - {} \;
             
-            # Then sign the main app bundle
-            echo "Ad-hoc signing main app (allows it to run without real certificate)..."
-            codesign --force --deep --sign - "$APP_PATH"
+            # Then sign the main app bundle with entitlements
+            echo "Ad-hoc signing main app with entitlements (allows it to run without real certificate)..."
+            codesign --force --deep --sign - --entitlements entitlements.mac.plist "$APP_PATH"
             
             echo "Verifying signature..."
             codesign --verify --verbose "$APP_PATH"

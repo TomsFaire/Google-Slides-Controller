@@ -28,164 +28,45 @@ function toPresentUrl(inputUrl) {
   }
 }
 
-// Minimize the left preview pane in speaker notes window by moving the divider to the left
-function minimizeSpeakerNotesPreviewPane(window) {
-  if (!window || window.isDestroyed()) return;
-  
-  // Wait for page to load, then try to resize the divider
-  window.webContents.once('did-finish-load', () => {
-    // Try multiple times with increasing delays to catch the DOM when it's ready
-    [500, 1000, 1500].forEach((delay, index) => {
-      setTimeout(() => {
-        if (window.isDestroyed()) return;
-        
-        window.webContents.executeJavaScript(`
-          (function() {
-            try {
-              // Strategy 1: Find and drag the divider/resizer element
-              var divider = null;
-              var allElements = document.querySelectorAll('*');
-              
-              // Look for elements with resize cursor or draggable attribute
-              for (var i = 0; i < allElements.length; i++) {
-                var el = allElements[i];
-                var style = window.getComputedStyle(el);
-                var rect = el.getBoundingClientRect();
-                
-                // Check if element looks like a vertical divider (thin, vertical, has resize cursor)
-                if ((style.cursor === 'ew-resize' || style.cursor === 'col-resize' || 
-                     el.draggable === true || el.getAttribute('role') === 'separator') &&
-                    rect.width < 20 && rect.height > 100) {
-                  divider = el;
-                  break;
-                }
-              }
-              
-              if (divider) {
-                // Found divider - simulate dragging it to the left
-                var rect = divider.getBoundingClientRect();
-                var startX = rect.left + rect.width / 2;
-                var targetX = 150; // Target position for left edge of right pane
-                
-                // Create mouse events to simulate drag
-                var mousedown = new MouseEvent('mousedown', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window,
-                  clientX: startX,
-                  clientY: rect.top + rect.height / 2,
-                  button: 0,
-                  buttons: 1
-                });
-                
-                var mousemove = new MouseEvent('mousemove', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window,
-                  clientX: targetX,
-                  clientY: rect.top + rect.height / 2,
-                  button: 0,
-                  buttons: 1
-                });
-                
-                var mouseup = new MouseEvent('mouseup', {
-                  bubbles: true,
-                  cancelable: true,
-                  view: window,
-                  clientX: targetX,
-                  clientY: rect.top + rect.height / 2,
-                  button: 0,
-                  buttons: 0
-                });
-                
-                divider.dispatchEvent(mousedown);
-                setTimeout(function() {
-                  divider.dispatchEvent(mousemove);
-                  setTimeout(function() {
-                    divider.dispatchEvent(mouseup);
-                  }, 100);
-                }, 50);
-                
-                return { success: true, method: 'divider-drag', attempt: ${index + 1} };
-              }
-              
-              // Strategy 2: Find left pane and set its width directly
-              var leftPane = null;
-              var panes = document.querySelectorAll('div[style*="width"], div[style*="flex"]');
-              
-              for (var i = 0; i < panes.length; i++) {
-                var pane = panes[i];
-                var rect = pane.getBoundingClientRect();
-                var style = window.getComputedStyle(pane);
-                
-                // Look for a pane that's on the left side and contains slide previews
-                if (rect.left < window.innerWidth * 0.4 && 
-                    (pane.textContent.includes('Slide') || pane.querySelector('img') || 
-                     pane.querySelector('[class*="preview"]') || pane.querySelector('[class*="slide"]'))) {
-                  leftPane = pane;
-                  break;
-                }
-              }
-              
-              if (leftPane) {
-                // Set left pane to minimum width
-                leftPane.style.width = '150px';
-                leftPane.style.minWidth = '150px';
-                leftPane.style.maxWidth = '200px';
-                leftPane.style.flexBasis = '150px';
-                leftPane.style.flexShrink = '0';
-                
-                // Also try to find and adjust any flex container
-                var container = leftPane.parentElement;
-                if (container) {
-                  var containerStyle = window.getComputedStyle(container);
-                  if (containerStyle.display === 'flex') {
-                    // Force the left pane to be small
-                    leftPane.style.flex = '0 0 150px';
-                  }
-                }
-                
-                return { success: true, method: 'direct-pane-resize', attempt: ${index + 1} };
-              }
-              
-              // Strategy 3: Look for CSS variables or data attributes that control width
-              var containers = document.querySelectorAll('[style*="--"], [data-width], [style*="grid"]');
-              for (var i = 0; i < containers.length; i++) {
-                var container = containers[i];
-                var style = container.style;
-                
-                // Try to set CSS custom properties if they exist
-                if (style.getPropertyValue('--left-pane-width')) {
-                  style.setProperty('--left-pane-width', '150px');
-                  return { success: true, method: 'css-variable', attempt: ${index + 1} };
-                }
-              }
-              
-              return { success: false, error: 'Could not find divider or left pane', attempt: ${index + 1} };
-            } catch (e) {
-              return { success: false, error: e.message, attempt: ${index + 1} };
-            }
-          })()
-        `).then(result => {
-          if (result && result.success) {
-            console.log('[Notes] Successfully minimized preview pane:', result.method, '(attempt', result.attempt + ')');
-          } else if (index === 2) {
-            // Only log failure on last attempt to avoid spam
-            console.log('[Notes] Could not minimize preview pane:', result ? result.error : 'unknown error');
-          }
-        }).catch(err => {
-          if (index === 2) {
-            console.log('[Notes] Error minimizing preview pane:', err.message);
-          }
-        });
-      }, delay);
-    });
-  });
-}
-
 
 // Use a persistent session for Google authentication
 const GOOGLE_SESSION_PARTITION = 'persist:google';
+
+// Function to set speaker notes window to fullscreen
+function setSpeakerNotesFullscreen(window) {
+  if (!window || window.isDestroyed()) return;
+  
+  // Hide the window initially to prevent seeing the resize
+  window.hide();
+  
+  // Wait for page to fully load before showing
+  const showFullscreen = () => {
+    if (window.isDestroyed()) return;
+    
+    const display = screen.getDisplayMatching(window.getBounds());
+    window.setBounds(display.bounds);
+    if (process.platform === 'darwin') {
+      window.setFullScreen(true);
+    }
+    window.show();
+    console.log('[Notes] Set speaker notes window to fullscreen');
+  };
+  
+  // Wait for page to finish loading, then wait a bit more for layout to stabilize
+  window.webContents.once('did-finish-load', () => {
+    // Wait a bit longer for images and layout to settle
+    setTimeout(showFullscreen, 1500);
+  });
+  
+  // Fallback: if did-finish-load already fired, use dom-ready
+  if (window.webContents.isLoading() === false) {
+    setTimeout(showFullscreen, 1500);
+  } else {
+    window.webContents.once('dom-ready', () => {
+      setTimeout(showFullscreen, 1500);
+    });
+  }
+}
 
 function getGoogleSession() {
   return session.fromPartition(GOOGLE_SESSION_PARTITION);
@@ -573,7 +454,7 @@ ipcMain.handle('open-test-presentation', async () => {
       console.log('[Test] Features:', details.features);
       
       // Allow Google Slides to open the speaker notes window
-      // Position it on the selected notes display
+      // Use default size from Google Slides (no size/position override)
       const windowOptions = {
         frame: false,
         webPreferences: {
@@ -582,16 +463,6 @@ ipcMain.handle('open-test-presentation', async () => {
           partition: GOOGLE_SESSION_PARTITION
         }
       };
-      
-      if (notesDisplay && notesDisplay.id !== presentationDisplay.id) {
-        windowOptions.x = notesDisplay.bounds.x;
-        windowOptions.y = notesDisplay.bounds.y;
-        windowOptions.width = notesDisplay.bounds.width;
-        windowOptions.height = notesDisplay.bounds.height;
-      } else {
-        windowOptions.width = 1280;
-        windowOptions.height = 720;
-      }
       
       return {
         action: 'allow',
@@ -620,53 +491,16 @@ ipcMain.handle('open-test-presentation', async () => {
           }
         });
         
-        window.once('ready-to-show', () => {
-          console.log('[Test] Window ready-to-show event fired');
-          
-          // Minimize the left preview pane in speaker notes
-          minimizeSpeakerNotesPreviewPane(window);
-          
-          // Always move the window to the correct display first, then maximize
-          if (notesDisplay) {
-            const targetBounds = {
-              x: notesDisplay.bounds.x + 50,
-              y: notesDisplay.bounds.y + 50,
-              width: notesDisplay.bounds.width - 100,
-              height: notesDisplay.bounds.height - 100
-            };
-            
-            if (notesDisplay.id !== presentationDisplay.id) {
-              console.log('[Test] Different displays detected, moving notes window to display:', notesDisplay.id);
-            } else {
-              console.log('[Test] Same display as presentation, but still moving to ensure correct position');
-            }
-            
-            console.log('[Test] Target display bounds:', notesDisplay.bounds);
-            console.log('[Test] Setting window bounds to:', targetBounds);
-            
-            window.setBounds(targetBounds);
-            
-            const newBounds = window.getBounds();
-            console.log('[Test] Window bounds after setBounds:', newBounds);
-            
-            setTimeout(() => {
-              console.log('[Test] Calling maximize on notes window');
-              window.maximize();
-              
-              const finalBounds = window.getBounds();
-              console.log('[Test] Final window bounds after maximize:', finalBounds);
-              
-              // Log actual final positions after a short delay
-              setTimeout(() => {
-                const actualPresentationBounds = presentationWindow ? presentationWindow.getBounds() : null;
-                const actualNotesBounds = notesWindow ? notesWindow.getBounds() : null;
-                console.log('[Test] ===== ACTUAL FINAL WINDOW POSITIONS =====');
-                console.log('[Test] Presentation window actual position:', actualPresentationBounds);
-                console.log('[Test] Notes window actual position:', actualNotesBounds);
-                console.log('[Test] =============================================');
-              }, 500);
-            }, 50);
-          }
+        // Set speaker notes window to fullscreen when it loads
+        window.webContents.once('did-finish-load', () => {
+          setSpeakerNotesFullscreen(window);
+        });
+        
+        // Also try when DOM is ready (in case did-finish-load fires too early)
+        window.webContents.once('dom-ready', () => {
+          setTimeout(() => {
+            setSpeakerNotesFullscreen(window);
+          }, 500);
         });
         
         app.removeListener('browser-window-created', testWindowCreatedListener);
@@ -777,7 +611,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     console.log('[Multi-Monitor] Features:', details.features);
     
     // Allow Google Slides to open the speaker notes window
-    // Position it on the selected notes display
+    // Use default size from Google Slides (no size/position override)
     const windowOptions = {
       frame: false,
       webPreferences: {
@@ -786,16 +620,6 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
         partition: GOOGLE_SESSION_PARTITION
       }
     };
-    
-    if (notesDisplay && notesDisplayIdNum !== presentationDisplayIdNum) {
-      windowOptions.x = notesDisplay.bounds.x;
-      windowOptions.y = notesDisplay.bounds.y;
-      windowOptions.width = notesDisplay.bounds.width;
-      windowOptions.height = notesDisplay.bounds.height;
-    } else {
-      windowOptions.width = 1280;
-      windowOptions.height = 720;
-    }
     
     return {
       action: 'allow',
@@ -827,54 +651,16 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
         }
       });
       
-      // Wait for the window to be ready before repositioning
-      window.once('ready-to-show', () => {
-        console.log('[Multi-Monitor] Window ready-to-show event fired');
-        
-        // Minimize the left preview pane in speaker notes
-        minimizeSpeakerNotesPreviewPane(window);
-        
-        // Always move the window to the correct display first, then maximize
-        if (notesDisplay) {
-          const targetBounds = {
-            x: notesDisplay.bounds.x + 50,
-            y: notesDisplay.bounds.y + 50,
-            width: notesDisplay.bounds.width - 100,
-            height: notesDisplay.bounds.height - 100
-          };
-          
-          if (notesDisplayIdNum !== presentationDisplayIdNum) {
-            console.log('[Multi-Monitor] Different displays detected, moving notes window to display:', notesDisplayIdNum);
-          } else {
-            console.log('[Multi-Monitor] Same display as presentation, but still moving to ensure correct position');
-          }
-          
-          console.log('[Multi-Monitor] Target display bounds:', notesDisplay.bounds);
-          console.log('[Multi-Monitor] Setting window bounds to:', targetBounds);
-          
-          window.setBounds(targetBounds);
-          
-          const newBounds = window.getBounds();
-          console.log('[Multi-Monitor] Window bounds after setBounds:', newBounds);
-          
-          setTimeout(() => {
-            console.log('[Multi-Monitor] Calling maximize on notes window');
-            window.maximize();
-            
-            const finalBounds = window.getBounds();
-            console.log('[Multi-Monitor] Final window bounds after maximize:', finalBounds);
-            
-            // Log actual final positions after a short delay
-            setTimeout(() => {
-              const actualPresentationBounds = presentationWindow ? presentationWindow.getBounds() : null;
-              const actualNotesBounds = notesWindow ? notesWindow.getBounds() : null;
-              console.log('[Multi-Monitor] ===== ACTUAL FINAL WINDOW POSITIONS =====');
-              console.log('[Multi-Monitor] Presentation window actual position:', actualPresentationBounds);
-              console.log('[Multi-Monitor] Notes window actual position:', actualNotesBounds);
-              console.log('[Multi-Monitor] =============================================');
-            }, 500);
-          }, 50);
-        }
+      // Set speaker notes window to fullscreen when it loads
+      window.webContents.once('did-finish-load', () => {
+        setSpeakerNotesFullscreen(window);
+      });
+      
+      // Also try when DOM is ready (in case did-finish-load fires too early)
+      window.webContents.once('dom-ready', () => {
+        setTimeout(() => {
+          setSpeakerNotesFullscreen(window);
+        }, 500);
       });
       
       // Remove listener after notes window is created
@@ -1212,6 +998,7 @@ function startHttpServer() {
             console.log('[API] Frame name:', frameName);
             console.log('[API] Features:', features);
             
+            // Use default size from Google Slides (no size/position override)
             const windowOptions = {
               frame: false,
               webPreferences: {
@@ -1220,16 +1007,6 @@ function startHttpServer() {
                 partition: GOOGLE_SESSION_PARTITION
               }
             };
-            
-            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
-              windowOptions.x = notesDisplay.bounds.x;
-              windowOptions.y = notesDisplay.bounds.y;
-              windowOptions.width = notesDisplay.bounds.width;
-              windowOptions.height = notesDisplay.bounds.height;
-            } else {
-              windowOptions.width = 1280;
-              windowOptions.height = 720;
-            }
             
             return {
               action: 'allow',
@@ -1253,25 +1030,16 @@ function startHttpServer() {
                 }
               });
               
-              // Position and maximize notes window
-              window.once('ready-to-show', () => {
-                // Minimize the left preview pane in speaker notes
-                minimizeSpeakerNotesPreviewPane(window);
-                
-                if (notesDisplay) {
-                  const targetBounds = {
-                    x: notesDisplay.bounds.x + 50,
-                    y: notesDisplay.bounds.y + 50,
-                    width: notesDisplay.bounds.width - 100,
-                    height: notesDisplay.bounds.height - 100
-                  };
-                  
-                  window.setBounds(targetBounds);
-                  
-                  setTimeout(() => {
-                    window.maximize();
-                  }, 50);
-                }
+              // Set speaker notes window to fullscreen when it loads
+              window.webContents.once('did-finish-load', () => {
+                setSpeakerNotesFullscreen(window);
+              });
+              
+              // Also try when DOM is ready (in case did-finish-load fires too early)
+              window.webContents.once('dom-ready', () => {
+                setTimeout(() => {
+                  setSpeakerNotesFullscreen(window);
+                }, 500);
               });
               
               app.removeListener('browser-window-created', windowCreatedListener);
@@ -1414,6 +1182,7 @@ function startHttpServer() {
           
           // Set up window open handler for speaker notes popup
           presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
+            // Use default size from Google Slides (no size/position override)
             const windowOptions = {
               frame: false,
               webPreferences: {
@@ -1422,16 +1191,6 @@ function startHttpServer() {
                 partition: GOOGLE_SESSION_PARTITION
               }
             };
-            
-            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
-              windowOptions.x = notesDisplay.bounds.x;
-              windowOptions.y = notesDisplay.bounds.y;
-              windowOptions.width = notesDisplay.bounds.width;
-              windowOptions.height = notesDisplay.bounds.height;
-            } else {
-              windowOptions.width = 1280;
-              windowOptions.height = 720;
-            }
             
             return {
               action: 'allow',
@@ -1455,25 +1214,16 @@ function startHttpServer() {
                 }
               });
               
-              // Position and maximize notes window
-              window.once('ready-to-show', () => {
-                // Minimize the left preview pane in speaker notes
-                minimizeSpeakerNotesPreviewPane(window);
-                
-                if (notesDisplay) {
-                  const targetBounds = {
-                    x: notesDisplay.bounds.x + 50,
-                    y: notesDisplay.bounds.y + 50,
-                    width: notesDisplay.bounds.width - 100,
-                    height: notesDisplay.bounds.height - 100
-                  };
-                  
-                  window.setBounds(targetBounds);
-                  
-                  setTimeout(() => {
-                    window.maximize();
-                  }, 50);
-                }
+              // Set speaker notes window to fullscreen when it loads
+              window.webContents.once('did-finish-load', () => {
+                setSpeakerNotesFullscreen(window);
+              });
+              
+              // Also try when DOM is ready (in case did-finish-load fires too early)
+              window.webContents.once('dom-ready', () => {
+                setTimeout(() => {
+                  setSpeakerNotesFullscreen(window);
+                }, 500);
               });
               
               app.removeListener('browser-window-created', windowCreatedListener);
@@ -1805,6 +1555,7 @@ function startHttpServer() {
 
           // Set up window open handler for speaker notes popup
           presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
+            // Use default size from Google Slides (no size/position override)
             const windowOptions = {
               frame: false,
               webPreferences: {
@@ -1813,16 +1564,6 @@ function startHttpServer() {
                 partition: GOOGLE_SESSION_PARTITION
               }
             };
-            
-            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
-              windowOptions.x = notesDisplay.bounds.x;
-              windowOptions.y = notesDisplay.bounds.y;
-              windowOptions.width = notesDisplay.bounds.width;
-              windowOptions.height = notesDisplay.bounds.height;
-            } else {
-              windowOptions.width = 1280;
-              windowOptions.height = 720;
-            }
             
             return {
               action: 'allow',
@@ -1845,40 +1586,33 @@ function startHttpServer() {
                 }
               });
               
-              // Position and maximize notes window
-              window.once('ready-to-show', () => {
-                minimizeSpeakerNotesPreviewPane(window);
-                
-                if (notesDisplay) {
-                  const targetBounds = {
-                    x: notesDisplay.bounds.x + 50,
-                    y: notesDisplay.bounds.y + 50,
-                    width: notesDisplay.bounds.width - 100,
-                    height: notesDisplay.bounds.height - 100
-                  };
-                  
-                  window.setBounds(targetBounds);
-                  
-                  setTimeout(() => {
-                    window.maximize();
-                  }, 50);
-                }
+              // Set speaker notes window to fullscreen when it loads
+              window.webContents.once('did-finish-load', () => {
+                setSpeakerNotesFullscreen(window);
+              });
+              
+              // Also try when DOM is ready (in case did-finish-load fires too early)
+              window.webContents.once('dom-ready', () => {
+                setTimeout(() => {
+                  setSpeakerNotesFullscreen(window);
+                }, 500);
               });
               
               app.removeListener('browser-window-created', windowCreatedListener);
             }
           };
           app.on('browser-window-created', windowCreatedListener);
-
-          // Set up window event handlers
+          
+          // Set up window event handlers BEFORE loading URL
           presentationWindow.on('closed', () => {
             presentationWindow = null;
             currentSlide = null;
           });
           
-          // Escape key handler for presentation window
+          // Escape key handler for presentation window - set up BEFORE showing window
           presentationWindow.webContents.on('before-input-event', (event, input) => {
             if (input.key === 'Escape' && input.type === 'keyDown') {
+              console.log('[API] Reload: Escape pressed, closing presentation and notes windows');
               event.preventDefault();
               if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
               if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
@@ -1891,7 +1625,17 @@ function startHttpServer() {
           currentSlide = 1; // Will be updated after navigation
           
           presentationWindow.loadURL(presentUrl);
+          
+          // Show and focus the window immediately to ensure it receives keyboard events
           presentationWindow.show();
+          presentationWindow.focus();
+          
+          // Also focus when window becomes ready
+          presentationWindow.once('ready-to-show', () => {
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              presentationWindow.focus();
+            }
+          });
           
           // Trigger presentation mode when page loads
           presentationWindow.webContents.once('did-finish-load', async () => {
@@ -1900,12 +1644,15 @@ function startHttpServer() {
               return;
             }
             
+            // Ensure window is focused before sending keyboard events
+            presentationWindow.focus();
             await new Promise(resolve => setTimeout(resolve, 200));
             
             if (presentationWindow && !presentationWindow.isDestroyed()) {
               console.log('[API] Reload: Triggering Ctrl+Shift+F5 for presentation mode');
+              // Focus again before sending keyboard event
               presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 50));
+              await new Promise(resolve => setTimeout(resolve, 100));
               
               presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
               presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
@@ -1977,18 +1724,29 @@ function startHttpServer() {
           // Step 7: Reopen speaker notes if they were previously open
           if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
             console.log('[API] Reload: Speaker notes were previously open, launching them now');
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait longer for presentation mode to be ready
             
-            presentationWindow.focus();
-            await new Promise(resolve => setTimeout(resolve, 100));
-            
-            presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-            presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-            presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-            
-            console.log('[API] Reload: Speaker notes launch command sent');
+            // Ensure window has focus before sending keyboard events
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 200));
+              
+              // Send the 's' key to open speaker notes
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+              
+              console.log('[API] Reload: Speaker notes launch command sent');
+            }
           } else {
             console.log('[API] Reload: Speaker notes were not previously open, skipping');
+          }
+          
+          // Final focus to ensure window is ready for keyboard input
+          if (presentationWindow && !presentationWindow.isDestroyed()) {
+            setTimeout(() => {
+              presentationWindow.focus();
+            }, 500);
           }
           
           console.log('[API] Reload: Complete');
@@ -2567,14 +2325,38 @@ function startHttpServer() {
       const statusUrl = `https://api.stagetimer.io/v1/get_status?room_id=${encodeURIComponent(roomId)}&api_key=${encodeURIComponent(apiKey)}`;
       const messagesUrl = `https://api.stagetimer.io/v1/get_all_messages?room_id=${encodeURIComponent(roomId)}&api_key=${encodeURIComponent(apiKey)}`;
       
-      // Fetch both status and messages in parallel
+      // Fetch status and messages in parallel, then fetch timer using timer_id
       let statusData = null;
       let messagesData = null;
+      let timerData = null;
       let completed = 0;
-      const totalRequests = 2;
+      let timerCompleted = false;
+      let timerTimeout = null;
+      const totalRequests = 2; // Status and messages first
+      const TIMER_FETCH_TIMEOUT = 5000; // 5 second timeout for timer fetch
       
       function sendResponse() {
+        // Wait for status and messages
         if (completed < totalRequests) return;
+        // If we're waiting for timer, give it a chance, but don't wait forever
+        if (timerData === null && !timerCompleted) {
+          // Set a timeout to send response even if timer fetch hangs
+          if (!timerTimeout) {
+            timerTimeout = setTimeout(() => {
+              console.warn('[API] Timer fetch timeout, sending response without timer data');
+              timerCompleted = true;
+              timerData = { ok: false, data: {}, error: 'Timeout' };
+              sendResponse();
+            }, TIMER_FETCH_TIMEOUT);
+          }
+          return;
+        }
+        
+        // Clear timeout if we got here normally
+        if (timerTimeout) {
+          clearTimeout(timerTimeout);
+          timerTimeout = null;
+        }
         
         try {
           if (statusData && statusData.ok && statusData.data) {
@@ -2647,6 +2429,20 @@ function startHttpServer() {
               console.log('[API] No messages data or not ok:', messagesData);
             }
             
+            // Get timer name and speaker from timer data
+            let timerName = '';
+            let speakerName = '';
+            console.log('[API] Processing timer data, timerData:', timerData ? 'exists' : 'null');
+            console.log('[API] timerData.ok:', timerData?.ok);
+            console.log('[API] timerData.data:', timerData?.data ? JSON.stringify(timerData.data) : 'null');
+            if (timerData && timerData.ok && timerData.data) {
+              timerName = timerData.data.name || '';
+              speakerName = timerData.data.speaker || '';
+              console.log('[API] Extracted timerName:', timerName, 'speakerName:', speakerName);
+            } else {
+              console.log('[API] Timer data not available or invalid. timerData:', timerData);
+            }
+            
             res.writeHead(200, { 
               'Content-Type': 'application/json',
               'Access-Control-Allow-Origin': '*'
@@ -2663,17 +2459,40 @@ function startHttpServer() {
               finish: status.finish,
               pause: status.pause,
               serverTime: status.server_time,
-              messages: activeMessages
+              messages: activeMessages,
+              timerName: timerName,
+              speaker: speakerName,
+              // Debug info
+              _debug: {
+                timerDataOk: timerData?.ok || false,
+                timerDataExists: !!timerData,
+                timerDataMessage: timerData?.message || null,
+                rawTimerName: timerData?.data?.name || null,
+                rawSpeaker: timerData?.data?.speaker || null
+              }
             }));
           } else {
+            // Status fetch failed or returned invalid data
+            // Still try to send response with whatever we have
             res.writeHead(200, { 
               'Content-Type': 'application/json',
               'Access-Control-Allow-Origin': '*'
             });
+            const errorMsg = statusData 
+              ? (statusData.message || statusData.error || 'Failed to get timer status')
+              : 'Failed to get timer status';
+            console.error('[API] Status fetch failed:', errorMsg, 'statusData:', statusData);
             res.end(JSON.stringify({ 
               success: false, 
-              error: statusData ? (statusData.message || 'Failed to get timer status') : 'Failed to get timer status',
-              configured: true
+              error: errorMsg,
+              configured: true,
+              _debug: {
+                statusDataExists: !!statusData,
+                statusDataOk: statusData?.ok,
+                statusDataMessage: statusData?.message,
+                timerDataExists: !!timerData,
+                timerDataOk: timerData?.ok
+              }
             }));
           }
         } catch (error) {
@@ -2691,8 +2510,20 @@ function startHttpServer() {
       }
       
       // Fetch status
-      https.get(statusUrl, (apiRes) => {
+      const statusReq = https.get(statusUrl, (apiRes) => {
         let data = '';
+        
+        // Check HTTP status code
+        if (apiRes.statusCode !== 200) {
+          console.error('[API] Stagetimer status HTTP error:', apiRes.statusCode, apiRes.statusMessage);
+          apiRes.on('data', () => {}); // Drain response
+          apiRes.on('end', () => {
+            statusData = { ok: false, message: `HTTP ${apiRes.statusCode}: ${apiRes.statusMessage}` };
+            completed++;
+            sendResponse();
+          });
+          return;
+        }
         
         apiRes.on('data', (chunk) => {
           data += chunk;
@@ -2701,7 +2532,147 @@ function startHttpServer() {
         apiRes.on('end', () => {
           try {
             statusData = JSON.parse(data);
+            if (!statusData || !statusData.ok) {
+              console.error('[API] Stagetimer status API error:', statusData?.message || 'Unknown error');
+            }
             completed++;
+            
+            // After getting status, fetch timer using timer_id if available
+            if (statusData && statusData.ok && statusData.data && statusData.data.timer_id) {
+              const timerId = statusData.data.timer_id;
+              const timerUrl = `https://api.stagetimer.io/v1/get_timer?room_id=${encodeURIComponent(roomId)}&api_key=${encodeURIComponent(apiKey)}&timer_id=${encodeURIComponent(timerId)}`;
+              
+              console.log('[API] Fetching timer with timer_id:', timerId);
+              const timerReq = https.get(timerUrl, (timerRes) => {
+                let timerDataStr = '';
+                
+                if (timerRes.statusCode !== 200) {
+                  console.error('[API] Stagetimer timer HTTP error:', timerRes.statusCode, timerRes.statusMessage);
+                  timerRes.on('data', () => {}); // Drain response
+                  timerRes.on('end', () => {
+                    if (!timerCompleted) {
+                      timerData = { ok: false, message: `HTTP ${timerRes.statusCode}: ${timerRes.statusMessage}`, data: {} };
+                      timerCompleted = true;
+                      if (timerTimeout) clearTimeout(timerTimeout);
+                      sendResponse();
+                    }
+                  });
+                  return;
+                }
+                
+                timerRes.on('data', (chunk) => {
+                  timerDataStr += chunk;
+                });
+                
+                timerRes.on('end', () => {
+                  if (timerCompleted) return; // Already handled by timeout
+                  try {
+                    timerData = JSON.parse(timerDataStr);
+                    console.log('[API] Stagetimer timer response:', JSON.stringify(timerData, null, 2));
+                    console.log('[API] Timer data.name:', timerData?.data?.name);
+                    console.log('[API] Timer data.speaker:', timerData?.data?.speaker);
+                    timerCompleted = true;
+                    if (timerTimeout) clearTimeout(timerTimeout);
+                    sendResponse();
+                  } catch (error) {
+                    console.error('[API] Error parsing stagetimer timer response:', error);
+                    console.error('[API] Raw timer response:', timerDataStr);
+                    timerData = { ok: false, data: {}, error: error.message };
+                    timerCompleted = true;
+                    if (timerTimeout) clearTimeout(timerTimeout);
+                    sendResponse();
+                  }
+                });
+              });
+              
+              timerReq.on('error', (error) => {
+                if (timerCompleted) return; // Already handled by timeout
+                console.error('[API] Error calling stagetimer.io timer:', error);
+                timerData = { ok: false, data: {}, error: error.message };
+                timerCompleted = true;
+                if (timerTimeout) clearTimeout(timerTimeout);
+                sendResponse();
+              });
+              
+              // Set request timeout
+              timerReq.setTimeout(TIMER_FETCH_TIMEOUT, () => {
+                if (!timerCompleted) {
+                  console.warn('[API] Timer request timeout');
+                  timerReq.destroy();
+                  timerData = { ok: false, data: {}, error: 'Request timeout' };
+                  timerCompleted = true;
+                  if (timerTimeout) clearTimeout(timerTimeout);
+                  sendResponse();
+                }
+              });
+            } else {
+              // No timer_id available, try without it (gets currently highlighted timer)
+              const timerUrl = `https://api.stagetimer.io/v1/get_timer?room_id=${encodeURIComponent(roomId)}&api_key=${encodeURIComponent(apiKey)}`;
+              console.log('[API] No timer_id, fetching currently highlighted timer');
+              const timerReq = https.get(timerUrl, (timerRes) => {
+                let timerDataStr = '';
+                
+                if (timerRes.statusCode !== 200) {
+                  console.error('[API] Stagetimer timer HTTP error:', timerRes.statusCode, timerRes.statusMessage);
+                  timerRes.on('data', () => {}); // Drain response
+                  timerRes.on('end', () => {
+                    if (!timerCompleted) {
+                      timerData = { ok: false, message: `HTTP ${timerRes.statusCode}: ${timerRes.statusMessage}`, data: {} };
+                      timerCompleted = true;
+                      if (timerTimeout) clearTimeout(timerTimeout);
+                      sendResponse();
+                    }
+                  });
+                  return;
+                }
+                
+                timerRes.on('data', (chunk) => {
+                  timerDataStr += chunk;
+                });
+                
+                timerRes.on('end', () => {
+                  if (timerCompleted) return; // Already handled by timeout
+                  try {
+                    timerData = JSON.parse(timerDataStr);
+                    console.log('[API] Stagetimer timer response:', JSON.stringify(timerData, null, 2));
+                    console.log('[API] Timer data.name:', timerData?.data?.name);
+                    console.log('[API] Timer data.speaker:', timerData?.data?.speaker);
+                    timerCompleted = true;
+                    if (timerTimeout) clearTimeout(timerTimeout);
+                    sendResponse();
+                  } catch (error) {
+                    console.error('[API] Error parsing stagetimer timer response:', error);
+                    console.error('[API] Raw timer response:', timerDataStr);
+                    timerData = { ok: false, data: {}, error: error.message };
+                    timerCompleted = true;
+                    if (timerTimeout) clearTimeout(timerTimeout);
+                    sendResponse();
+                  }
+                });
+              });
+              
+              timerReq.on('error', (error) => {
+                if (timerCompleted) return; // Already handled by timeout
+                console.error('[API] Error calling stagetimer.io timer:', error);
+                timerData = { ok: false, data: {}, error: error.message };
+                timerCompleted = true;
+                if (timerTimeout) clearTimeout(timerTimeout);
+                sendResponse();
+              });
+              
+              // Set request timeout
+              timerReq.setTimeout(TIMER_FETCH_TIMEOUT, () => {
+                if (!timerCompleted) {
+                  console.warn('[API] Timer request timeout');
+                  timerReq.destroy();
+                  timerData = { ok: false, data: {}, error: 'Request timeout' };
+                  timerCompleted = true;
+                  if (timerTimeout) clearTimeout(timerTimeout);
+                  sendResponse();
+                }
+              });
+            }
+            
             sendResponse();
           } catch (error) {
             console.error('[API] Error parsing stagetimer status response:', error);
@@ -2710,11 +2681,24 @@ function startHttpServer() {
             sendResponse();
           }
         });
-      }).on('error', (error) => {
+      });
+      
+      statusReq.on('error', (error) => {
         console.error('[API] Error calling stagetimer.io status:', error);
         statusData = { ok: false, message: 'Failed to connect: ' + error.message };
         completed++;
         sendResponse();
+      });
+      
+      // Set request timeout for status
+      statusReq.setTimeout(10000, () => {
+        console.warn('[API] Status request timeout');
+        statusReq.destroy();
+        if (!statusData) {
+          statusData = { ok: false, message: 'Request timeout' };
+          completed++;
+          sendResponse();
+        }
       });
       
       // Fetch messages
@@ -2744,6 +2728,7 @@ function startHttpServer() {
         completed++;
         sendResponse();
       });
+      
       return;
     }
     
@@ -3048,15 +3033,7 @@ function startHttpServer() {
                 partition: GOOGLE_SESSION_PARTITION
               }
             };
-            if (notesDisplay && notesDisplayId !== presentationDisplayId) {
-              windowOptions.x = notesDisplay.bounds.x;
-              windowOptions.y = notesDisplay.bounds.y;
-              windowOptions.width = notesDisplay.bounds.width;
-              windowOptions.height = notesDisplay.bounds.height;
-            } else {
-              windowOptions.width = 1280;
-              windowOptions.height = 720;
-            }
+            // Use default size from Google Slides (no size/position override)
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
           
@@ -3070,19 +3047,18 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
-              window.once('ready-to-show', () => {
-                minimizeSpeakerNotesPreviewPane(window);
-                if (notesDisplay) {
-                  const targetBounds = {
-                    x: notesDisplay.bounds.x + 50,
-                    y: notesDisplay.bounds.y + 50,
-                    width: notesDisplay.bounds.width - 100,
-                    height: notesDisplay.bounds.height - 100
-                  };
-                  window.setBounds(targetBounds);
-                  setTimeout(() => { window.maximize(); }, 50);
-                }
+              // Set speaker notes window to fullscreen when it loads
+              window.webContents.once('did-finish-load', () => {
+                setSpeakerNotesFullscreen(window);
               });
+              
+              // Also try when DOM is ready (in case did-finish-load fires too early)
+              window.webContents.once('dom-ready', () => {
+                setTimeout(() => {
+                  setSpeakerNotesFullscreen(window);
+                }, 500);
+              });
+              
               app.removeListener('browser-window-created', windowCreatedListener);
             }
           };
@@ -3273,6 +3249,12 @@ function startWebUiServer() {
       justify-content: center;
       padding: 20px;
     }
+    @media (max-width: 768px) {
+      body {
+        padding: 8px;
+        align-items: flex-start;
+      }
+    }
     .container {
       background: white;
       border-radius: 16px;
@@ -3282,28 +3264,40 @@ function startWebUiServer() {
       padding: 40px;
       transition: all 0.3s;
     }
+    @media (max-width: 768px) {
+      .container {
+        padding: 16px 20px;
+      }
+    }
     body.notes-visible .container {
       max-width: 85%;
     }
     h1 {
       color: #333;
-      margin-bottom: 10px;
+      margin-top: 0;
+      margin-bottom: 0;
+      padding-top: 8px;
+      padding-bottom: 8px;
       font-size: 28px;
       transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
     body.notes-visible h1 {
       font-size: 20px;
-      margin-bottom: 5px;
+      padding-top: 4px;
+      padding-bottom: 4px;
     }
-    .subtitle {
-      color: #666;
-      margin-bottom: 30px;
-      font-size: 14px;
-      transition: all 0.3s;
+    .system-icon {
+      width: 32px;
+      height: 32px;
+      color: #667eea;
+      flex-shrink: 0;
     }
-    body.notes-visible .subtitle {
-      font-size: 11px;
-      margin-bottom: 15px;
+    body.notes-visible .system-icon {
+      width: 24px;
+      height: 24px;
     }
     .preset-group {
       margin-bottom: 24px;
@@ -3702,14 +3696,14 @@ function startWebUiServer() {
     .stagetimer-container {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       border-radius: 12px;
-      padding: 24px;
-      padding-bottom: 24px;
+      padding: 16px 20px;
+      padding-bottom: 16px;
       margin-bottom: 20px;
       text-align: center;
       color: white;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
       position: relative;
-      height: 180px;
+      height: 160px;
       overflow: visible;
     }
     .stagetimer-container.error {
@@ -3720,29 +3714,27 @@ function startWebUiServer() {
       color: #666;
     }
     .stagetimer-label {
-      font-size: 14px;
-      opacity: 0.9;
-      margin-bottom: 8px;
-      font-weight: 500;
+      font-size: 16px;
+      opacity: 0.95;
+      margin-bottom: 6px;
+      font-weight: 600;
     }
     .stagetimer-time {
-      font-size: 48px;
+      font-size: 42px;
       font-weight: 700;
       font-variant-numeric: tabular-nums;
       letter-spacing: 2px;
-      margin: 8px 0;
+      margin: 4px 0;
       line-height: 1.2;
     }
     .stagetimer-status {
-      font-size: 12px;
-      opacity: 0.8;
-      margin-top: 8px;
+      font-size: 14px;
+      opacity: 0.9;
+      margin-top: 6px;
+      font-weight: 500;
     }
     .stagetimer-name {
-      font-size: 16px;
-      font-weight: 600;
-      margin-top: 8px;
-      opacity: 0.95;
+      display: none;
     }
     .stagetimer-container.running {
       background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%);
@@ -3808,8 +3800,17 @@ function startWebUiServer() {
 </head>
 <body>
   <div class="container">
-    <h1>${machineName}</h1>
-    <p class="subtitle">Control your presentations</p>
+    <h1>
+      <svg class="system-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="4" width="20" height="12" rx="2" ry="2"></rect>
+        <line x1="6" y1="20" x2="18" y2="20"></line>
+        <line x1="8" y1="16" x2="8" y2="20"></line>
+        <line x1="16" y1="16" x2="16" y2="20"></line>
+        <circle cx="12" cy="10" r="3" fill="currentColor"></circle>
+        <polygon points="10 10 12 9 14 10 12 11" fill="white"></polygon>
+      </svg>
+      ${machineName}
+    </h1>
     
     <!-- Tabs -->
     <div class="tabs">
@@ -3830,10 +3831,9 @@ function startWebUiServer() {
         </button>
       </div>
       <div class="stagetimer-container disabled" id="stagetimer-container" style="display: none;">
-        <div class="stagetimer-label">Stage Timer</div>
+        <div class="stagetimer-label" id="stagetimer-label">Stage Timer</div>
         <div class="stagetimer-time" id="stagetimer-time">--:--</div>
         <div class="stagetimer-status" id="stagetimer-status">Not configured</div>
-        <div class="stagetimer-name" id="stagetimer-name"></div>
         <div class="stagetimer-messages" id="stagetimer-messages"></div>
       </div>
       <div class="remote-controls" id="remote-controls">
@@ -4468,8 +4468,13 @@ function startWebUiServer() {
     
     // Stagetimer integration
     let stagetimerPollInterval = null;
+    let stagetimerTimerInfoInterval = null;
+    let stagetimerDisplayInterval = null; // For local time updates
     let stagetimerEnabled = false;
     let stagetimerVisible = true;
+    let stagetimerState = null; // Store timer state for local calculation
+    let stagetimerBackoffDelay = 10000; // Start with 10 second delay, increases on 429 errors
+    let stagetimerIsBackingOff = false;
     
     function loadStagetimerSettings() {
       fetch(API_BASE + '/api/stagetimer-settings')
@@ -4549,9 +4554,9 @@ function startWebUiServer() {
     
     function updateStagetimerDisplay(data, errorMessage) {
       const container = document.getElementById('stagetimer-container');
+      const labelEl = document.getElementById('stagetimer-label');
       const timeEl = document.getElementById('stagetimer-time');
       const statusEl = document.getElementById('stagetimer-status');
-      const nameEl = document.getElementById('stagetimer-name');
       const messagesEl = document.getElementById('stagetimer-messages');
       
       // Check visibility and configuration
@@ -4572,26 +4577,29 @@ function startWebUiServer() {
       
       if (errorMessage || !data || !data.success) {
         container.className = 'stagetimer-container error';
+        labelEl.textContent = data?.timerName || ''; // Still try to show timer name if available
         timeEl.textContent = '--:--';
         statusEl.textContent = errorMessage || 'Error loading timer';
-        nameEl.textContent = '';
         messagesEl.style.display = 'none';
         messagesEl.innerHTML = '';
         return;
       }
       
+      // Update timer name (label) - use name from API, fallback to empty if not available
+      labelEl.textContent = data.timerName || '';
+      
       timeEl.textContent = data.displayTime || '0:00';
       
-      // Determine state and styling
+      // Show speaker name below the timer
+      statusEl.textContent = data.speaker || '';
+      
+      // Determine state and styling (but don't show status text)
       if (data.running) {
         container.className = 'stagetimer-container running';
-        statusEl.textContent = 'Running';
       } else if (data.pause) {
         container.className = 'stagetimer-container';
-        statusEl.textContent = 'Paused';
       } else {
         container.className = 'stagetimer-container';
-        statusEl.textContent = 'Stopped';
       }
       
       // Color coding based on remaining time (if available)
@@ -4603,8 +4611,6 @@ function startWebUiServer() {
           container.className = 'stagetimer-container warning';
         }
       }
-      
-      nameEl.textContent = data.timerName || '';
       
       // Display messages - positioned absolutely so buttons don't move
       console.log('[Stagetimer Display] Updating display, messages:', data.messages);
@@ -4641,28 +4647,216 @@ function startWebUiServer() {
           
           if (data.success) {
             console.log('[Stagetimer] Messages in response:', data.messages ? data.messages.length : 0, data.messages);
+            
+            // Success - reset backoff delay if we were backing off
+            if (stagetimerIsBackingOff) {
+              stagetimerIsBackingOff = false;
+              stagetimerBackoffDelay = 10000; // Reset to 10 seconds
+              console.log('[Stagetimer] Rate limit cleared, resetting to 10 second polling');
+            }
+            
+            // Store state for local time calculation
+            stagetimerState = {
+              success: true,
+              running: data.running,
+              start: data.start,
+              finish: data.finish,
+              pause: data.pause,
+              serverTime: data.serverTime,
+              timerId: data.timerId,
+              timerName: data.timerName,
+              speaker: data.speaker,
+              messages: data.messages || [],
+              lastSyncTime: Date.now() // Store when we got this data
+            };
+            
+            // Update display with fresh data (includes messages)
             updateStagetimerDisplay(data, null);
+            
+            // Also trigger immediate local update to sync display
+            updateStagetimerDisplayFromState();
           } else {
             console.error('[Stagetimer] Error:', data.error);
+            
+            // Handle 429 rate limit errors with exponential backoff
+            if (data.error && data.error.includes('429')) {
+              if (!stagetimerIsBackingOff) {
+                stagetimerIsBackingOff = true;
+                // Increase backoff delay exponentially (10s -> 20s -> 40s -> 60s max)
+                stagetimerBackoffDelay = Math.min(stagetimerBackoffDelay * 2, 60000);
+                console.warn('[Stagetimer] Rate limited (429), backing off to', stagetimerBackoffDelay / 1000, 'seconds');
+                // Reschedule with new delay
+                scheduleNextStagetimerFetch();
+              }
+              // Don't clear state on 429 - keep showing last known time
+              return;
+            }
+            
+            // For other errors, clear state
+            stagetimerState = null;
             updateStagetimerDisplay(null, data.error || 'Error loading timer');
           }
         })
         .catch(err => {
           console.error('Failed to fetch stagetimer status:', err);
-          updateStagetimerDisplay(null, 'Connection error');
+          // Don't clear state on network error - keep showing last known time
+          // Only update if we have no state at all
+          if (!stagetimerState) {
+            updateStagetimerDisplay(null, 'Connection error');
+          }
         });
     }
     
     function startStagetimerPolling() {
       stopStagetimerPolling();
+      stagetimerBackoffDelay = 10000; // Reset backoff on restart
+      stagetimerIsBackingOff = false;
       fetchStagetimerStatus(); // Initial fetch
-      stagetimerPollInterval = setInterval(fetchStagetimerStatus, 2000); // Poll every 2 seconds
+      // Poll API every 10 seconds to sync with server (reduces API calls significantly)
+      // This reduces requests to 6/min (much better for rate limits)
+      // Will back off further if we get 429 errors
+      scheduleNextStagetimerFetch();
+      
+      // Update display locally every second for smooth counting
+      stagetimerDisplayInterval = setInterval(updateStagetimerDisplayFromState, 1000);
+    }
+    
+    function scheduleNextStagetimerFetch() {
+      // Clear any existing interval
+      if (stagetimerPollInterval) {
+        clearTimeout(stagetimerPollInterval);
+        stagetimerPollInterval = null;
+      }
+      
+      // Schedule next fetch with current backoff delay
+      stagetimerPollInterval = setTimeout(() => {
+        fetchStagetimerStatus();
+        scheduleNextStagetimerFetch(); // Schedule next one
+      }, stagetimerBackoffDelay);
     }
     
     function stopStagetimerPolling() {
       if (stagetimerPollInterval) {
-        clearInterval(stagetimerPollInterval);
+        clearTimeout(stagetimerPollInterval); // Changed from clearInterval to clearTimeout
         stagetimerPollInterval = null;
+      }
+      if (stagetimerTimerInfoInterval) {
+        clearInterval(stagetimerTimerInfoInterval);
+        stagetimerTimerInfoInterval = null;
+      }
+      if (stagetimerDisplayInterval) {
+        clearInterval(stagetimerDisplayInterval);
+        stagetimerDisplayInterval = null;
+      }
+      stagetimerBackoffDelay = 10000; // Reset backoff
+      stagetimerIsBackingOff = false;
+    }
+    
+    // Calculate and display time locally based on stored state
+    function updateStagetimerDisplayFromState() {
+      // Check visibility and configuration
+      if (!stagetimerVisible || !stagetimerEnabled) {
+        return;
+      }
+      
+      if (!stagetimerState || !stagetimerState.success) {
+        return; // No state to work with
+      }
+      
+      const state = stagetimerState;
+      const now = Date.now();
+      
+      // Calculate time difference since last server sync
+      const timeSinceSync = now - (state.lastSyncTime || now);
+      
+      // Calculate remaining/elapsed time
+      let remainingMs = 0;
+      let elapsedMs = 0;
+      let displayTime = '0:00';
+      let isRunning = state.running || false;
+      
+      if (state.finish && state.start) {
+        const duration = state.finish - state.start;
+        
+        if (isRunning) {
+          // Timer is running - calculate based on server time + elapsed local time
+          const serverTimeAtSync = state.serverTime || state.lastSyncTime;
+          const localTimeAtSync = state.lastSyncTime;
+          const adjustedNow = serverTimeAtSync + (now - localTimeAtSync);
+          remainingMs = state.finish - adjustedNow; // Allow negative values
+          elapsedMs = adjustedNow - state.start;
+        } else if (state.pause) {
+          // Timer is paused - use stored values
+          elapsedMs = state.pause - state.start;
+          remainingMs = duration - elapsedMs;
+        } else {
+          // Timer not started
+          remainingMs = duration;
+          elapsedMs = 0;
+        }
+        
+        // Format time as MM:SS or HH:MM:SS (allow negative)
+        const totalSeconds = Math.floor(remainingMs / 1000);
+        const isNegative = totalSeconds < 0;
+        const absSeconds = Math.abs(totalSeconds);
+        const hours = Math.floor(absSeconds / 3600);
+        const minutes = Math.floor((absSeconds % 3600) / 60);
+        const seconds = absSeconds % 60;
+        
+        const sign = isNegative ? '-' : '';
+        const minStr = String(minutes).padStart(2, '0');
+        const secStr = String(seconds).padStart(2, '0');
+        
+        if (hours > 0) {
+          displayTime = sign + hours + ':' + minStr + ':' + secStr;
+        } else {
+          displayTime = sign + minutes + ':' + secStr;
+        }
+      }
+      
+      // Update display with calculated time
+      const container = document.getElementById('stagetimer-container');
+      const labelEl = document.getElementById('stagetimer-label');
+      const timeEl = document.getElementById('stagetimer-time');
+      const statusEl = document.getElementById('stagetimer-status');
+      
+      if (!container || !labelEl || !timeEl || !statusEl) return;
+      
+      labelEl.textContent = state.timerName || '';
+      timeEl.textContent = displayTime;
+      statusEl.textContent = state.speaker || '';
+      
+      // Update styling
+      if (isRunning) {
+        container.className = 'stagetimer-container running';
+      } else {
+        container.className = 'stagetimer-container';
+      }
+      
+      // Color coding based on remaining time
+      const remainingSeconds = Math.floor(remainingMs / 1000);
+      if (remainingSeconds <= 15) {
+        container.className = 'stagetimer-container critical';
+      } else if (remainingSeconds <= 60) {
+        container.className = 'stagetimer-container warning';
+      }
+      
+      // Update messages from stored state
+      const messagesEl = document.getElementById('stagetimer-messages');
+      if (messagesEl && state.messages && state.messages.length > 0) {
+        messagesEl.innerHTML = '';
+        state.messages.forEach((msg) => {
+          const messageDiv = document.createElement('div');
+          messageDiv.className = 'stagetimer-message ' + (msg.color || 'white');
+          if (msg.bold) messageDiv.classList.add('bold');
+          if (msg.uppercase) messageDiv.classList.add('uppercase');
+          messageDiv.textContent = msg.text || '';
+          messagesEl.appendChild(messageDiv);
+        });
+        messagesEl.classList.add('visible');
+      } else if (messagesEl) {
+        messagesEl.innerHTML = '';
+        messagesEl.classList.remove('visible');
       }
     }
     

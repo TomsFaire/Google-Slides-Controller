@@ -20,6 +20,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -34,6 +37,8 @@ jobs:
         run: npm run build:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+        continue-on-error: false
       
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -48,6 +53,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       
       - name: Setup Node.js
         uses: actions/setup-node@v4

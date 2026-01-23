@@ -49,7 +49,10 @@
         }
       ],
       "icon": "build/icon.ico",
-      "signingHashAlgorithms": []
+      "signingHashAlgorithms": [],
+      "extraMetadata": {
+        "version": "1.4.5"
+      }
     },
     "linux": {
       "target": [

@@ -31,8 +31,6 @@ Original work by [nerif-tafu](https://github.com/nerif-tafu). This fork includes
 
 The Web UI is served by the Electron app (default: `http://YOUR_PRESENTATION_PC_IP`).
 
-### Screenshots
-
 **Web UI (Remote tab)**
 
 ![Web UI Remote Tab](docs/images/web-ui-remote.png)
@@ -41,13 +39,7 @@ The Web UI is served by the Electron app (default: `http://YOUR_PRESENTATION_PC_
 
 ![Web UI Controls Tab](docs/images/web-ui-controls.png)
 
-### Desktop app screenshots
-
-**Desktop app (Controller allowlist / security)**
-
-![Desktop Controller Allowlist](docs/images/desktop-controller-allowlist.png)
-
-**Desktop app (Primary/Backup configuration)**
+### Desktop app
 
 ![Desktop Primary Backup](docs/images/desktop-primary-backup.png)
 

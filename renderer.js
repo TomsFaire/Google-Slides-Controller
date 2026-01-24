@@ -12,12 +12,8 @@ const modeBackup = document.getElementById('mode-backup');
 const modeStandalone = document.getElementById('mode-standalone');
 const backupConfig = document.getElementById('backup-config');
 const backupPortInput = document.getElementById('backup-port');
-const backupIp1Input = document.getElementById('backup-ip-1');
-const backupIp2Input = document.getElementById('backup-ip-2');
-const backupIp3Input = document.getElementById('backup-ip-3');
-const backupStatus1 = document.getElementById('backup-status-1');
-const backupStatus2 = document.getElementById('backup-status-2');
-const backupStatus3 = document.getElementById('backup-status-3');
+const backupIpList = document.getElementById('backup-ip-list');
+const addBackupIpBtn = document.getElementById('add-backup-ip');
 const preset1Input = document.getElementById('preset1');
 const preset2Input = document.getElementById('preset2');
 const preset3Input = document.getElementById('preset3');
@@ -29,8 +25,180 @@ const stagetimerEnabledCheckbox = document.getElementById('stagetimer-enabled');
 const stagetimerVisibleCheckbox = document.getElementById('stagetimer-visible');
 const saveStagetimerBtn = document.getElementById('save-stagetimer-btn');
 const loadStagetimerBtn = document.getElementById('load-stagetimer-btn');
+const verboseLoggingCheckbox = document.getElementById('verbose-logging');
+const webUiDebugConsoleEnabledCheckbox = document.getElementById('web-ui-debug-console-enabled');
+const controllerIpList = document.getElementById('controller-ip-list');
+const addControllerIpBtn = document.getElementById('add-controller-ip');
+const debugLogsConsole = document.getElementById('debug-logs-console');
+const debugLogsClearBtn = document.getElementById('debug-logs-clear');
+const debugLogsSaveBtn = document.getElementById('debug-logs-save');
 
 let isSignedIn = false;
+
+// Backup status (keyed by IP/hostname string)
+let backupStatusByIp = {};
+
+function appendDebugLogLine(line) {
+  if (!debugLogsConsole) return;
+  const isAtBottom = (debugLogsConsole.scrollTop + debugLogsConsole.clientHeight) >= (debugLogsConsole.scrollHeight - 10);
+
+  // If the console still has the placeholder, clear it on first real line
+  if (debugLogsConsole.childNodes.length === 1) {
+    const only = debugLogsConsole.childNodes[0];
+    if (only && only.textContent && only.textContent.includes('Waiting for logs')) {
+      debugLogsConsole.innerHTML = '';
+    }
+  }
+
+  const div = document.createElement('div');
+  div.textContent = line;
+  debugLogsConsole.appendChild(div);
+
+  // Keep DOM from growing unbounded
+  const maxLines = 1000;
+  while (debugLogsConsole.childNodes.length > maxLines) {
+    debugLogsConsole.removeChild(debugLogsConsole.firstChild);
+  }
+
+  if (isAtBottom) {
+    debugLogsConsole.scrollTop = debugLogsConsole.scrollHeight;
+  }
+}
+
+async function initDebugLogs() {
+  try {
+    if (!window.electronAPI || !window.electronAPI.getLogBuffer) return;
+
+    const res = await window.electronAPI.getLogBuffer();
+    const lines = Array.isArray(res?.lines) ? res.lines : [];
+    if (debugLogsConsole) {
+      debugLogsConsole.innerHTML = '';
+      if (lines.length === 0) {
+        debugLogsConsole.innerHTML = '<div style="color: #888;">No logs yet.</div>';
+      } else {
+        lines.slice(-300).forEach(appendDebugLogLine);
+      }
+    }
+
+    if (window.electronAPI.onLogLine) {
+      window.electronAPI.onLogLine((line) => appendDebugLogLine(line));
+    }
+
+    if (debugLogsClearBtn && window.electronAPI.clearLogBuffer) {
+      debugLogsClearBtn.addEventListener('click', async () => {
+        await window.electronAPI.clearLogBuffer();
+        if (debugLogsConsole) {
+          debugLogsConsole.innerHTML = '<div style="color: #888;">Cleared.</div>';
+        }
+      });
+    }
+
+    if (debugLogsSaveBtn && window.electronAPI.exportLogBuffer) {
+      debugLogsSaveBtn.addEventListener('click', async () => {
+        const result = await window.electronAPI.exportLogBuffer();
+        if (result && result.success && result.filePath) {
+          showStatus('Saved debug log to: ' + result.filePath, 'info');
+        } else if (result && result.canceled) {
+          showStatus('Save canceled', 'info');
+        } else {
+          showStatus('Failed to save debug log', 'error');
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Failed to initialize debug logs:', error);
+  }
+}
+
+function normalizeControllerIps(ips) {
+  if (!Array.isArray(ips)) return [];
+  const out = [];
+  const seen = new Set();
+  ips.forEach((raw) => {
+    const v = String(raw || '').trim();
+    if (!v) return;
+    if (seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  });
+  return out;
+}
+
+function getControllerIpInputs() {
+  if (!controllerIpList) return [];
+  return Array.from(controllerIpList.querySelectorAll('input[data-controller-ip="true"]'));
+}
+
+function getControllerIpsFromUi() {
+  return normalizeControllerIps(getControllerIpInputs().map((el) => String(el.value || '').trim()));
+}
+
+async function saveControllerAllowlistPreferences() {
+  try {
+    await window.electronAPI.savePreferences({
+      controllerIps: getControllerIpsFromUi()
+    });
+    showStatus('Controller allowlist saved', 'info');
+  } catch (error) {
+    console.error('Failed to save controller allowlist:', error);
+    showStatus('Failed to save controller allowlist', 'error');
+  }
+}
+
+function addControllerIpRow(initialValue = '') {
+  if (!controllerIpList) return;
+
+  const row = document.createElement('div');
+  row.setAttribute('data-controller-row', 'true');
+  row.style.display = 'flex';
+  row.style.gap = '10px';
+  row.style.alignItems = 'center';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'input-field';
+  input.placeholder = '192.168.1.50';
+  input.value = initialValue || '';
+  input.setAttribute('data-controller-ip', 'true');
+  input.style.flex = '1';
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-secondary';
+  removeBtn.textContent = 'Remove';
+  removeBtn.style.padding = '8px 10px';
+  removeBtn.style.minWidth = '88px';
+
+  removeBtn.addEventListener('click', async () => {
+    const rows = controllerIpList.querySelectorAll('[data-controller-row="true"]');
+    if (rows.length <= 1) {
+      input.value = '';
+      await saveControllerAllowlistPreferences();
+      return;
+    }
+    row.remove();
+    await saveControllerAllowlistPreferences();
+  });
+
+  input.addEventListener('change', () => {
+    saveControllerAllowlistPreferences();
+  });
+
+  row.appendChild(input);
+  row.appendChild(removeBtn);
+  controllerIpList.appendChild(row);
+}
+
+function renderControllerIpList(ips = []) {
+  if (!controllerIpList) return;
+  controllerIpList.innerHTML = '';
+  const normalized = Array.isArray(ips) ? ips.map(v => String(v || '')) : [];
+  if (normalized.length === 0) {
+    addControllerIpRow('');
+    return;
+  }
+  normalized.forEach((ip) => addControllerIpRow(ip));
+}
 
 // Initialize displays
 async function initDisplays() {
@@ -85,6 +253,14 @@ async function initDisplays() {
       webUiPortInput.value = '80'; // Default
     }
     
+    // Restore logging preferences
+    if (verboseLoggingCheckbox) {
+      verboseLoggingCheckbox.checked = preferences.verboseLogging === true;
+    }
+    if (webUiDebugConsoleEnabledCheckbox) {
+      webUiDebugConsoleEnabledCheckbox.checked = preferences.webUiDebugConsoleEnabled === true;
+    }
+    
     // Restore primary/backup mode
     const mode = preferences.primaryBackupMode || 'standalone';
     if (mode === 'primary') {
@@ -104,19 +280,16 @@ async function initDisplays() {
     } else {
       backupPortInput.value = '9595'; // Default
     }
-    
-    if (preferences.backupIp1) {
-      backupIp1Input.value = preferences.backupIp1;
-    }
-    if (preferences.backupIp2) {
-      backupIp2Input.value = preferences.backupIp2;
-    }
-    if (preferences.backupIp3) {
-      backupIp3Input.value = preferences.backupIp3;
-    }
-    
-    // Update backup status indicators
-    updateBackupStatusIndicators(preferences);
+
+    // Restore backup IP list (unlimited). Fallback to legacy fields if present.
+    const legacyIps = [preferences.backupIp1, preferences.backupIp2, preferences.backupIp3].filter(Boolean);
+    const backupIps = Array.isArray(preferences.backupIps) ? preferences.backupIps : legacyIps;
+    renderBackupIpList(backupIps);
+    refreshBackupStatusBadges();
+
+    // Restore controller allowlist (desktop-only)
+    const controllerIps = Array.isArray(preferences.controllerIps) ? preferences.controllerIps : [];
+    renderControllerIpList(controllerIps);
     
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
@@ -124,6 +297,12 @@ async function initDisplays() {
     machineNameInput.addEventListener('change', saveMachineName);
     apiPortInput.addEventListener('change', savePortPreferences);
     webUiPortInput.addEventListener('change', savePortPreferences);
+    if (verboseLoggingCheckbox) {
+      verboseLoggingCheckbox.addEventListener('change', saveLoggingPreferences);
+    }
+    if (webUiDebugConsoleEnabledCheckbox) {
+      webUiDebugConsoleEnabledCheckbox.addEventListener('change', saveWebUiDebugConsolePreference);
+    }
     
     // Primary/Backup mode change handlers
     modePrimary.addEventListener('change', () => {
@@ -149,9 +328,23 @@ async function initDisplays() {
     
     // Backup configuration change handlers
     backupPortInput.addEventListener('change', savePrimaryBackupPreferences);
-    backupIp1Input.addEventListener('change', savePrimaryBackupPreferences);
-    backupIp2Input.addEventListener('change', savePrimaryBackupPreferences);
-    backupIp3Input.addEventListener('change', savePrimaryBackupPreferences);
+    if (addBackupIpBtn) {
+      addBackupIpBtn.addEventListener('click', async () => {
+        addBackupIpRow('');
+        const inputs = getBackupIpInputs();
+        if (inputs.length) inputs[inputs.length - 1].focus();
+        await savePrimaryBackupPreferences();
+      });
+    }
+
+    if (addControllerIpBtn) {
+      addControllerIpBtn.addEventListener('click', async () => {
+        addControllerIpRow('');
+        const inputs = getControllerIpInputs();
+        if (inputs.length) inputs[inputs.length - 1].focus();
+        await saveControllerAllowlistPreferences();
+      });
+    }
     
     // Load and display network info
     await updateNetworkInfo();
@@ -178,6 +371,141 @@ async function initDisplays() {
   } catch (error) {
     showStatus('Failed to load displays', 'error');
   }
+}
+
+function normalizeBackupIps(ips) {
+  if (!Array.isArray(ips)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of ips) {
+    const v = String(raw || '').trim();
+    if (!v) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function getBackupIpInputs() {
+  if (!backupIpList) return [];
+  return Array.from(backupIpList.querySelectorAll('input[data-backup-ip="true"]'));
+}
+
+function getBackupIpsFromUi({ includeEmpty = false } = {}) {
+  const values = getBackupIpInputs().map((el) => String(el.value || '').trim());
+  if (includeEmpty) return values;
+  return normalizeBackupIps(values);
+}
+
+function setBackupStatusBadge(el, ip) {
+  if (!el) return;
+  const v = String(ip || '').trim();
+  const status = v ? backupStatusByIp[v] : null;
+
+  if (!v) {
+    el.textContent = '-';
+    el.style.background = 'transparent';
+    el.style.color = 'var(--text-secondary)';
+    return;
+  }
+  if (status === 'connected') {
+    el.textContent = 'Connected';
+    el.style.background = '#4caf50';
+    el.style.color = 'white';
+    return;
+  }
+  if (status === 'disconnected') {
+    el.textContent = 'Disconnected';
+    el.style.background = '#f44336';
+    el.style.color = 'white';
+    return;
+  }
+  el.textContent = 'Checking...';
+  el.style.background = '#ff9800';
+  el.style.color = 'white';
+}
+
+function refreshBackupStatusBadges() {
+  if (!backupIpList) return;
+  const rows = Array.from(backupIpList.querySelectorAll('[data-backup-row="true"]'));
+  rows.forEach((row) => {
+    const input = row.querySelector('input[data-backup-ip="true"]');
+    const badge = row.querySelector('span[data-backup-status="true"]');
+    setBackupStatusBadge(badge, input ? input.value : '');
+  });
+}
+
+function addBackupIpRow(initialValue = '') {
+  if (!backupIpList) return;
+
+  const row = document.createElement('div');
+  row.setAttribute('data-backup-row', 'true');
+  row.style.display = 'flex';
+  row.style.gap = '10px';
+  row.style.alignItems = 'center';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'input-field';
+  input.placeholder = '192.168.1.100';
+  input.value = initialValue || '';
+  input.setAttribute('data-backup-ip', 'true');
+  input.style.flex = '1';
+
+  const badge = document.createElement('span');
+  badge.setAttribute('data-backup-status', 'true');
+  badge.style.fontSize = '12px';
+  badge.style.padding = '4px 8px';
+  badge.style.borderRadius = '4px';
+  badge.style.minWidth = '90px';
+  badge.style.textAlign = 'center';
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-secondary';
+  removeBtn.textContent = 'Remove';
+  removeBtn.style.padding = '8px 10px';
+  removeBtn.style.minWidth = '88px';
+
+  removeBtn.addEventListener('click', async () => {
+    // If it's the last row, just clear it (cleaner UX)
+    const rows = backupIpList.querySelectorAll('[data-backup-row="true"]');
+    if (rows.length <= 1) {
+      input.value = '';
+      await savePrimaryBackupPreferences();
+      refreshBackupStatusBadges();
+      return;
+    }
+    row.remove();
+    await savePrimaryBackupPreferences();
+    refreshBackupStatusBadges();
+  });
+
+  input.addEventListener('change', () => {
+    savePrimaryBackupPreferences();
+    refreshBackupStatusBadges();
+  });
+
+  row.appendChild(input);
+  row.appendChild(badge);
+  row.appendChild(removeBtn);
+  backupIpList.appendChild(row);
+
+  setBackupStatusBadge(badge, input.value);
+}
+
+function renderBackupIpList(ips = []) {
+  if (!backupIpList) return;
+  backupIpList.innerHTML = '';
+
+  const normalized = Array.isArray(ips) ? ips.map(v => String(v || '')) : [];
+  // Keep UI clean: show 1 row by default in primary mode
+  if (normalized.length === 0) {
+    addBackupIpRow('');
+    return;
+  }
+  normalized.forEach((ip) => addBackupIpRow(ip));
 }
 
 // Update network information display
@@ -289,6 +617,31 @@ async function saveMachineName() {
   }
 }
 
+// Save logging preferences
+async function saveLoggingPreferences() {
+  try {
+    await window.electronAPI.savePreferences({
+      verboseLogging: verboseLoggingCheckbox && verboseLoggingCheckbox.checked === true
+    });
+    showStatus('Logging settings saved', 'info');
+  } catch (error) {
+    console.error('Failed to save logging preferences:', error);
+    showStatus('Failed to save logging preferences', 'error');
+  }
+}
+
+async function saveWebUiDebugConsolePreference() {
+  try {
+    await window.electronAPI.savePreferences({
+      webUiDebugConsoleEnabled: webUiDebugConsoleEnabledCheckbox && webUiDebugConsoleEnabledCheckbox.checked === true
+    });
+    showStatus('Web UI debug console setting saved', 'info');
+  } catch (error) {
+    console.error('Failed to save Web UI debug console preference:', error);
+    showStatus('Failed to save Web UI debug console preference', 'error');
+  }
+}
+
 // Save primary/backup preferences
 async function savePrimaryBackupPreferences() {
   try {
@@ -306,14 +659,12 @@ async function savePrimaryBackupPreferences() {
       showStatus('Backup port must be between 1024 and 65535', 'error');
       return;
     }
-    
-    const prefs = {
-      primaryBackupMode: mode,
-      backupPort: mode === 'primary' ? backupPort : null,
-      backupIp1: mode === 'primary' ? backupIp1Input.value.trim() : null,
-      backupIp2: mode === 'primary' ? backupIp2Input.value.trim() : null,
-      backupIp3: mode === 'primary' ? backupIp3Input.value.trim() : null
-    };
+
+    const prefs = { primaryBackupMode: mode };
+    if (mode === 'primary') {
+      prefs.backupPort = backupPort;
+      prefs.backupIps = getBackupIpsFromUi();
+    }
     
     await window.electronAPI.savePreferences(prefs);
     
@@ -329,37 +680,6 @@ async function savePrimaryBackupPreferences() {
     console.error('Failed to save primary/backup preferences:', error);
     showStatus('Failed to save primary/backup preferences', 'error');
   }
-}
-
-// Update backup status indicators
-function updateBackupStatusIndicators(preferences) {
-  const statuses = [
-    { element: backupStatus1, ip: preferences.backupIp1, status: preferences.backupStatus1 },
-    { element: backupStatus2, ip: preferences.backupIp2, status: preferences.backupStatus2 },
-    { element: backupStatus3, ip: preferences.backupIp3, status: preferences.backupStatus3 }
-  ];
-  
-  statuses.forEach(({ element, ip, status }) => {
-    if (!element) return;
-    
-    if (!ip || ip.trim() === '') {
-      element.textContent = '-';
-      element.style.background = 'transparent';
-      element.style.color = 'var(--text-secondary)';
-    } else if (status === 'connected') {
-      element.textContent = 'Connected';
-      element.style.background = '#4caf50';
-      element.style.color = 'white';
-    } else if (status === 'disconnected') {
-      element.textContent = 'Disconnected';
-      element.style.background = '#f44336';
-      element.style.color = 'white';
-    } else {
-      element.textContent = 'Checking...';
-      element.style.background = '#ff9800';
-      element.style.color = 'white';
-    }
-  });
 }
 
 // Backup status polling
@@ -390,13 +710,17 @@ async function updateBackupStatus() {
       throw new Error('Failed to fetch backup status');
     }
     const data = await response.json();
-    
-    // Update status indicators
-    preferences.backupStatus1 = data.backup1?.status || null;
-    preferences.backupStatus2 = data.backup2?.status || null;
-    preferences.backupStatus3 = data.backup3?.status || null;
-    
-    updateBackupStatusIndicators(preferences);
+
+    // Normalize into { ip -> status }
+    backupStatusByIp = {};
+    if (data && Array.isArray(data.backups)) {
+      data.backups.forEach((b) => {
+        const ip = String(b?.ip || '').trim();
+        if (!ip) return;
+        backupStatusByIp[ip] = b?.status || null;
+      });
+    }
+    refreshBackupStatusBadges();
   } catch (error) {
     console.error('Failed to update backup status:', error);
   }
@@ -626,3 +950,4 @@ async function displayBuildNumber() {
 initDisplays();
 checkSignInStatus();
 displayBuildNumber();
+initDebugLogs();

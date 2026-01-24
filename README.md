@@ -2,7 +2,7 @@
 
 A desktop application for running Google Slides across multiple monitors, with a built-in Web UI remote and an HTTP API (for Bitfocus Companion or any other control system).
 
-
+![Web UI Remote](docs/images/web-ui-remote.png)
 
 ## High-level workflow
 
@@ -30,6 +30,26 @@ Original work by [nerif-tafu](https://github.com/nerif-tafu). This fork includes
 ## Web UI (browser remote)
 
 The Web UI is served by the Electron app (default: `http://YOUR_PRESENTATION_PC_IP`).
+
+### Screenshots
+
+**Web UI (Remote tab)**
+
+![Web UI Remote Tab](docs/images/web-ui-remote.png)
+
+**Web UI (Controls tab)**
+
+![Web UI Controls Tab](docs/images/web-ui-controls.png)
+
+### Desktop app screenshots
+
+**Desktop app (Controller allowlist / security)**
+
+![Desktop Controller Allowlist](docs/images/desktop-controller-allowlist.png)
+
+**Desktop app (Primary/Backup configuration)**
+
+![Desktop Primary Backup](docs/images/desktop-primary-backup.png)
 
 ### Tabs and intended users
 

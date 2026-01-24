@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
-  "version": "1.6.0",
-  "buildNumber": "50",
+  "version": "1.8.0",
+  "buildNumber": "54",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -38,7 +38,9 @@
       "renderer.js",
       "index.html",
       "styles.css",
-      "BUILD-INFO.txt"
+      "BUILD-INFO.txt",
+      "build/icon.icns",
+      "build/icon.png"
     ],
     "directories": {
       "output": "dist"

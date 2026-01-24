@@ -62,6 +62,24 @@
         </div>
       </section>
 
+      <!-- Controller Allowlist Section (Desktop-only for security) -->
+      <section class="card">
+        <h2>Controller Allowlist (Optional)</h2>
+        <p class="card-description">
+          Restrict which IP addresses can control this app via the Web UI and HTTP API.
+          If left empty, any device on your network can control the app.
+        </p>
+        
+        <div class="form-group">
+          <label>Allowed Controller IPs</label>
+          <div id="controller-ip-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+          <button type="button" id="add-controller-ip" class="btn btn-secondary" style="margin-top: 10px;">+ Add controller IP</button>
+          <small class="field-hint">
+            Tip: Use the IPs shown above in “Network Access”. You can also allow a subnet using CIDR (e.g. <code>192.168.1.0/24</code>). Localhost (127.0.0.1) is always allowed.
+          </small>
+        </div>
+      </section>
+
       <!-- Primary/Backup Configuration Section -->
       <section class="card">
         <h2>Primary/Backup Configuration</h2>
@@ -101,7 +119,7 @@
           </div>
 
           <div class="form-group">
-            <label for="backup-ip-1">
+            <label>
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"></circle>
                 <line x1="12" y1="2" x2="12" y2="6"></line>
@@ -113,54 +131,11 @@
                 <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
                 <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
               </svg>
-              Backup Machine 1 IP Address
+              Backup Machines
             </label>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <input type="text" id="backup-ip-1" class="input-field" placeholder="192.168.1.100" pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$" />
-              <span id="backup-status-1" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center;">-</span>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="backup-ip-2">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="2" x2="12" y2="6"></line>
-                <line x1="12" y1="18" x2="12" y2="22"></line>
-                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                <line x1="2" y1="12" x2="6" y2="12"></line>
-                <line x1="18" y1="12" x2="22" y2="12"></line>
-                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-              </svg>
-              Backup Machine 2 IP Address (Optional)
-            </label>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <input type="text" id="backup-ip-2" class="input-field" placeholder="192.168.1.101" pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$" />
-              <span id="backup-status-2" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center;">-</span>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="backup-ip-3">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="2" x2="12" y2="6"></line>
-                <line x1="12" y1="18" x2="12" y2="22"></line>
-                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                <line x1="2" y1="12" x2="6" y2="12"></line>
-                <line x1="18" y1="12" x2="22" y2="12"></line>
-                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-              </svg>
-              Backup Machine 3 IP Address (Optional)
-            </label>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <input type="text" id="backup-ip-3" class="input-field" placeholder="192.168.1.102" pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$" />
-              <span id="backup-status-3" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center;">-</span>
-            </div>
+            <div id="backup-ip-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+            <button type="button" id="add-backup-ip" class="btn btn-secondary" style="margin-top: 10px;">+ Add backup machine</button>
+            <small class="field-hint">Enter an IP address or hostname for each backup. Leave blank to remove. Supports any number of backups.</small>
           </div>
         </div>
       </section>
@@ -284,6 +259,42 @@
         
         <button id="save-stagetimer-btn" class="btn">Save Stagetimer Settings</button>
         <button id="load-stagetimer-btn" class="btn btn-secondary">Load Current Settings</button>
+      </section>
+
+      <!-- Logging Section -->
+      <section class="card">
+        <h2>Logging</h2>
+        <p class="card-description">Control how much the app writes to terminal logs. Secrets (API keys/tokens/passwords) are always redacted.</p>
+        
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="verbose-logging" style="width: auto;" />
+            <span>Enable verbose logging</span>
+          </label>
+          <small class="field-hint">Useful for debugging. Takes effect immediately (no restart required).</small>
+        </div>
+
+        <div class="form-group" style="margin-top: 14px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="web-ui-debug-console-enabled" style="width: auto;" />
+            <span>Enable Web UI debug console</span>
+          </label>
+          <small class="field-hint">Off by default. When enabled, the Web UI will show a Debug Console for troubleshooting.</small>
+        </div>
+      </section>
+
+      <!-- Debug Logs Section -->
+      <section class="card">
+        <h2>Debug Logs</h2>
+        <p class="card-description">Live application logs and a downloadable debug report for troubleshooting.</p>
+        
+        <div id="debug-logs-console" style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 12px; max-height: 260px; overflow-y: auto; margin-bottom: 10px;">
+          <div style="color: #888;">Waiting for logs...</div>
+        </div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button type="button" id="debug-logs-clear" class="btn btn-secondary">Clear</button>
+          <button type="button" id="debug-logs-save" class="btn">Save Debug Log (.txt)</button>
+        </div>
       </section>
 
       <!-- Test Presentation Section -->

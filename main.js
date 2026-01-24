@@ -8,11 +8,187 @@
  * Licensed under the MIT License
  */
 
-const { app, BrowserWindow, ipcMain, screen, session, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const os = require('os');
+const util = require('util');
+
+// ----------------------------
+// Logging helpers (secure by default)
+// ----------------------------
+// Verbose mode can be enabled either via preferences (`verboseLogging: true`)
+// or via environment variables (useful before preferences exist).
+const VERBOSE_ENV_ENABLED =
+  String(process.env.GSLIDE_OPENER_VERBOSE || '').toLowerCase() === '1' ||
+  String(process.env.GS_OPENER_VERBOSE || '').toLowerCase() === '1' ||
+  String(process.env.DEBUG || '').toLowerCase() === '1';
+
+let verboseLoggingEnabled = VERBOSE_ENV_ENABLED;
+
+// Redact common secret fields in ANY logs (even verbose).
+const SECRET_KEY_RE = /(api[\-_]?key|token|secret|password|passphrase|authorization)/i;
+
+function safeStringify(value, space = 0) {
+  try {
+    return JSON.stringify(
+      value,
+      (k, v) => {
+        if (k && SECRET_KEY_RE.test(String(k))) {
+          return v ? '[REDACTED]' : v;
+        }
+        return v;
+      },
+      space
+    );
+  } catch (e) {
+    return '[Unserializable]';
+  }
+}
+
+function setVerboseLoggingFromPrefs(prefs) {
+  if (!prefs || typeof prefs !== 'object') return;
+  if (prefs.verboseLogging === true) {
+    verboseLoggingEnabled = true;
+  } else if (prefs.verboseLogging === false) {
+    // Allow env var to force verbose on even if pref is off
+    verboseLoggingEnabled = VERBOSE_ENV_ENABLED;
+  }
+}
+
+function logDebug(...args) {
+  if (!verboseLoggingEnabled) return;
+  console.log(...args);
+}
+function logInfo(...args) {
+  console.log(...args);
+}
+function logWarn(...args) {
+  console.warn(...args);
+}
+function logError(...args) {
+  console.error(...args);
+}
+
+// ----------------------------
+// Live debug log capture (for desktop UI + export)
+// ----------------------------
+const LOG_BUFFER_MAX = 4000;
+let logBuffer = [];
+
+function sanitizeLogText(text) {
+  let s = String(text ?? '');
+  // Redact common key/value patterns in plain text logs
+  s = s.replace(/(\b(api[\-_]?key|token|secret|password|passphrase|authorization)\b\s*[:=]\s*)([^\s,'"\\]+)/gi, '$1[REDACTED]');
+  // Redact JSON style "apiKey":"..."
+  s = s.replace(/("api[\-_]?key"\s*:\s*")[^"]*(")/gi, '$1[REDACTED]$2');
+  s = s.replace(/("token"\s*:\s*")[^"]*(")/gi, '$1[REDACTED]$2');
+  s = s.replace(/("secret"\s*:\s*")[^"]*(")/gi, '$1[REDACTED]$2');
+  s = s.replace(/("password"\s*:\s*")[^"]*(")/gi, '$1[REDACTED]$2');
+  return s;
+}
+
+function appendToLogBuffer(level, args) {
+  try {
+    const ts = new Date().toISOString();
+    const msg = sanitizeLogText(util.format(...args));
+    const line = `${ts} [${String(level).toUpperCase()}] ${msg}`;
+
+    logBuffer.push(line);
+    if (logBuffer.length > LOG_BUFFER_MAX) {
+      logBuffer = logBuffer.slice(logBuffer.length - LOG_BUFFER_MAX);
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try {
+        mainWindow.webContents.send('app-log-line', line);
+      } catch (e) {
+        // ignore
+      }
+    }
+  } catch (e) {
+    // ignore failures
+  }
+}
+
+// Patch console.* so anything logged by main process shows up in the UI/log export.
+// Keep originals so we don't break Electron/Node expectations.
+const _origConsoleLog = console.log.bind(console);
+const _origConsoleWarn = console.warn.bind(console);
+const _origConsoleError = console.error.bind(console);
+
+console.log = (...args) => {
+  _origConsoleLog(...args);
+  appendToLogBuffer('log', args);
+};
+console.warn = (...args) => {
+  _origConsoleWarn(...args);
+  appendToLogBuffer('warn', args);
+};
+console.error = (...args) => {
+  _origConsoleError(...args);
+  appendToLogBuffer('error', args);
+};
+
+// ----------------------------
+// Web UI favicon (use app icon)
+// ----------------------------
+let cachedFaviconPng = null;
+let cachedFaviconDataUrl = null;
+
+function getFaviconPngBuffer() {
+  if (cachedFaviconPng) return cachedFaviconPng;
+
+  // Prefer a .png if present; fall back to .icns (mac) and render as PNG
+  const candidates = [
+    path.join(__dirname, 'build', 'icon.png'),
+    path.join(__dirname, 'build', 'icon.ico'),
+    path.join(__dirname, 'build', 'icon.icns'),
+    path.join(app.getAppPath ? app.getAppPath() : __dirname, 'build', 'icon.png'),
+    path.join(app.getAppPath ? app.getAppPath() : __dirname, 'build', 'icon.ico'),
+    path.join(app.getAppPath ? app.getAppPath() : __dirname, 'build', 'icon.icns'),
+  ];
+
+  for (const p of candidates) {
+    try {
+      if (!fs.existsSync(p)) continue;
+      const img = nativeImage.createFromPath(p);
+      if (!img || img.isEmpty()) continue;
+      const resized = img.resize({ width: 32, height: 32, quality: 'good' });
+      const png = resized.toPNG();
+      if (png && png.length) {
+        cachedFaviconPng = png;
+        return cachedFaviconPng;
+      }
+    } catch (e) {
+      // keep trying
+    }
+  }
+
+  return null;
+}
+
+function getFaviconDataUrl() {
+  if (cachedFaviconDataUrl) return cachedFaviconDataUrl;
+  const png = getFaviconPngBuffer();
+  if (!png) return null;
+  cachedFaviconDataUrl = `data:image/png;base64,${png.toString('base64')}`;
+  return cachedFaviconDataUrl;
+}
+
+// Cached build info (version/buildNumber) for status + UI strings
+let appBuildInfo = { version: 'unknown', buildNumber: 'unknown' };
+try {
+  const packageJsonPath = path.join(__dirname, 'package.json');
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  appBuildInfo = {
+    version: packageJson.version || 'unknown',
+    buildNumber: packageJson.buildNumber || 'unknown'
+  };
+} catch (error) {
+  logError('[Build Info] Error loading package.json:', error.message);
+}
 
 let mainWindow;
 let presentationWindow = null;
@@ -75,9 +251,9 @@ function setSpeakerNotesFullscreen(window) {
         window.setSimpleFullScreen(true);
       }
       window.show();
-      console.log('[Notes] Set speaker notes window to fullscreen (simple fullscreen to avoid Spaces conflicts)');
+      logInfo('[Notes] Set speaker notes window to fullscreen (simple fullscreen to avoid Spaces conflicts)');
     } catch (error) {
-      console.error('[Notes] Error setting fullscreen:', error);
+      logError('[Notes] Error setting fullscreen:', error);
       // Fallback: just show the window
       if (!window.isDestroyed()) {
         window.show();
@@ -101,6 +277,226 @@ function setSpeakerNotesFullscreen(window) {
   }
 }
 
+// Capture "current slide" and "next slide" preview images from the speaker notes (Presenter View) window.
+// This avoids relying on <img src> URLs (which may be blob: and not accessible to remote devices).
+async function captureSlidePreviewsFromNotesWindow({ maxSize = 200 } = {}) {
+  if (!notesWindow || notesWindow.isDestroyed()) {
+    return { success: false, error: 'No speaker notes window is open' };
+  }
+
+  // Find rectangles of the current/next slide preview elements inside the notes window.
+  const rectInfo = await notesWindow.webContents.executeJavaScript(`
+    (function () {
+      function isVisible(el) {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+        const r = el.getBoundingClientRect();
+        if (!r || r.width < 60 || r.height < 60) return false;
+        // Must intersect viewport
+        if (r.bottom < 0 || r.right < 0 || r.top > window.innerHeight || r.left > window.innerWidth) return false;
+        return true;
+      }
+
+      function rectOf(el) {
+        const r = el.getBoundingClientRect();
+        // Add a tiny padding to reduce border clipping
+        const pad = 2;
+        return {
+          x: Math.max(0, Math.floor(r.left + pad)),
+          y: Math.max(0, Math.floor(r.top + pad)),
+          width: Math.max(1, Math.floor(r.width - (pad * 2))),
+          height: Math.max(1, Math.floor(r.height - (pad * 2)))
+        };
+      }
+
+      // Try known-ish presenter-view selectors first (best effort).
+      const known = [];
+      const knownSelectors = [
+        // These may or may not exist depending on Slides updates
+        '[aria-label*="Current slide"] img',
+        '[aria-label*="Next slide"] img',
+        '[aria-label*="Next slide"] canvas',
+        '[aria-label*="Next"] img',
+        'div[class*="punch-viewer"] img',
+        'canvas',
+        'iframe',
+        'svg'
+      ];
+
+      for (const sel of knownSelectors) {
+        try {
+          document.querySelectorAll(sel).forEach(el => {
+            if (isVisible(el)) known.push(el);
+          });
+        } catch (e) {}
+      }
+
+      // Broader fallback: look for large visible elements that likely render slide previews.
+      const candidates = [];
+
+      // Visible images/canvases/iframes/svgs (Slides often uses iframes/canvas/svg)
+      document.querySelectorAll('img, canvas, iframe, svg').forEach(el => {
+        if (!isVisible(el)) return;
+        const r = el.getBoundingClientRect();
+        const ar = r.width / Math.max(1, r.height);
+        // Prefer slide-like aspect ratios (4:3 to 16:9-ish), but don't hard-reject yet
+        candidates.push({ el, area: r.width * r.height, top: r.top, left: r.left });
+      });
+
+      // Visible divs with background-image (common for thumbnails)
+      document.querySelectorAll('div[class*="punch-viewer"], div[style]').forEach(el => {
+        if (!isVisible(el)) return;
+        const style = window.getComputedStyle(el);
+        const bg = style.backgroundImage || '';
+        if (!bg || bg === 'none') return;
+        const r = el.getBoundingClientRect();
+        candidates.push({ el, area: r.width * r.height, top: r.top, left: r.left });
+      });
+
+      // Prefer left-side content (presenter preview pane is typically on the left)
+      const midX = window.innerWidth / 2;
+      const scored = candidates
+        .map(c => {
+          const r = c.el.getBoundingClientRect();
+          const centerX = r.left + r.width / 2;
+          const leftBias = centerX < midX ? 1.35 : 0.85;
+          const topBias = r.top < 80 ? 0.5 : 1.0; // avoid grabbing header UI
+          const ar = r.width / Math.max(1, r.height);
+          // Slides are commonly 4:3 (1.33) or 16:9 (1.78)
+          const arPenalty = Math.min(Math.abs(ar - 1.33), Math.abs(ar - 1.78));
+          const arBias = (ar > 1.1 && ar < 2.1) ? (1.15 - Math.min(0.6, arPenalty)) : 0.65;
+          return { ...c, score: c.area * leftBias * topBias * arBias, rect: r };
+        })
+        .sort((a, b) => b.score - a.score);
+
+      // Pick the top 2 distinct elements (by rect separation)
+      const picked = [];
+      for (const item of scored) {
+        if (picked.length >= 2) break;
+        const r = item.rect;
+        const overlapsTooMuch = picked.some(p => {
+          const pr = p.rect;
+          const overlapX = Math.max(0, Math.min(r.right, pr.right) - Math.max(r.left, pr.left));
+          const overlapY = Math.max(0, Math.min(r.bottom, pr.bottom) - Math.max(r.top, pr.top));
+          const overlapArea = overlapX * overlapY;
+          return overlapArea > (Math.min(r.width * r.height, pr.width * pr.height) * 0.5);
+        });
+        if (!overlapsTooMuch) picked.push(item);
+      }
+
+      // If we didn't find enough, try using known list
+      if (picked.length < 2 && known.length >= 2) {
+        const k = Array.from(new Set(known)).filter(isVisible).map(el => {
+          const r = el.getBoundingClientRect();
+          return { el, rect: r, score: (r.width * r.height) * 1.1 };
+        }).sort((a, b) => b.score - a.score);
+        while (picked.length < 2 && k.length) picked.push(k.shift());
+      }
+
+      // Fallback: try to anchor the "Next" thumbnail by label text, then pick a large "current" preview above it.
+      if (picked.length < 2) {
+        function findByLabelText(txt) {
+          const els = Array.from(document.querySelectorAll('*'))
+            .filter(el => {
+              if (!isVisible(el)) return false;
+              const t = (el.textContent || '').trim();
+              return t === txt;
+            });
+          // Prefer ones on the left half
+          els.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+          return els[0] || null;
+        }
+
+        const nextLabel = findByLabelText('Next');
+        if (nextLabel) {
+          let container = nextLabel;
+          for (let i = 0; i < 6 && container; i++) {
+            const hasPreview = container.querySelector && container.querySelector('img,canvas,iframe,svg,div[style]');
+            if (hasPreview) break;
+            container = container.parentElement;
+          }
+          const nextPreviewEl = container ? (container.querySelector('img,canvas,iframe,svg') || container) : null;
+          if (nextPreviewEl && isVisible(nextPreviewEl)) {
+            const nextRect = nextPreviewEl.getBoundingClientRect();
+            // Find a "current" preview above it: biggest slide-like element above nextRect.top
+            const above = scored
+              .filter(s => s.rect && (s.rect.top + s.rect.height) < (nextRect.top + 20))
+              .sort((a, b) => b.score - a.score);
+            if (above.length) {
+              picked.push(above[0]);
+              picked.push({ el: nextPreviewEl, rect: nextRect, score: nextRect.width * nextRect.height });
+            }
+          }
+        }
+      }
+
+      if (picked.length < 2) {
+        return { ok: false, error: 'Could not locate slide preview elements in presenter view' };
+      }
+
+      // Sort by vertical position: top = current, bottom = next
+      picked.sort((a, b) => a.rect.top - b.rect.top);
+
+      // Slide numbers from aria-posinset/aria-setsize when available
+      let currentSlide = null;
+      let totalSlides = null;
+      try {
+        const el = document.querySelector('[aria-posinset]');
+        if (el) {
+          const cur = parseInt(el.getAttribute('aria-posinset'), 10);
+          const tot = parseInt(el.getAttribute('aria-setsize'), 10);
+          if (!isNaN(cur)) currentSlide = cur;
+          if (!isNaN(tot)) totalSlides = tot;
+        }
+      } catch (e) {}
+
+      return {
+        ok: true,
+        current: rectOf(picked[0].el),
+        next: rectOf(picked[1].el),
+        currentSlide,
+        totalSlides
+      };
+    })()
+  `);
+
+  if (!rectInfo || !rectInfo.ok || !rectInfo.current || !rectInfo.next) {
+    return { success: false, error: rectInfo?.error || 'Failed to locate preview rectangles' };
+  }
+
+  function resizeToFit(nativeImg) {
+    const size = nativeImg.getSize();
+    const w = size.width || 1;
+    const h = size.height || 1;
+    const scale = Math.min(1, maxSize / Math.max(w, h));
+    const targetW = Math.max(1, Math.round(w * scale));
+    const targetH = Math.max(1, Math.round(h * scale));
+    return nativeImg.resize({ width: targetW, height: targetH, quality: 'good' });
+  }
+
+  const currentImg = resizeToFit(await notesWindow.webContents.capturePage(rectInfo.current));
+  const nextImg = resizeToFit(await notesWindow.webContents.capturePage(rectInfo.next));
+
+  const currentDataUrl = currentImg.toDataURL();
+  const nextDataUrl = nextImg.toDataURL();
+
+  const currentSlideNum = rectInfo.currentSlide ?? (typeof currentSlide === 'number' ? currentSlide : null);
+  const totalSlidesNum = rectInfo.totalSlides ?? null;
+  const nextSlideNum = (typeof currentSlideNum === 'number' && typeof totalSlidesNum === 'number')
+    ? (currentSlideNum < totalSlidesNum ? currentSlideNum + 1 : null)
+    : (typeof currentSlideNum === 'number' ? currentSlideNum + 1 : null);
+
+  return {
+    success: true,
+    currentSlide: currentSlideNum,
+    nextSlide: nextSlideNum,
+    totalSlides: totalSlidesNum,
+    current: { dataUrl: currentDataUrl },
+    next: { dataUrl: nextDataUrl }
+  };
+}
+
 function getGoogleSession() {
   return session.fromPartition(GOOGLE_SESSION_PARTITION);
 }
@@ -114,19 +510,26 @@ function getPreferencesPath() {
 function loadPreferences() {
   try {
     const prefsPath = getPreferencesPath();
-    console.log('[Preferences] Loading from:', prefsPath);
+    // Intentionally quiet by default: loadPreferences() is called frequently.
     
     if (fs.existsSync(prefsPath)) {
       const data = fs.readFileSync(prefsPath, 'utf8');
       const prefs = JSON.parse(data);
-      console.log('[Preferences] Loaded preferences:', JSON.stringify(prefs));
+      // Allow preferences to control verbose logging, but never print secrets.
+      setVerboseLoggingFromPrefs(prefs);
+      // Normalize/migrate preferences in-memory (do not write here; loadPreferences is called often)
+      // Primary/Backup migration: support both legacy backupIp1/2/3 and new backupIps[]
+      prefs.backupIps = getBackupIpsFromPrefs(prefs);
+      // Controller allowlist normalization
+      prefs.controllerIps = getControllerIpsFromPrefs(prefs);
+      logDebug('[Preferences] Loaded preferences:', safeStringify(prefs));
       return prefs;
     } else {
-      console.log('[Preferences] File does not exist, returning empty object');
+      logDebug('[Preferences] Preferences file does not exist, returning empty object');
     }
   } catch (error) {
-    console.error('[Preferences] Error loading preferences:', error);
-    console.error('[Preferences] Error details:', {
+    logError('[Preferences] Error loading preferences:', error);
+    logError('[Preferences] Error details:', {
       message: error.message,
       code: error.code,
       path: getPreferencesPath()
@@ -139,29 +542,34 @@ function loadPreferences() {
 function savePreferences(prefs) {
   try {
     const prefsPath = getPreferencesPath();
-    console.log('[Preferences] Saving to:', prefsPath);
-    console.log('[Preferences] Data to save:', JSON.stringify(prefs, null, 2));
+    // Ensure verbose flag is applied immediately
+    setVerboseLoggingFromPrefs(prefs);
+    // Normalize/migrate before writing
+    prefs.backupIps = getBackupIpsFromPrefs(prefs);
+    prefs.controllerIps = getControllerIpsFromPrefs(prefs);
+    logDebug('[Preferences] Saving to:', prefsPath);
+    logDebug('[Preferences] Data to save (sanitized):', safeStringify(prefs, 2));
     
     // Ensure directory exists
     const prefsDir = path.dirname(prefsPath);
     if (!fs.existsSync(prefsDir)) {
-      console.log('[Preferences] Creating directory:', prefsDir);
+      logDebug('[Preferences] Creating directory:', prefsDir);
       fs.mkdirSync(prefsDir, { recursive: true });
     }
     
     fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf8');
-    console.log('[Preferences] Successfully saved preferences');
+    logInfo('[Preferences] Preferences saved');
     
     // Verify it was written
     if (fs.existsSync(prefsPath)) {
       const stats = fs.statSync(prefsPath);
-      console.log('[Preferences] File verified - size:', stats.size, 'bytes');
+      logDebug('[Preferences] File verified - size:', stats.size, 'bytes');
     } else {
-      console.error('[Preferences] ERROR: File was not created after write!');
+      logError('[Preferences] ERROR: File was not created after write!');
     }
   } catch (error) {
-    console.error('[Preferences] Error saving preferences:', error);
-    console.error('[Preferences] Error details:', {
+    logError('[Preferences] Error saving preferences:', error);
+    logError('[Preferences] Error details:', {
       message: error.message,
       code: error.code,
       path: getPreferencesPath(),
@@ -179,20 +587,133 @@ function isBackupMode() {
   return prefs.primaryBackupMode === 'backup';
 }
 
-// Get list of configured backup IP addresses
+function normalizeBackupIps(ips) {
+  if (!Array.isArray(ips)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of ips) {
+    const ip = String(raw || '').trim();
+    if (!ip) continue;
+    if (seen.has(ip)) continue;
+    seen.add(ip);
+    out.push(ip);
+  }
+  return out;
+}
+
+// Controller allowlist (security)
+function normalizeControllerIps(ips) {
+  if (!Array.isArray(ips)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of ips) {
+    const v = String(raw || '').trim();
+    if (!v) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function getControllerIpsFromPrefs(prefs) {
+  // Stored in preferences as an array: prefs.controllerIps: string[]
+  return normalizeControllerIps(prefs?.controllerIps);
+}
+
+function normalizeRemoteAddress(addr) {
+  let a = String(addr || '').trim();
+  // IPv6-mapped IPv4 (common on Node/Electron)
+  if (a.startsWith('::ffff:')) a = a.slice(7);
+  // Normalize loopback
+  if (a === '::1') a = '127.0.0.1';
+  return a;
+}
+
+function isLocalhostAddress(addr) {
+  const a = normalizeRemoteAddress(addr);
+  return a === '127.0.0.1';
+}
+
+function parseIpv4ToInt(ip) {
+  const parts = String(ip || '').trim().split('.');
+  if (parts.length !== 4) return null;
+  const nums = parts.map((p) => {
+    if (p === '' || !/^\d+$/.test(p)) return null;
+    const n = Number(p);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+    return n;
+  });
+  if (nums.some((n) => n === null)) return null;
+  // Use unsigned 32-bit
+  return (((nums[0] << 24) >>> 0) | (nums[1] << 16) | (nums[2] << 8) | nums[3]) >>> 0;
+}
+
+function parseCidr(cidr) {
+  const s = String(cidr || '').trim();
+  const idx = s.indexOf('/');
+  if (idx <= 0) return null;
+  const ipStr = s.slice(0, idx).trim();
+  const prefixStr = s.slice(idx + 1).trim();
+  if (!/^\d+$/.test(prefixStr)) return null;
+  const prefix = Number(prefixStr);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return null;
+  const ipInt = parseIpv4ToInt(ipStr);
+  if (ipInt === null) return null;
+  const mask = prefix === 0 ? 0 : ((0xffffffff << (32 - prefix)) >>> 0);
+  const network = (ipInt & mask) >>> 0;
+  return { network, mask, prefix };
+}
+
+function isAllowedByControllerEntry(entry, remoteIp) {
+  const e = String(entry || '').trim();
+  if (!e) return false;
+  const r = normalizeRemoteAddress(remoteIp);
+
+  // CIDR entry (IPv4 only)
+  if (e.includes('/')) {
+    const cidr = parseCidr(e);
+    if (!cidr) return false;
+    const remoteInt = parseIpv4ToInt(r);
+    if (remoteInt === null) return false;
+    return ((remoteInt & cidr.mask) >>> 0) === cidr.network;
+  }
+
+  // Exact IP match
+  return e === r;
+}
+
+function isControllerAllowedRequest(req, prefs) {
+  // Always allow local requests (desktop app UI and local tooling)
+  const remote = normalizeRemoteAddress(req?.socket?.remoteAddress);
+  if (isLocalhostAddress(remote)) return true;
+
+  const allowlist = getControllerIpsFromPrefs(prefs);
+  if (!allowlist || allowlist.length === 0) return true; // no restrictions
+
+  // Allow if any entry matches (IP or CIDR)
+  return allowlist.some((entry) => isAllowedByControllerEntry(entry, remote));
+}
+
+function getBackupIpsFromPrefs(prefs) {
+  // New format: prefs.backupIps: string[]
+  // Legacy format: prefs.backupIp1/2/3
+  const fromArray = Array.isArray(prefs?.backupIps) ? prefs.backupIps : [];
+  const legacy = [
+    prefs?.backupIp1,
+    prefs?.backupIp2,
+    prefs?.backupIp3,
+  ];
+
+  // Merge both so upgrades keep working even if only legacy keys exist
+  return normalizeBackupIps([...fromArray, ...legacy]);
+}
+
+// Get list of configured backup IP addresses (unlimited, user-configurable)
 function getBackupIps() {
   const prefs = loadPreferences();
-  if (prefs.primaryBackupMode !== 'primary') {
-    return [];
-  }
-  
-  const ips = [
-    prefs.backupIp1,
-    prefs.backupIp2,
-    prefs.backupIp3
-  ].filter(ip => ip && ip.trim() !== '');
-  
-  return ips;
+  if (prefs.primaryBackupMode !== 'primary') return [];
+  return getBackupIpsFromPrefs(prefs);
 }
 
 // Send command to all backup machines (fire and forget)
@@ -209,7 +730,7 @@ async function sendToBackups(endpoint, data = null) {
   
   const port = prefs.backupPort || DEFAULT_API_PORT;
   
-  console.log(`[Backup] Broadcasting ${endpoint} to ${backupIps.length} backup(s)`);
+  logDebug(`[Backup] Broadcasting ${endpoint} to ${backupIps.length} backup(s)`);
   
   // Send to all backups in parallel (fire and forget - don't wait for responses)
   backupIps.forEach(ip => {
@@ -226,12 +747,12 @@ async function sendToBackups(endpoint, data = null) {
     
     const req = http.request(options, (res) => {
       // Success - backup received command
-      console.log(`[Backup] Successfully sent to ${ip}:${port}${endpoint}`);
+      logDebug(`[Backup] Successfully sent to ${ip}:${port}${endpoint}`);
     });
     
     req.on('error', (err) => {
       // Error - backup didn't receive command (log but don't fail)
-      console.error(`[Backup] Failed to send to ${ip}:${port}${endpoint}:`, err.message);
+      logWarn(`[Backup] Failed to send to ${ip}:${port}${endpoint}:`, err.message);
     });
     
     req.on('timeout', () => {
@@ -250,16 +771,16 @@ async function sendToBackups(endpoint, data = null) {
 async function checkBackupStatus() {
   const prefs = loadPreferences();
   if (prefs.primaryBackupMode !== 'primary') {
-    return {};
+    return { backups: [] };
   }
   
   const backupIps = getBackupIps();
   if (backupIps.length === 0) {
-    return {};
+    return { backups: [] };
   }
   
   const port = prefs.backupPort || DEFAULT_API_PORT;
-  const status = {};
+  const backups = backupIps.map(ip => ({ ip, status: 'checking' }));
   
   // Check each backup in parallel
   const promises = backupIps.map((ip, index) => {
@@ -279,23 +800,23 @@ async function checkBackupStatus() {
         });
         res.on('end', () => {
           if (res.statusCode === 200) {
-            status[`backup${index + 1}`] = { ip, status: 'connected' };
+            backups[index] = { ip, status: 'connected' };
             resolve();
           } else {
-            status[`backup${index + 1}`] = { ip, status: 'disconnected' };
+            backups[index] = { ip, status: 'disconnected' };
             resolve();
           }
         });
       });
       
       req.on('error', () => {
-        status[`backup${index + 1}`] = { ip, status: 'disconnected' };
+        backups[index] = { ip, status: 'disconnected' };
         resolve();
       });
       
       req.on('timeout', () => {
         req.destroy();
-        status[`backup${index + 1}`] = { ip, status: 'disconnected' };
+        backups[index] = { ip, status: 'disconnected' };
         resolve();
       });
       
@@ -304,15 +825,8 @@ async function checkBackupStatus() {
   });
   
   await Promise.all(promises);
-  
-  // Update preferences with status
-  const updatedPrefs = loadPreferences();
-  updatedPrefs.backupStatus1 = status.backup1?.status || null;
-  updatedPrefs.backupStatus2 = status.backup2?.status || null;
-  updatedPrefs.backupStatus3 = status.backup3?.status || null;
-  savePreferences(updatedPrefs);
-  
-  return status;
+
+  return { backups };
 }
 
 // Start backup status polling (called when app starts in primary mode)
@@ -389,17 +903,15 @@ ipcMain.handle('get-preferences', async () => {
 // Get build info (version and build number)
 ipcMain.handle('get-build-info', async () => {
   try {
-    const packageJsonPath = path.join(__dirname, 'package.json');
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-      return {
-        version: packageJson.version || '1.4.5',
-        buildNumber: packageJson.buildNumber || '24'
-      };
+    return {
+      version: appBuildInfo.version,
+      buildNumber: appBuildInfo.buildNumber
+    };
   } catch (error) {
     console.error('[Build Info] Error loading build info:', error);
     return {
-      version: '1.4.5',
-      buildNumber: '24'
+      version: 'unknown',
+      buildNumber: 'unknown'
     };
   }
 });
@@ -440,6 +952,52 @@ ipcMain.handle('save-preferences', async (event, prefs) => {
   const mergedPrefs = { ...currentPrefs, ...prefs };
   savePreferences(mergedPrefs);
   return { success: true };
+});
+
+// Desktop debug log access
+ipcMain.handle('get-log-buffer', async () => {
+  return { lines: logBuffer.slice() };
+});
+
+ipcMain.handle('clear-log-buffer', async () => {
+  logBuffer = [];
+  return { success: true };
+});
+
+ipcMain.handle('export-log-buffer', async () => {
+  try {
+    const prefs = loadPreferences();
+    const header = [
+      'Google Slides Opener - Debug Logs',
+      `Generated: ${new Date().toISOString()}`,
+      `Version: v${appBuildInfo.version}.${appBuildInfo.buildNumber}`,
+      `Platform: ${process.platform}`,
+      '',
+      '--- Preferences (sanitized) ---',
+      safeStringify(prefs, 2),
+      '',
+      '--- Log output ---',
+      ''
+    ].join('\n');
+
+    const content = header + logBuffer.join('\n') + '\n';
+
+    const defaultName = `gslide-opener-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+    const result = await dialog.showSaveDialog({
+      title: 'Save Debug Log',
+      defaultPath: path.join(app.getPath('downloads'), defaultName),
+      filters: [{ name: 'Text Files', extensions: ['txt'] }]
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    fs.writeFileSync(result.filePath, content, 'utf8');
+    return { success: true, filePath: result.filePath };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 // Sign in with Google
@@ -607,12 +1165,12 @@ ipcMain.handle('open-test-presentation', async () => {
   
   // Load preferences to get selected displays
   const prefs = loadPreferences();
-  console.log('[Test] Loaded preferences:', prefs);
+  logDebug('[Test] Loaded preferences:', safeStringify(prefs));
   
   const displays = screen.getAllDisplays();
-  console.log('[Test] All available displays:');
+  logDebug('[Test] All available displays:');
   displays.forEach((display, index) => {
-    console.log(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${JSON.stringify(display.bounds)}`);
+    logDebug(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${safeStringify(display.bounds)}`);
   });
   
   // Convert IDs to numbers for comparison (they might be saved as strings)
@@ -622,10 +1180,10 @@ ipcMain.handle('open-test-presentation', async () => {
   const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
   const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
   
-  console.log('[Test] Selected presentation display ID:', prefs.presentationDisplayId, '(converted to:', presentationDisplayId, ')');
-  console.log('[Test] Resolved presentation display:', presentationDisplay.id, 'Bounds:', presentationDisplay.bounds);
-  console.log('[Test] Selected notes display ID:', prefs.notesDisplayId, '(converted to:', notesDisplayId, ')');
-  console.log('[Test] Resolved notes display:', notesDisplay.id, 'Bounds:', notesDisplay.bounds);
+  logDebug('[Test] Selected presentation display ID:', prefs.presentationDisplayId, '(converted to:', presentationDisplayId, ')');
+  logDebug('[Test] Resolved presentation display:', presentationDisplay.id, 'Bounds:', presentationDisplay.bounds);
+  logDebug('[Test] Selected notes display ID:', prefs.notesDisplayId, '(converted to:', notesDisplayId, ')');
+  logDebug('[Test] Resolved notes display:', notesDisplay.id, 'Bounds:', notesDisplay.bounds);
   
   if (!presentationWindow) {
     // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
@@ -656,7 +1214,7 @@ ipcMain.handle('open-test-presentation', async () => {
     // Listen for Escape key to close both windows
     presentationWindow.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'Escape' && input.type === 'keyDown') {
-        console.log('[Test] Escape pressed, closing presentation and notes windows');
+        logDebug('[Test] Escape pressed, closing presentation and notes windows');
         event.preventDefault(); // Prevent Google Slides from handling Escape
         if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
         if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
@@ -665,9 +1223,9 @@ ipcMain.handle('open-test-presentation', async () => {
 
     // Handle the speaker notes popup window
     presentationWindow.webContents.setWindowOpenHandler((details) => {
-      console.log('[Test] Window open intercepted:', details.url);
-      console.log('[Test] Frame name:', details.frameName);
-      console.log('[Test] Features:', details.features);
+      logDebug('[Test] Window open intercepted:', details.url);
+      logDebug('[Test] Frame name:', details.frameName);
+      logDebug('[Test] Features:', details.features);
       
       // Allow Google Slides to open the speaker notes window
       // Use default size from Google Slides (no size/position override)
@@ -689,18 +1247,18 @@ ipcMain.handle('open-test-presentation', async () => {
     // Listen for new windows being created (this will be the notes window)
     const testWindowCreatedListener = (event, window) => {
       if (window !== presentationWindow && window !== mainWindow) {
-        console.log('[Test] Notes window created');
-        console.log('[Test] Presentation display ID:', presentationDisplay.id);
-        console.log('[Test] Notes display ID:', notesDisplay.id);
+        logDebug('[Test] Notes window created');
+        logDebug('[Test] Presentation display ID:', presentationDisplay.id);
+        logDebug('[Test] Notes display ID:', notesDisplay.id);
         notesWindow = window;
         
         const initialBounds = window.getBounds();
-        console.log('[Test] Initial window bounds:', initialBounds);
+        logDebug('[Test] Initial window bounds:', initialBounds);
         
         // Add Escape key handler to notes window as well
         window.webContents.on('before-input-event', (event, input) => {
           if (input.key === 'Escape' && input.type === 'keyDown') {
-            console.log('[Test] Escape pressed in notes window, closing all windows');
+            logDebug('[Test] Escape pressed in notes window, closing all windows');
             event.preventDefault();
             if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
             if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
@@ -730,14 +1288,14 @@ ipcMain.handle('open-test-presentation', async () => {
   presentationWindow.loadURL(testUrl);
   presentationWindow.show();
   
-  console.log('[Test] Window opened, loading URL...');
+  logDebug('[Test] Window opened, loading URL...');
   
   // Set up navigation listener
   const navigationListener = async (event, url) => {
-    console.log('[Test] Navigated to:', url);
+    logDebug('[Test] Navigated to:', url);
     
     // Just log navigation, don't auto-launch notes
-    console.log('[Test] Navigated to:', url);
+    logDebug('[Test] Navigated to:', url);
   };
   
   presentationWindow.webContents.on('did-navigate', navigationListener);
@@ -747,14 +1305,14 @@ ipcMain.handle('open-test-presentation', async () => {
     if (!presentationWindow || presentationWindow.isDestroyed()) return;
     
     const currentUrl = presentationWindow.webContents.getURL();
-    console.log('[Test] Page loaded:', currentUrl);
+    logDebug('[Test] Page loaded:', currentUrl);
     
     // Small delay to ensure page is fully interactive
     await new Promise(resolve => setTimeout(resolve, 200));
     
     if (!presentationWindow || presentationWindow.isDestroyed()) return;
     
-    console.log('[Test] Triggering Ctrl+Shift+F5 to enter presentation mode...');
+    logDebug('[Test] Triggering Ctrl+Shift+F5 to enter presentation mode...');
     
     try {
       // Focus the window first to ensure it receives the keyboard events
@@ -765,9 +1323,9 @@ ipcMain.handle('open-test-presentation', async () => {
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
       presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
       
-      console.log('[Test] Ctrl+Shift+F5 sent via sendInputEvent');
+      logDebug('[Test] Ctrl+Shift+F5 sent via sendInputEvent');
     } catch (error) {
-      console.error('[Test] Error sending Ctrl+Shift+F5:', error);
+      logError('[Test] Error sending Ctrl+Shift+F5:', error);
     }
     
     // No auto-launch of speaker notes - user must call open-speaker-notes separately
@@ -779,9 +1337,9 @@ ipcMain.handle('open-test-presentation', async () => {
 // Open presentation on specific monitor
 ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, notesDisplayId }) => {
   const displays = screen.getAllDisplays();
-  console.log('[Multi-Monitor] All available displays:');
+  logDebug('[Multi-Monitor] All available displays:');
   displays.forEach((display, index) => {
-    console.log(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${JSON.stringify(display.bounds)}`);
+    logDebug(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${safeStringify(display.bounds)}`);
   });
   
   // Convert IDs to numbers for comparison (they might be passed as strings)
@@ -791,10 +1349,10 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   const presentationDisplay = displays.find(d => d.id === presentationDisplayIdNum);
   const notesDisplay = displays.find(d => d.id === notesDisplayIdNum);
 
-  console.log('[Multi-Monitor] Selected presentation display ID:', presentationDisplayId, '(converted to:', presentationDisplayIdNum, ')');
-  console.log('[Multi-Monitor] Resolved presentation display:', presentationDisplay ? presentationDisplay.id : 'NOT FOUND', 'Bounds:', presentationDisplay ? presentationDisplay.bounds : 'N/A');
-  console.log('[Multi-Monitor] Selected notes display ID:', notesDisplayId, '(converted to:', notesDisplayIdNum, ')');
-  console.log('[Multi-Monitor] Resolved notes display:', notesDisplay ? notesDisplay.id : 'NOT FOUND', 'Bounds:', notesDisplay ? notesDisplay.bounds : 'N/A');
+  logDebug('[Multi-Monitor] Selected presentation display ID:', presentationDisplayId, '(converted to:', presentationDisplayIdNum, ')');
+  logDebug('[Multi-Monitor] Resolved presentation display:', presentationDisplay ? presentationDisplay.id : 'NOT FOUND', 'Bounds:', presentationDisplay ? presentationDisplay.bounds : 'N/A');
+  logDebug('[Multi-Monitor] Selected notes display ID:', notesDisplayId, '(converted to:', notesDisplayIdNum, ')');
+  logDebug('[Multi-Monitor] Resolved notes display:', notesDisplay ? notesDisplay.id : 'NOT FOUND', 'Bounds:', notesDisplay ? notesDisplay.bounds : 'N/A');
 
   if (!presentationDisplay) {
     return { success: false, message: 'Invalid presentation display' };
@@ -828,9 +1386,9 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 
   // Handle the speaker notes popup window
   presentationWindow.webContents.setWindowOpenHandler((details) => {
-    console.log('[Multi-Monitor] Window open intercepted:', details.url);
-    console.log('[Multi-Monitor] Frame name:', details.frameName);
-    console.log('[Multi-Monitor] Features:', details.features);
+    logDebug('[Multi-Monitor] Window open intercepted:', details.url);
+    logDebug('[Multi-Monitor] Frame name:', details.frameName);
+    logDebug('[Multi-Monitor] Features:', details.features);
     
     // Allow Google Slides to open the speaker notes window
     // Use default size from Google Slides (no size/position override)
@@ -853,20 +1411,20 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   const windowCreatedListener = (event, window) => {
     // Check if this is not the presentation window or main window
     if (window !== presentationWindow && window !== mainWindow) {
-      console.log('[Multi-Monitor] Notes window created');
-      console.log('[Multi-Monitor] Presentation display ID:', presentationDisplayIdNum);
-      console.log('[Multi-Monitor] Notes display ID:', notesDisplayIdNum);
-      console.log('[Multi-Monitor] Notes display object:', notesDisplay);
+      logDebug('[Multi-Monitor] Notes window created');
+      logDebug('[Multi-Monitor] Presentation display ID:', presentationDisplayIdNum);
+      logDebug('[Multi-Monitor] Notes display ID:', notesDisplayIdNum);
+      logDebug('[Multi-Monitor] Notes display object:', notesDisplay);
       notesWindow = window;
       
       // Get initial window bounds
       const initialBounds = window.getBounds();
-      console.log('[Multi-Monitor] Initial window bounds:', initialBounds);
+      logDebug('[Multi-Monitor] Initial window bounds:', initialBounds);
       
       // Add Escape key handler to notes window as well
       window.webContents.on('before-input-event', (event, input) => {
         if (input.key === 'Escape' && input.type === 'keyDown') {
-          console.log('[Multi-Monitor] Escape pressed in notes window, closing all windows');
+          logDebug('[Multi-Monitor] Escape pressed in notes window, closing all windows');
           event.preventDefault();
           if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
           if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
@@ -896,12 +1454,12 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   currentSlide = 1;
   presentationWindow.loadURL(url);
 
-  console.log('[Multi-Monitor] Window opened, loading URL...');
+  logDebug('[Multi-Monitor] Window opened, loading URL...');
 
   // Listen for all page loads
   // Set up navigation listener to detect presentation mode activation
   const navigationListener = async (event, url) => {
-    console.log('[Multi-Monitor] Navigated to:', url);
+    logDebug('[Multi-Monitor] Navigated to:', url);
     // Just log navigation, don't auto-launch notes
   };
   
@@ -912,14 +1470,14 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     if (!presentationWindow || presentationWindow.isDestroyed()) return;
     
     const currentUrl = presentationWindow.webContents.getURL();
-    console.log('[Multi-Monitor] Page loaded:', currentUrl);
+    logDebug('[Multi-Monitor] Page loaded:', currentUrl);
     
     // Small delay to ensure page is fully interactive
     await new Promise(resolve => setTimeout(resolve, 200));
     
     if (!presentationWindow || presentationWindow.isDestroyed()) return;
     
-    console.log('[Multi-Monitor] Triggering Ctrl+Shift+F5 to enter presentation mode...');
+    logDebug('[Multi-Monitor] Triggering Ctrl+Shift+F5 to enter presentation mode...');
     
     try {
       // Focus the window first to ensure it receives the keyboard events
@@ -930,9 +1488,9 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
       presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
       
-      console.log('[Multi-Monitor] Ctrl+Shift+F5 sent via sendInputEvent');
+      logDebug('[Multi-Monitor] Ctrl+Shift+F5 sent via sendInputEvent');
     } catch (error) {
-      console.error('[Multi-Monitor] Error sending Ctrl+Shift+F5:', error);
+      logError('[Multi-Monitor] Error sending Ctrl+Shift+F5:', error);
     }
     
     // No auto-launch of speaker notes - user must call open-speaker-notes separately
@@ -946,7 +1504,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Listen for Escape key to close both windows
   presentationWindow.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'Escape' && input.type === 'keyDown') {
-      console.log('[Multi-Monitor] Escape pressed, closing presentation and notes windows');
+      logDebug('[Multi-Monitor] Escape pressed, closing presentation and notes windows');
       event.preventDefault(); // Prevent Google Slides from handling Escape
       if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
       if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
@@ -965,6 +1523,18 @@ let webUiServer;
 
 function startHttpServer() {
   httpServer = http.createServer(async (req, res) => {
+    // Helpful request logging for diagnosing duplicate/looping calls
+    try {
+      const ua = (req.headers && req.headers['user-agent']) ? String(req.headers['user-agent']) : '';
+      const from = (req.socket && req.socket.remoteAddress) ? String(req.socket.remoteAddress) : '';
+      if (req.method !== 'OPTIONS') {
+        // Very chatty: only emit in verbose mode
+        logDebug(`[API] ${req.method} ${req.url} from ${from}${ua ? ` ua="${ua}"` : ''}`);
+      }
+    } catch (e) {
+      // ignore logging failures
+    }
+
     // Enable CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -974,6 +1544,19 @@ function startHttpServer() {
       res.writeHead(200);
       res.end();
       return;
+    }
+
+    // Controller allowlist: restrict who can call the API
+    // If no controllerIps are configured, allow any client.
+    try {
+      const prefs = loadPreferences();
+      if (!isControllerAllowedRequest(req, prefs)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+    } catch (e) {
+      // If allowlist check fails unexpectedly, default to allowing (avoid breaking during startup)
     }
     
     // GET /api/status - Check if app is running and expose state for Companion variables/feedbacks
@@ -1014,7 +1597,8 @@ function startHttpServer() {
         
         const state = {
           status: 'ok',
-          version: '1.4.5',
+          version: appBuildInfo.version,
+          buildNumber: appBuildInfo.buildNumber,
           presentationOpen: !!(presentationWindow && !presentationWindow.isDestroyed()),
           notesOpen: !!(notesWindow && !notesWindow.isDestroyed()),
           currentSlide: currentSlide,
@@ -1186,6 +1770,14 @@ function startHttpServer() {
           const data = JSON.parse(body);
           const prefs = loadPreferences();
           
+          // Security: prevent changing controller allowlist via HTTP.
+          // This setting is only editable from the desktop app UI (IPC).
+          if (data && typeof data === 'object') {
+            delete data.controllerIps;
+            // Also desktop-only: web UI debug console gating
+            delete data.webUiDebugConsoleEnabled;
+          }
+          
           // Merge new preferences with existing ones
           Object.assign(prefs, data);
           savePreferences(prefs);
@@ -1229,7 +1821,7 @@ function startHttpServer() {
       req.on('end', async () => {
         try {
           const data = JSON.parse(body);
-          const { url } = data;
+          const url = (data.url || '').trim();
           
           if (!url) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1363,19 +1955,9 @@ function startHttpServer() {
               console.log('[API] Window destroyed before processing');
               return;
             }
-            
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
-            if (presentationWindow && !presentationWindow.isDestroyed()) {
-              console.log('[API] Triggering Ctrl+Shift+F5 for presentation mode');
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 50));
-              
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
-            }
-            
-            // No auto-launch of speaker notes - user must call /api/open-speaker-notes separately
+
+            // We now load /present directly (via toPresentUrl), so we should NOT press Ctrl+Shift+F5 here.
+            // Pressing it can cause flaky behavior (extra reloads / exits) depending on Slides state.
           });
           
           presentationWindow.on('closed', () => {
@@ -1544,39 +2126,50 @@ function startHttpServer() {
           };
           app.on('browser-window-created', windowCreatedListener);
           
-          // Navigation listener - auto-launch speaker notes when in presentation mode
-          let sKeyPressed = false;
+          // Auto-launch speaker notes reliably (some decks load fast and can miss a single 's' press).
+          // We'll retry a few times until the notes window is created.
+          let notesAttempts = 0;
+          const maxNotesAttempts = 8;
+          let notesRetryTimer = null;
+
+          const sendSpeakerNotesKey = async (reason) => {
+            if (!presentationWindow || presentationWindow.isDestroyed()) return false;
+            if (notesWindow && !notesWindow.isDestroyed()) return true;
+            if (notesAttempts >= maxNotesAttempts) return false;
+
+            notesAttempts += 1;
+            try {
+              presentationWindow.focus();
+              await new Promise(resolve => setTimeout(resolve, 80));
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+              console.log(`[API] Speaker notes attempt ${notesAttempts}/${maxNotesAttempts} (${reason}) - sent "s" key`);
+            } catch (error) {
+              console.error('[API] Error sending "s" key for speaker notes:', error);
+            }
+
+            // Schedule another attempt if notes window hasn't appeared yet
+            if (!notesWindow || notesWindow.isDestroyed()) {
+              if (notesRetryTimer) clearTimeout(notesRetryTimer);
+              notesRetryTimer = setTimeout(() => {
+                sendSpeakerNotesKey('retry');
+              }, 700);
+            }
+
+            return true;
+          };
+
           const navigationListener = async (event, navUrl) => {
-            console.log('[API] Navigated to:', navUrl);
-            
             // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
             const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('/localpresent')) && !navUrl.includes('/presentation/');
-            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              sKeyPressed = true;
-              console.log('[API] Presentation mode detected, auto-launching speaker notes...');
-              
-              // Small delay to ensure presentation mode UI is ready
-              await new Promise(resolve => setTimeout(resolve, 300));
-              
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                try {
-                  presentationWindow.focus();
-                  await new Promise(resolve => setTimeout(resolve, 50));
-                  
-                  presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-                  presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-                  presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-                  
-                  console.log('[API] "s" key sent for speaker notes');
-                } catch (error) {
-                  console.error('[API] Error sending "s" key:', error);
-                }
-                
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
+            if (isPresentMode) {
+              // Slight delay to allow the presentation UI to become interactive
+              await new Promise(resolve => setTimeout(resolve, 250));
+              await sendSpeakerNotesKey('did-navigate');
             }
           };
-          
+
           presentationWindow.webContents.on('did-navigate', navigationListener);
           
           // Listen for page load
@@ -1586,35 +2179,30 @@ function startHttpServer() {
               console.log('[API] Window destroyed before processing');
               return;
             }
-            
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
-            if (presentationWindow && !presentationWindow.isDestroyed()) {
-              console.log('[API] Triggering Ctrl+Shift+F5 for presentation mode');
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 50));
-              
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
-            }
-            
-            // Fallback: press 's' for speaker notes after delay if navigation didn't trigger it
-            setTimeout(async () => {
-              if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-                console.log('[API] Fallback: pressing "s" for speaker notes');
-                sKeyPressed = true;
-                presentationWindow.focus();
-                await new Promise(resolve => setTimeout(resolve, 50));
-                
-                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-                
+
+            // If we're NOT already in /present or /localpresent, attempt to trigger present mode.
+            // (Most of the time we load /present directly, so this will be skipped.)
+            try {
+              const loadedUrl = presentationWindow.webContents.getURL() || '';
+              const isPresentAlready = loadedUrl.includes('/present/') || loadedUrl.includes('/localpresent');
+              if (!isPresentAlready) {
+                await new Promise(resolve => setTimeout(resolve, 200));
                 if (presentationWindow && !presentationWindow.isDestroyed()) {
-                  presentationWindow.webContents.removeListener('did-navigate', navigationListener);
+                  console.log('[API] Not in present mode yet, triggering Ctrl+Shift+F5...');
+                  presentationWindow.focus();
+                  await new Promise(resolve => setTimeout(resolve, 80));
+                  presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
+                  presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
                 }
               }
-            }, 1000);
+            } catch (e) {
+              // ignore
+            }
+
+            // Always attempt notes after load (covers cases where did-navigate isn't fired as expected).
+            setTimeout(() => {
+              sendSpeakerNotesKey('did-finish-load');
+            }, 650);
           });
           
           presentationWindow.on('closed', () => {
@@ -2690,6 +3278,31 @@ function startHttpServer() {
       })();
       return;
     }
+
+    // GET /api/get-slide-previews - Get current + next slide preview images (from presenter view)
+    if (req.method === 'GET' && req.url === '/api/get-slide-previews') {
+      if (!notesWindow || notesWindow.isDestroyed()) {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        });
+        res.end(JSON.stringify({ success: false, error: 'No speaker notes window is open' }));
+        return;
+      }
+
+      (async () => {
+        try {
+          const result = await captureSlidePreviewsFromNotesWindow({ maxSize: 200 });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          console.error('[API] Error getting slide previews:', error);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: error.message }));
+        }
+      })();
+      return;
+    }
     
     // GET /api/get-stagetimer-status - Get live timer data from stagetimer.io
     if (req.method === 'GET' && req.url === '/api/get-stagetimer-status') {
@@ -3274,33 +3887,33 @@ function startHttpServer() {
       
       req.on('end', () => {
         try {
-          console.log('[API] POST /api/presets - Received body:', body);
+          logDebug('[API] POST /api/presets - Received body:', body);
           const data = JSON.parse(body);
-          console.log('[API] Parsed data:', data);
+          logDebug('[API] Parsed data:', data);
           
           const prefs = loadPreferences();
-          console.log('[API] Current preferences before update:', JSON.stringify(prefs));
+          logDebug('[API] Current preferences before update:', safeStringify(prefs));
           
           // Update presets
           if (data.presentation1 !== undefined) {
             prefs.presentation1 = data.presentation1;
-            console.log('[API] Updated presentation1:', data.presentation1);
+            logDebug('[API] Updated presentation1:', data.presentation1);
           }
           if (data.presentation2 !== undefined) {
             prefs.presentation2 = data.presentation2;
-            console.log('[API] Updated presentation2:', data.presentation2);
+            logDebug('[API] Updated presentation2:', data.presentation2);
           }
           if (data.presentation3 !== undefined) {
             prefs.presentation3 = data.presentation3;
-            console.log('[API] Updated presentation3:', data.presentation3);
+            logDebug('[API] Updated presentation3:', data.presentation3);
           }
           
-          console.log('[API] Preferences after update:', JSON.stringify(prefs));
+          logDebug('[API] Preferences after update:', safeStringify(prefs));
           savePreferences(prefs);
           
           // Verify save by reloading
           const verifyPrefs = loadPreferences();
-          console.log('[API] Verification - reloaded preferences:', JSON.stringify(verifyPrefs));
+          logDebug('[API] Verification - reloaded preferences:', safeStringify(verifyPrefs));
           
           res.writeHead(200, { 
             'Content-Type': 'application/json',
@@ -3611,6 +4224,37 @@ function startWebUiServer() {
       res.end();
       return;
     }
+
+    // Controller allowlist: restrict access to the Web UI (and its /api proxy)
+    try {
+      const prefs = loadPreferences();
+      if (!isControllerAllowedRequest(req, prefs)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
+    } catch (e) {
+      // default allow if something goes wrong
+    }
+
+    const reqPath = String(req.url || '').split('?')[0];
+
+    // Serve favicon (prevents browser 404 spam)
+    if (req.method === 'GET' && (reqPath === '/favicon.ico' || reqPath === '/favicon.png')) {
+      const png = getFaviconPngBuffer();
+      if (!png) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'image/png',
+        // Browsers cache favicons aggressively; keep it short and allow refresh.
+        'Cache-Control': 'public, max-age=300'
+      });
+      res.end(png);
+      return;
+    }
     
     // GET / - Serve the web UI
     if (req.method === 'GET' && req.url === '/') {
@@ -3618,12 +4262,12 @@ function startWebUiServer() {
       const prefs = loadPreferences();
       const apiPort = prefs.apiPort || DEFAULT_API_PORT;
       const webUiPort = prefs.webUiPort || DEFAULT_WEB_UI_PORT;
+      const webUiDebugConsoleEnabled = prefs.webUiDebugConsoleEnabled === true;
+      const hasFavicon = !!getFaviconPngBuffer();
+      const faviconHref = `/favicon.png?v=${encodeURIComponent(appBuildInfo.buildNumber || '0')}`;
       
       // Get version and build number
-      const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-      const version = packageJson.version || '1.4.5';
-      const buildNumber = packageJson.buildNumber || '1';
-      const versionString = `v${version}.${buildNumber}`;
+      const versionString = `v${appBuildInfo.version}.${appBuildInfo.buildNumber}`;
       
       // Get machine name or fallback to hostname
       // Escape HTML to prevent XSS
@@ -3640,6 +4284,7 @@ function startWebUiServer() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Google Slides Opener - Preset Manager</title>
+  ${hasFavicon ? `<link rel="icon" type="image/png" href="${faviconHref}"><link rel="shortcut icon" href="${faviconHref}">` : ``}
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -3672,8 +4317,19 @@ function startWebUiServer() {
         padding: 16px 20px;
       }
     }
-    body.notes-visible .container {
+    body.notes-visible .container,
+    body.previews-visible .container {
       max-width: 85%;
+    }
+    body.notes-visible .container,
+    body.previews-visible .container {
+      padding: 24px 28px;
+    }
+    @media (max-width: 768px) {
+      body.notes-visible .container,
+      body.previews-visible .container {
+        padding: 12px 14px;
+      }
     }
     h1 {
       color: #333;
@@ -3687,7 +4343,8 @@ function startWebUiServer() {
       align-items: center;
       gap: 12px;
     }
-    body.notes-visible h1 {
+    body.notes-visible h1,
+    body.previews-visible h1 {
       font-size: 20px;
       padding-top: 4px;
       padding-bottom: 4px;
@@ -3698,7 +4355,8 @@ function startWebUiServer() {
       color: #667eea;
       flex-shrink: 0;
     }
-    body.notes-visible .system-icon {
+    body.notes-visible .system-icon,
+    body.previews-visible .system-icon {
       width: 24px;
       height: 24px;
     }
@@ -3856,7 +4514,8 @@ function startWebUiServer() {
       border-bottom: 2px solid #e0e0e0;
       transition: all 0.3s;
     }
-    body.notes-visible .tabs {
+    body.notes-visible .tabs,
+    body.previews-visible .tabs {
       margin-bottom: 12px;
       border-bottom-width: 1px;
     }
@@ -3872,7 +4531,8 @@ function startWebUiServer() {
       transition: all 0.3s;
       margin-bottom: -2px;
     }
-    body.notes-visible .tab-btn {
+    body.notes-visible .tab-btn,
+    body.previews-visible .tab-btn {
       padding: 8px 16px;
       font-size: 13px;
       border-bottom-width: 2px;
@@ -3942,12 +4602,35 @@ function startWebUiServer() {
       padding-bottom: 12px;
       border-bottom: 2px solid #e0e0e0;
     }
+    body.notes-visible .remote-header,
+    body.previews-visible .remote-header {
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom-width: 1px;
+    }
     .remote-header h2 {
       margin: 0;
       font-size: 20px;
       color: #333;
     }
+    body.notes-visible .remote-header h2,
+    body.previews-visible .remote-header h2 {
+      font-size: 16px;
+    }
     .notes-toggle-btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .preview-toggle-btn {
       background: #667eea;
       color: white;
       border: none;
@@ -3963,10 +4646,20 @@ function startWebUiServer() {
     .notes-toggle-btn:hover {
       background: #5568d3;
     }
+    .preview-toggle-btn:hover {
+      background: #5568d3;
+    }
     .notes-toggle-btn.active {
       background: #764ba2;
     }
+    .preview-toggle-btn.active {
+      background: #764ba2;
+    }
     .notes-toggle-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+    .preview-toggle-btn svg {
       width: 18px;
       height: 18px;
     }
@@ -3978,6 +4671,9 @@ function startWebUiServer() {
       transition: all 0.3s;
     }
     .remote-controls.with-notes {
+      gap: 20px;
+    }
+    .remote-controls.with-panel {
       gap: 20px;
     }
     .remote-btn {
@@ -3995,7 +4691,8 @@ function startWebUiServer() {
       gap: 12px;
       min-height: 120px;
     }
-    .remote-controls.with-notes .remote-btn {
+    .remote-controls.with-notes .remote-btn,
+    .remote-controls.with-panel .remote-btn {
       padding: 20px 16px;
       font-size: 18px;
       min-height: 70px;
@@ -4024,7 +4721,8 @@ function startWebUiServer() {
       height: 32px;
       transition: all 0.3s;
     }
-    .remote-controls.with-notes .remote-btn svg {
+    .remote-controls.with-notes .remote-btn svg,
+    .remote-controls.with-panel .remote-btn svg {
       width: 24px;
       height: 24px;
     }
@@ -4036,6 +4734,58 @@ function startWebUiServer() {
     }
     .speaker-notes-container.visible {
       display: block;
+    }
+
+    /* Slide previews display (current + next) */
+    .slide-previews-container {
+      display: none;
+      margin-top: 12px;
+      transition: all 0.3s;
+    }
+    .slide-previews-container.visible {
+      display: block;
+    }
+    .slide-previews-grid {
+      background: #f8f9fa;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: center;
+    }
+    .slide-preview-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+      width: min(220px, 45vw);
+    }
+    .slide-preview-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #444;
+      text-align: center;
+    }
+    .slide-preview-img {
+      width: 100%;
+      max-width: 200px;
+      height: auto;
+      max-height: 200px;
+      border-radius: 10px;
+      border: 1px solid #ddd;
+      background: white;
+      object-fit: contain;
+    }
+    .slide-preview-img.empty {
+      opacity: 0.18;
+      background:
+        linear-gradient(45deg, rgba(0,0,0,0.06) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.06) 75%, rgba(0,0,0,0.06)),
+        linear-gradient(45deg, rgba(0,0,0,0.06) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.06) 75%, rgba(0,0,0,0.06));
+      background-position: 0 0, 10px 10px;
+      background-size: 20px 20px;
     }
     .speaker-notes-content-wrapper {
       background: #f8f9fa;
@@ -4226,12 +4976,22 @@ function startWebUiServer() {
     <div id="tab-remote" class="tab-content active">
       <div class="remote-header">
         <h2>Remote Control</h2>
-        <button type="button" class="notes-toggle-btn" id="notes-toggle-btn" title="Toggle speaker notes">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-          </svg>
-          Notes
-        </button>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <button type="button" class="notes-toggle-btn" id="notes-toggle-btn" title="Toggle speaker notes">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+            Notes
+          </button>
+          <button type="button" class="preview-toggle-btn" id="previews-toggle-btn" title="Toggle slide previews">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="8" height="8" rx="1"></rect>
+              <rect x="13" y="4" width="8" height="8" rx="1"></rect>
+              <rect x="3" y="14" width="18" height="6" rx="1"></rect>
+            </svg>
+            Previews
+          </button>
+        </div>
       </div>
       <div class="stagetimer-container disabled" id="stagetimer-container" style="display: none;">
         <div class="stagetimer-label" id="stagetimer-label">Stage Timer</div>
@@ -4253,6 +5013,19 @@ function startWebUiServer() {
           </svg>
         </button>
       </div>
+      <div class="slide-previews-container" id="slide-previews-container">
+        <div class="slide-previews-grid">
+          <div class="slide-preview-card">
+            <div class="slide-preview-label" id="slide-preview-current-label">Current Slide</div>
+            <img class="slide-preview-img empty" id="slide-preview-current-img" alt="Current slide preview" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+          </div>
+          <div class="slide-preview-card">
+            <div class="slide-preview-label" id="slide-preview-next-label">Next Slide</div>
+            <img class="slide-preview-img empty" id="slide-preview-next-img" alt="Next slide preview" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+          </div>
+        </div>
+      </div>
+
       <div class="speaker-notes-container" id="speaker-notes-container">
         <div class="notes-zoom-controls" id="notes-zoom-controls">
           <button type="button" class="notes-zoom-btn" id="notes-zoom-out">Zoom Out</button>
@@ -4425,27 +5198,10 @@ function startWebUiServer() {
           </div>
           
           <div class="preset-group">
-            <label for="web-backup-ip-1">Backup Machine 1 IP Address</label>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <input type="text" id="web-backup-ip-1" class="input-field" placeholder="192.168.1.100" style="flex: 1;" />
-              <span id="web-backup-status-1" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center; background: transparent; color: #888;">-</span>
-            </div>
-          </div>
-          
-          <div class="preset-group">
-            <label for="web-backup-ip-2">Backup Machine 2 IP Address (Optional)</label>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <input type="text" id="web-backup-ip-2" class="input-field" placeholder="192.168.1.101" style="flex: 1;" />
-              <span id="web-backup-status-2" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center; background: transparent; color: #888;">-</span>
-            </div>
-          </div>
-          
-          <div class="preset-group">
-            <label for="web-backup-ip-3">Backup Machine 3 IP Address (Optional)</label>
-            <div style="display: flex; gap: 10px; align-items: center;">
-              <input type="text" id="web-backup-ip-3" class="input-field" placeholder="192.168.1.102" style="flex: 1;" />
-              <span id="web-backup-status-3" style="font-size: 12px; padding: 4px 8px; border-radius: 4px; min-width: 80px; text-align: center; background: transparent; color: #888;">-</span>
-            </div>
+            <label>Backup Machines</label>
+            <div id="web-backup-ip-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+            <button type="button" class="btn btn-secondary" id="web-add-backup-ip" style="margin-top: 10px;">+ Add backup machine</button>
+            <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Enter an IP address or hostname for each backup. Supports any number of backups.</small>
           </div>
         </div>
         
@@ -4527,7 +5283,24 @@ function startWebUiServer() {
         <button type="button" class="btn btn-secondary" id="btn-load-stagetimer" style="margin-top: 8px;">Load Current Settings</button>
       </div>
       
-      <!-- Debug Console -->
+      <!-- Logging Section -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>Logging</h3>
+        <div class="info" style="margin-bottom: 10px;">
+          Control how much the app writes to its terminal logs.
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+          <input type="checkbox" id="web-verbose-logging" style="width: auto;" />
+          <label for="web-verbose-logging" style="margin: 0; font-weight: normal;">Enable verbose logging</label>
+        </div>
+        <small style="display: block; margin-top: 6px; color: #888; font-size: 12px;">
+          Verbose logs help debugging. Secrets (API keys/tokens/passwords) are always redacted from logs.
+        </small>
+        <button type="button" class="btn" id="btn-save-logging" style="margin-top: 12px;">Save Logging Settings</button>
+      </div>
+      
+      ${webUiDebugConsoleEnabled ? `
+      <!-- Debug Console (enabled from desktop app) -->
       <div class="controls-section" style="margin-top: 40px;">
         <h3>Debug Console</h3>
         <div class="info" style="margin-bottom: 10px;">
@@ -4538,6 +5311,7 @@ function startWebUiServer() {
         </div>
         <button type="button" class="btn btn-secondary" id="btn-clear-console" style="margin-top: 8px;">Clear Console</button>
       </div>
+      ` : ``}
     </div>
     
     <div id="status" class="status"></div>
@@ -4677,6 +5451,7 @@ function startWebUiServer() {
     // Speaker notes functionality
     let notesVisible = false;
     let notesZoomLevel = 1; // Numeric zoom level (1 = normal, can go up/down continuously)
+    let previewsVisible = false;
     
     function loadSpeakerNotes() {
       fetch(API_BASE + '/api/get-speaker-notes')
@@ -4693,6 +5468,90 @@ function startWebUiServer() {
           console.error('Failed to load speaker notes:', err);
           document.getElementById('speaker-notes-content').textContent = 'Failed to load notes.';
         });
+    }
+
+    function loadSlidePreviews() {
+      fetch(API_BASE + '/api/get-slide-previews')
+        .then(res => res.json())
+        .then(data => {
+          const currentImg = document.getElementById('slide-preview-current-img');
+          const nextImg = document.getElementById('slide-preview-next-img');
+          const currentLabel = document.getElementById('slide-preview-current-label');
+          const nextLabel = document.getElementById('slide-preview-next-label');
+          const placeholderSrc = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+
+          if (!data || !data.success) {
+            const msg = (data && data.error) ? data.error : 'Previews unavailable';
+            currentLabel.textContent = 'Current Slide (preview unavailable)';
+            nextLabel.textContent = 'Next Slide (preview unavailable)';
+            if (currentImg) {
+              currentImg.src = placeholderSrc;
+              currentImg.classList.add('empty');
+            }
+            if (nextImg) {
+              nextImg.src = placeholderSrc;
+              nextImg.classList.add('empty');
+            }
+            console.debug('[Web UI] Slide previews unavailable:', msg);
+            return;
+          }
+
+          const curNum = data.currentSlide;
+          const nextNum = data.nextSlide;
+
+          currentLabel.textContent = (curNum ? ('Current Slide (' + curNum + ')') : 'Current Slide');
+          nextLabel.textContent = (nextNum ? ('Next Slide (' + nextNum + ')') : 'Next Slide');
+
+          if (currentImg && data.current && typeof data.current.dataUrl === 'string' && data.current.dataUrl.startsWith('data:image/')) {
+            currentImg.src = data.current.dataUrl;
+            currentImg.classList.remove('empty');
+          }
+          if (nextImg && data.next && typeof data.next.dataUrl === 'string' && data.next.dataUrl.startsWith('data:image/')) {
+            nextImg.src = data.next.dataUrl;
+            nextImg.classList.remove('empty');
+          }
+        })
+        .catch(err => {
+          console.debug('[Web UI] Failed to load slide previews:', err.message);
+        });
+    }
+
+    function closeNotesUi() {
+      const btn = document.getElementById('notes-toggle-btn');
+      const container = document.getElementById('speaker-notes-container');
+      const controls = document.getElementById('remote-controls');
+      const zoomControls = document.getElementById('notes-zoom-controls');
+      const body = document.body;
+
+      notesVisible = false;
+      if (btn) btn.classList.remove('active');
+      if (container) container.classList.remove('visible');
+      if (zoomControls) zoomControls.classList.remove('visible');
+      if (controls) controls.classList.remove('with-notes');
+      body.classList.remove('notes-visible');
+
+      if (window.notesRefreshInterval) {
+        clearInterval(window.notesRefreshInterval);
+        window.notesRefreshInterval = null;
+      }
+    }
+
+    function closePreviewsUi() {
+      const btn = document.getElementById('previews-toggle-btn');
+      const container = document.getElementById('slide-previews-container');
+      const controls = document.getElementById('remote-controls');
+      const body = document.body;
+
+      previewsVisible = false;
+      if (btn) btn.classList.remove('active');
+      if (container) container.classList.remove('visible');
+      if (controls) controls.classList.remove('with-panel');
+      body.classList.remove('previews-visible');
+
+      if (window.previewsRefreshInterval) {
+        clearInterval(window.previewsRefreshInterval);
+        window.previewsRefreshInterval = null;
+      }
     }
     
     function updateNotesZoom() {
@@ -4725,6 +5584,8 @@ function startWebUiServer() {
                   btn.classList.add('active');
                   container.classList.add('visible');
                   controls.classList.add('with-notes');
+                  // If previews are already open, keep compact layout class too
+                  if (previewsVisible) controls.classList.add('with-panel');
                   zoomControls.classList.add('visible');
                   body.classList.add('notes-visible');
                   loadSpeakerNotes();
@@ -4739,6 +5600,7 @@ function startWebUiServer() {
               btn.classList.add('active');
               container.classList.add('visible');
               controls.classList.add('with-notes');
+              if (previewsVisible) controls.classList.add('with-panel');
               zoomControls.classList.add('visible');
               body.classList.add('notes-visible');
               loadSpeakerNotes();
@@ -4756,6 +5618,7 @@ function startWebUiServer() {
                 btn.classList.add('active');
                 container.classList.add('visible');
                 controls.classList.add('with-notes');
+                if (previewsVisible) controls.classList.add('with-panel');
                 zoomControls.classList.add('visible');
                 body.classList.add('notes-visible');
                 loadSpeakerNotes();
@@ -4766,16 +5629,68 @@ function startWebUiServer() {
           });
       } else {
         // Closing notes
-        notesVisible = false;
-        btn.classList.remove('active');
-        container.classList.remove('visible');
-        controls.classList.remove('with-notes');
-        zoomControls.classList.remove('visible');
-        body.classList.remove('notes-visible');
-        if (window.notesRefreshInterval) {
-          clearInterval(window.notesRefreshInterval);
-          window.notesRefreshInterval = null;
-        }
+        closeNotesUi();
+      }
+    });
+
+    document.getElementById('previews-toggle-btn').addEventListener('click', () => {
+      const btn = document.getElementById('previews-toggle-btn');
+      const container = document.getElementById('slide-previews-container');
+      const controls = document.getElementById('remote-controls');
+      const body = document.body;
+
+      if (!previewsVisible) {
+        // Opening previews - requires the speaker notes window (Presenter View) to be open
+        fetch(API_BASE + '/api/get-slide-previews')
+          .then(res => res.json())
+          .then(data => {
+            if (!data.success && data.error && data.error.includes('No speaker notes window')) {
+              console.log('[Web UI] Speaker notes not open, opening them first for previews...');
+              return apiCall('/api/open-speaker-notes').then(() => {
+                setTimeout(() => {
+                  previewsVisible = true;
+                  btn.classList.add('active');
+                  container.classList.add('visible');
+                  controls.classList.add('with-panel');
+                  // If notes are already open, keep compact layout class too
+                  if (notesVisible) controls.classList.add('with-notes');
+                  body.classList.add('previews-visible');
+                  loadSlidePreviews();
+                  if (window.previewsRefreshInterval) clearInterval(window.previewsRefreshInterval);
+                  window.previewsRefreshInterval = setInterval(loadSlidePreviews, 2000);
+                }, 1000);
+              });
+            }
+
+            // Notes window exists, show previews UI
+            previewsVisible = true;
+            btn.classList.add('active');
+            container.classList.add('visible');
+            controls.classList.add('with-panel');
+            if (notesVisible) controls.classList.add('with-notes');
+            body.classList.add('previews-visible');
+            loadSlidePreviews();
+            if (window.previewsRefreshInterval) clearInterval(window.previewsRefreshInterval);
+            window.previewsRefreshInterval = setInterval(loadSlidePreviews, 2000);
+          })
+          .catch(err => {
+            console.error('[Web UI] Error checking/opening slide previews:', err);
+            apiCall('/api/open-speaker-notes').then(() => {
+              setTimeout(() => {
+                previewsVisible = true;
+                btn.classList.add('active');
+                container.classList.add('visible');
+                controls.classList.add('with-panel');
+                if (notesVisible) controls.classList.add('with-notes');
+                body.classList.add('previews-visible');
+                loadSlidePreviews();
+                if (window.previewsRefreshInterval) clearInterval(window.previewsRefreshInterval);
+                window.previewsRefreshInterval = setInterval(loadSlidePreviews, 2000);
+              }, 1000);
+            });
+          });
+      } else {
+        closePreviewsUi();
       }
     });
     
@@ -4804,6 +5719,10 @@ function startWebUiServer() {
         if (notesVisible) {
           loadSpeakerNotes();
         }
+        // Refresh previews after slide change
+        if (previewsVisible) {
+          loadSlidePreviews();
+        }
         // Update slide button text
         updateSlideButtons();
       });
@@ -4815,6 +5734,10 @@ function startWebUiServer() {
         // Refresh notes after slide change
         if (notesVisible) {
           loadSpeakerNotes();
+        }
+        // Refresh previews after slide change
+        if (previewsVisible) {
+          loadSlidePreviews();
         }
         // Update slide button text
         updateSlideButtons();
@@ -5071,6 +5994,14 @@ function startWebUiServer() {
       if (slideUpdateInterval) {
         clearInterval(slideUpdateInterval);
       }
+      if (window.notesRefreshInterval) {
+        clearInterval(window.notesRefreshInterval);
+        window.notesRefreshInterval = null;
+      }
+      if (window.previewsRefreshInterval) {
+        clearInterval(window.previewsRefreshInterval);
+        window.previewsRefreshInterval = null;
+      }
     });
     
     // Load button
@@ -5188,6 +6119,11 @@ function startWebUiServer() {
       const statusEl = document.getElementById('stagetimer-status');
       const messagesEl = document.getElementById('stagetimer-messages');
       
+      // Ensure we never "perma-hide" messages via inline styles
+      if (messagesEl && messagesEl.style) {
+        messagesEl.style.removeProperty('display');
+      }
+      
       // Check visibility and configuration
       updateStagetimerVisibility();
       
@@ -5209,8 +6145,10 @@ function startWebUiServer() {
         labelEl.textContent = data?.timerName || ''; // Still try to show timer name if available
         timeEl.textContent = '--:--';
         statusEl.textContent = errorMessage || 'Error loading timer';
-        messagesEl.style.display = 'none';
-        messagesEl.innerHTML = '';
+        if (messagesEl) {
+          messagesEl.innerHTML = '';
+          messagesEl.classList.remove('visible');
+        }
         return;
       }
       
@@ -5245,6 +6183,7 @@ function startWebUiServer() {
       console.log('[Stagetimer Display] Updating display, messages:', data.messages);
       if (data.messages && data.messages.length > 0) {
         console.log('[Stagetimer Display] Showing', data.messages.length, 'messages');
+        if (!messagesEl) return;
         messagesEl.innerHTML = '';
         data.messages.forEach((msg, index) => {
           console.log('[Stagetimer Display] Message', index + ':', msg);
@@ -5258,8 +6197,10 @@ function startWebUiServer() {
         messagesEl.classList.add('visible');
       } else {
         console.log('[Stagetimer Display] No messages to display');
-        messagesEl.innerHTML = '';
-        messagesEl.classList.remove('visible');
+        if (messagesEl) {
+          messagesEl.innerHTML = '';
+          messagesEl.classList.remove('visible');
+        }
       }
     }
     
@@ -5599,57 +6540,60 @@ function startWebUiServer() {
       }
     }
     
-    // Debug console functionality
-    const debugConsole = document.getElementById('debug-console');
-    const originalConsoleLog = console.log;
-    const originalConsoleError = console.error;
-    const originalConsoleWarn = console.warn;
-    
-    function addToDebugConsole(message, type = 'log') {
-      const timestamp = new Date().toLocaleTimeString();
-      const color = type === 'error' ? '#f44336' : type === 'warn' ? '#ff9800' : '#4caf50';
-      const prefix = type === 'error' ? '[ERROR]' : type === 'warn' ? '[WARN]' : '[LOG]';
-      
-      const logEntry = document.createElement('div');
-      logEntry.style.marginBottom = '4px';
-      logEntry.style.color = color;
-      logEntry.innerHTML = '<span style="color: #888;">[' + timestamp + ']</span> ' + prefix + ' ' + message;
-      
-      // Remove "Console ready" message if it exists
-      const readyMsg = debugConsole.querySelector('div[style*="color: #888"]');
-      if (readyMsg && readyMsg.textContent.includes('Console ready')) {
-        readyMsg.remove();
-      }
-      
-      debugConsole.appendChild(logEntry);
-      debugConsole.scrollTop = debugConsole.scrollHeight;
-      
-      // Keep only last 100 entries
-      while (debugConsole.children.length > 100) {
-        debugConsole.removeChild(debugConsole.firstChild);
+    if (${webUiDebugConsoleEnabled ? 'true' : 'false'}) {
+      // Debug console functionality (enabled from desktop app)
+      const debugConsole = document.getElementById('debug-console');
+      if (debugConsole) {
+        const originalConsoleLog = console.log;
+        const originalConsoleError = console.error;
+        const originalConsoleWarn = console.warn;
+        
+        function addToDebugConsole(message, type = 'log') {
+          const timestamp = new Date().toLocaleTimeString();
+          const color = type === 'error' ? '#f44336' : type === 'warn' ? '#ff9800' : '#4caf50';
+          const prefix = type === 'error' ? '[ERROR]' : type === 'warn' ? '[WARN]' : '[LOG]';
+          
+          const logEntry = document.createElement('div');
+          logEntry.style.marginBottom = '4px';
+          logEntry.style.color = color;
+          logEntry.innerHTML = '<span style="color: #888;">[' + timestamp + ']</span> ' + prefix + ' ' + message;
+          
+          const readyMsg = debugConsole.querySelector('div[style*="color: #888"]');
+          if (readyMsg && readyMsg.textContent.includes('Console ready')) {
+            readyMsg.remove();
+          }
+          
+          debugConsole.appendChild(logEntry);
+          debugConsole.scrollTop = debugConsole.scrollHeight;
+          
+          while (debugConsole.children.length > 100) {
+            debugConsole.removeChild(debugConsole.firstChild);
+          }
+        }
+        
+        console.log = function(...args) {
+          originalConsoleLog.apply(console, arguments);
+          addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'log');
+        };
+        
+        console.error = function(...args) {
+          originalConsoleError.apply(console, arguments);
+          addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'error');
+        };
+        
+        console.warn = function(...args) {
+          originalConsoleWarn.apply(console, arguments);
+          addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'warn');
+        };
+        
+        const clearBtn = document.getElementById('btn-clear-console');
+        if (clearBtn) {
+          clearBtn.addEventListener('click', () => {
+            debugConsole.innerHTML = '<div style="color: #888;">Console cleared...</div>';
+          });
+        }
       }
     }
-    
-    // Override console methods to also log to debug console
-    console.log = function(...args) {
-      originalConsoleLog.apply(console, arguments);
-      addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'log');
-    };
-    
-    console.error = function(...args) {
-      originalConsoleError.apply(console, arguments);
-      addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'error');
-    };
-    
-    console.warn = function(...args) {
-      originalConsoleWarn.apply(console, arguments);
-      addToDebugConsole(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)).join(' '), 'warn');
-    };
-    
-    // Clear console button
-    document.getElementById('btn-clear-console').addEventListener('click', () => {
-      debugConsole.innerHTML = '<div style="color: #888;">Console cleared...</div>';
-    });
     
     // Load stagetimer settings on page load
     loadStagetimerSettings();
@@ -5674,6 +6618,157 @@ function startWebUiServer() {
     }
     
     // Function to load all settings
+    let webBackupStatusByIp = {};
+    let webBackupHandlersAttached = false;
+
+    function normalizeWebBackupIps(ips) {
+      if (!Array.isArray(ips)) return [];
+      const out = [];
+      const seen = new Set();
+      ips.forEach((raw) => {
+        const v = String(raw || '').trim();
+        if (!v) return;
+        if (seen.has(v)) return;
+        seen.add(v);
+        out.push(v);
+      });
+      return out;
+    }
+
+    function getWebBackupIpListEl() {
+      return document.getElementById('web-backup-ip-list');
+    }
+
+    function getWebBackupIpInputs() {
+      const list = getWebBackupIpListEl();
+      if (!list) return [];
+      return Array.from(list.querySelectorAll('input[data-web-backup-ip="true"]'));
+    }
+
+    function getWebBackupIpsFromUi() {
+      return normalizeWebBackupIps(getWebBackupIpInputs().map((el) => String(el.value || '').trim()));
+    }
+
+    function setWebBackupStatusBadge(el, ip) {
+      if (!el) return;
+      const v = String(ip || '').trim();
+      const status = v ? webBackupStatusByIp[v] : null;
+
+      if (!v) {
+        el.textContent = '-';
+        el.style.background = 'transparent';
+        el.style.color = '#888';
+        return;
+      }
+      if (status === 'connected') {
+        el.textContent = 'Connected';
+        el.style.background = '#4caf50';
+        el.style.color = 'white';
+        return;
+      }
+      if (status === 'disconnected') {
+        el.textContent = 'Disconnected';
+        el.style.background = '#f44336';
+        el.style.color = 'white';
+        return;
+      }
+      el.textContent = 'Checking...';
+      el.style.background = '#ff9800';
+      el.style.color = 'white';
+    }
+
+    function refreshWebBackupStatusBadges() {
+      const list = getWebBackupIpListEl();
+      if (!list) return;
+      const rows = Array.from(list.querySelectorAll('[data-web-backup-row="true"]'));
+      rows.forEach((row) => {
+        const input = row.querySelector('input[data-web-backup-ip="true"]');
+        const badge = row.querySelector('span[data-web-backup-status="true"]');
+        setWebBackupStatusBadge(badge, input ? input.value : '');
+      });
+    }
+
+    function addWebBackupIpRow(initialValue = '') {
+      const list = getWebBackupIpListEl();
+      if (!list) return;
+
+      const row = document.createElement('div');
+      row.setAttribute('data-web-backup-row', 'true');
+      row.style.display = 'flex';
+      row.style.gap = '10px';
+      row.style.alignItems = 'center';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'input-field';
+      input.placeholder = '192.168.1.100';
+      input.value = initialValue || '';
+      input.setAttribute('data-web-backup-ip', 'true');
+      input.style.flex = '1';
+
+      const badge = document.createElement('span');
+      badge.setAttribute('data-web-backup-status', 'true');
+      badge.style.fontSize = '12px';
+      badge.style.padding = '4px 8px';
+      badge.style.borderRadius = '4px';
+      badge.style.minWidth = '90px';
+      badge.style.textAlign = 'center';
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn btn-secondary';
+      removeBtn.textContent = 'Remove';
+      removeBtn.style.padding = '8px 10px';
+      removeBtn.style.minWidth = '88px';
+
+      removeBtn.addEventListener('click', () => {
+        const rows = list.querySelectorAll('[data-web-backup-row="true"]');
+        if (rows.length <= 1) {
+          input.value = '';
+          refreshWebBackupStatusBadges();
+          return;
+        }
+        row.remove();
+        refreshWebBackupStatusBadges();
+      });
+
+      input.addEventListener('change', () => {
+        refreshWebBackupStatusBadges();
+      });
+
+      row.appendChild(input);
+      row.appendChild(badge);
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+
+      setWebBackupStatusBadge(badge, input.value);
+    }
+
+    function renderWebBackupIpList(ips = []) {
+      const list = getWebBackupIpListEl();
+      if (!list) return;
+      list.innerHTML = '';
+      const normalized = Array.isArray(ips) ? ips.map(v => String(v || '')) : [];
+      if (normalized.length === 0) {
+        addWebBackupIpRow('');
+        return;
+      }
+      normalized.forEach((ip) => addWebBackupIpRow(ip));
+    }
+
+    function attachWebBackupHandlersOnce() {
+      if (webBackupHandlersAttached) return;
+      webBackupHandlersAttached = true;
+      const addBtn = document.getElementById('web-add-backup-ip');
+      if (addBtn) {
+        addBtn.addEventListener('click', () => {
+          addWebBackupIpRow('');
+          const inputs = getWebBackupIpInputs();
+          if (inputs.length) inputs[inputs.length - 1].focus();
+        });
+      }
+    }
+
     async function loadAllSettings() {
       try {
         // Load displays
@@ -5726,18 +6821,23 @@ function startWebUiServer() {
           backupConfig.style.display = 'none';
         }
         
-        // Set backup configuration
+        // Set backup configuration (unlimited). Fallback to legacy fields if present.
         document.getElementById('web-backup-port').value = prefs.backupPort || '9595';
-        document.getElementById('web-backup-ip-1').value = prefs.backupIp1 || '';
-        document.getElementById('web-backup-ip-2').value = prefs.backupIp2 || '';
-        document.getElementById('web-backup-ip-3').value = prefs.backupIp3 || '';
-        
-        // Update backup status indicators
-        updateWebBackupStatusIndicators(prefs);
+        const legacyIps = [prefs.backupIp1, prefs.backupIp2, prefs.backupIp3].filter(v => v && String(v).trim() !== '');
+        const backupIps = Array.isArray(prefs.backupIps) ? prefs.backupIps : legacyIps;
+        attachWebBackupHandlersOnce();
+        renderWebBackupIpList(backupIps);
+        refreshWebBackupStatusBadges();
         
         // Set network ports
         document.getElementById('web-api-port').value = prefs.apiPort || '9595';
         document.getElementById('web-web-ui-port').value = prefs.webUiPort || '80';
+        
+        // Set logging preferences
+        const verboseEl = document.getElementById('web-verbose-logging');
+        if (verboseEl) {
+          verboseEl.checked = prefs.verboseLogging === true;
+        }
         
         // Set up primary/backup mode change handlers
         document.getElementById('web-mode-primary').addEventListener('change', () => {
@@ -5835,13 +6935,11 @@ function startWebUiServer() {
           return;
         }
         
-        const prefs = {
-          primaryBackupMode: mode,
-          backupPort: mode === 'primary' ? backupPort : null,
-          backupIp1: mode === 'primary' ? document.getElementById('web-backup-ip-1').value.trim() : null,
-          backupIp2: mode === 'primary' ? document.getElementById('web-backup-ip-2').value.trim() : null,
-          backupIp3: mode === 'primary' ? document.getElementById('web-backup-ip-3').value.trim() : null
-        };
+        const prefs = { primaryBackupMode: mode };
+        if (mode === 'primary') {
+          prefs.backupPort = backupPort;
+          prefs.backupIps = getWebBackupIpsFromUi();
+        }
         
         const res = await fetch(API_BASE + '/api/preferences', {
           method: 'POST',
@@ -5905,6 +7003,33 @@ function startWebUiServer() {
       }
     });
     
+    // Save logging settings
+    const saveLoggingBtn = document.getElementById('btn-save-logging');
+    if (saveLoggingBtn) {
+      saveLoggingBtn.addEventListener('click', async () => {
+        try {
+          const prefs = {
+            verboseLogging: document.getElementById('web-verbose-logging').checked === true
+          };
+          
+          const res = await fetch(API_BASE + '/api/preferences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(prefs)
+          });
+          
+          const result = await res.json();
+          if (result.success) {
+            showStatus('Logging settings saved', false);
+          } else {
+            showStatus('Failed to save logging settings: ' + (result.error || 'Unknown error'), true);
+          }
+        } catch (error) {
+          showStatus('Failed to save logging settings: ' + error.message, true);
+        }
+      });
+    }
+    
     // Backup status polling
     let webBackupStatusInterval = null;
     
@@ -5929,48 +7054,20 @@ function startWebUiServer() {
           throw new Error('Failed to fetch backup status');
         }
         const data = await response.json();
-        
-        // Update status indicators
-        const prefsRes = await fetch(API_BASE + '/api/preferences');
-        const prefs = await prefsRes.json();
-        prefs.backupStatus1 = data.backup1?.status || null;
-        prefs.backupStatus2 = data.backup2?.status || null;
-        prefs.backupStatus3 = data.backup3?.status || null;
-        
-        updateWebBackupStatusIndicators(prefs);
+
+        // Normalize into { ip -> status } and refresh the badges
+        webBackupStatusByIp = {};
+        if (data && Array.isArray(data.backups)) {
+          data.backups.forEach((b) => {
+            const ip = String(b?.ip || '').trim();
+            if (!ip) return;
+            webBackupStatusByIp[ip] = b?.status || null;
+          });
+        }
+        refreshWebBackupStatusBadges();
       } catch (error) {
         console.error('Failed to update backup status:', error);
       }
-    }
-    
-    function updateWebBackupStatusIndicators(prefs) {
-      const statuses = [
-        { element: document.getElementById('web-backup-status-1'), ip: prefs.backupIp1, status: prefs.backupStatus1 },
-        { element: document.getElementById('web-backup-status-2'), ip: prefs.backupIp2, status: prefs.backupStatus2 },
-        { element: document.getElementById('web-backup-status-3'), ip: prefs.backupIp3, status: prefs.backupStatus3 }
-      ];
-      
-      statuses.forEach(({ element, ip, status }) => {
-        if (!element) return;
-        
-        if (!ip || ip.trim() === '') {
-          element.textContent = '-';
-          element.style.background = 'transparent';
-          element.style.color = '#888';
-        } else if (status === 'connected') {
-          element.textContent = 'Connected';
-          element.style.background = '#4caf50';
-          element.style.color = 'white';
-        } else if (status === 'disconnected') {
-          element.textContent = 'Disconnected';
-          element.style.background = '#f44336';
-          element.style.color = 'white';
-        } else {
-          element.textContent = 'Checking...';
-          element.style.background = '#ff9800';
-          element.style.color = 'white';
-        }
-      });
     }
     
     // Update visibility in real-time when settings change

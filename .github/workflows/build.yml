@@ -26,11 +26,31 @@ jobs:
       
       - name: Clean up problematic Icon files
         run: |
-          git ls-files | grep -i "Icon" | while read file; do
-            if [ -f "$file" ] || [ -d "$file" ]; then
-              git rm --cached "$file" 2>/dev/null || true
-            fi
-          done || true
+          # Some repos can accidentally contain a macOS Finder icon file named "Icon" with a carriage return ("Icon\r"),
+          # which breaks checkout/builds on some runners. Remove ONLY those problematic paths.
+          python3 - <<'PY'
+          import os
+          import subprocess
+          
+          out = subprocess.check_output(["git", "ls-files", "-z"])
+          paths = out.decode("utf-8", "surrogateescape").split("\0")
+          
+          bad = []
+          for p in paths:
+            if not p:
+              continue
+            base = os.path.basename(p)
+            # Typical problematic cases: "Icon" or "Icon\r" (Finder)
+            if "\r" in p or base == "Icon" or base == "Icon\r":
+              # Never remove our app icon assets
+              if p.startswith("build/icon."):
+                continue
+              bad.append(p)
+          
+          if bad:
+            for p in bad:
+              subprocess.run(["git", "rm", "--cached", p], check=False)
+          PY
       
       - name: Setup Node.js
         uses: actions/setup-node@v4

@@ -10,5 +10,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPreferences: () => ipcRenderer.invoke('get-preferences'),
   savePreferences: (prefs) => ipcRenderer.invoke('save-preferences', prefs),
   getNetworkInfo: () => ipcRenderer.invoke('get-network-info'),
-  getBuildInfo: () => ipcRenderer.invoke('get-build-info')
+  getBuildInfo: () => ipcRenderer.invoke('get-build-info'),
+
+  // Debug logs (desktop UI)
+  getLogBuffer: () => ipcRenderer.invoke('get-log-buffer'),
+  clearLogBuffer: () => ipcRenderer.invoke('clear-log-buffer'),
+  exportLogBuffer: () => ipcRenderer.invoke('export-log-buffer'),
+  onLogLine: (callback) => {
+    if (typeof callback !== 'function') return;
+    ipcRenderer.on('app-log-line', (_event, line) => callback(line));
+  }
 });

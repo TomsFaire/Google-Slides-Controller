@@ -586,8 +586,8 @@ function loadPreferences() {
       // Normalize/migrate preferences in-memory (do not write here; loadPreferences is called often)
       // Primary/Backup migration: support both legacy backupIp1/2/3 and new backupIps[]
       prefs.backupIps = getBackupIpsFromPrefs(prefs);
-      // Controller allowlist normalization
       prefs.controllerIps = getControllerIpsFromPrefs(prefs);
+      prefs.presetUrls = getPresetUrlsFromPrefs(prefs);
       logDebug('[Preferences] Loaded preferences:', safeStringify(prefs));
       return prefs;
     } else {
@@ -685,6 +685,18 @@ function normalizeControllerIps(ips) {
 function getControllerIpsFromPrefs(prefs) {
   // Stored in preferences as an array: prefs.controllerIps: string[]
   return normalizeControllerIps(prefs?.controllerIps);
+}
+
+function getPresetUrlsFromPrefs(prefs) {
+  if (Array.isArray(prefs?.presetUrls)) {
+    return prefs.presetUrls.map(u => String(u || '').trim()).filter(Boolean);
+  }
+  const legacy = [
+    prefs?.presentation1,
+    prefs?.presentation2,
+    prefs?.presentation3
+  ].map(u => String(u || '').trim()).filter(Boolean);
+  return legacy;
 }
 
 function normalizeRemoteAddress(addr) {
@@ -1018,6 +1030,156 @@ ipcMain.handle('save-preferences', async (event, prefs) => {
   const mergedPrefs = { ...currentPrefs, ...prefs };
   savePreferences(mergedPrefs);
   return { success: true };
+});
+
+// Open file dialog for selecting a custom CSS file (Web UI white-label)
+ipcMain.handle('show-open-css-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select custom CSS file',
+    properties: ['openFile'],
+    filters: [{ name: 'CSS', extensions: ['css'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('show-open-logo-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select brand logo image',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+// Template CSS for Web UI white-label (colors only, no layout)
+const WEB_UI_CSS_TEMPLATE = `/*
+  Web UI Custom Style Template
+  Use this file as a starting point to white-label the Web UI.
+  Edit the variables or rules below, then select this file (or your copy) as "Custom CSS file" in the app.
+  This template only overrides colors; layout is controlled by the app.
+*/
+
+:root {
+  /* Primary (buttons, links, focus) */
+  --gso-primary: #667eea;
+  --gso-primary-hover: #5568d3;
+  --gso-primary-end: #764ba2;
+
+  /* Backgrounds */
+  --gso-bg-body-start: #667eea;
+  --gso-bg-body-end: #764ba2;
+  --gso-bg-container: #ffffff;
+  --gso-bg-panels: #f8f9fa;
+
+  /* Text */
+  --gso-text: #333333;
+  --gso-text-muted: #666666;
+
+  /* Borders */
+  --gso-border: #e0e0e0;
+
+  /* Secondary (secondary buttons) */
+  --gso-secondary: #6c757d;
+  --gso-secondary-hover: #5a6268;
+}
+
+/* Body gradient */
+body {
+  background: linear-gradient(135deg, var(--gso-bg-body-start) 0%, var(--gso-bg-body-end) 100%) !important;
+}
+
+/* Main card */
+.container {
+  background: var(--gso-bg-container) !important;
+}
+
+/* Headings */
+h1, h2, h3 {
+  color: var(--gso-text) !important;
+}
+
+/* System icon (when no custom logo) */
+.system-icon {
+  color: var(--gso-primary) !important;
+}
+
+/* Primary buttons */
+.btn:not(.btn-secondary),
+.remote-btn-prev,
+.remote-btn-next,
+.notes-toggle-btn.active,
+.preview-toggle-btn.active {
+  background: var(--gso-primary) !important;
+  color: white !important;
+}
+.btn:not(.btn-secondary):hover,
+.remote-btn-prev:hover,
+.remote-btn-next:hover {
+  background: var(--gso-primary-hover) !important;
+}
+
+/* Secondary buttons */
+.btn-secondary,
+.notes-toggle-btn:not(.active),
+.preview-toggle-btn:not(.active) {
+  background: var(--gso-secondary) !important;
+}
+.btn-secondary:hover {
+  background: var(--gso-secondary-hover) !important;
+}
+
+/* Tabs */
+.tab-btn.active {
+  color: var(--gso-primary) !important;
+  border-bottom-color: var(--gso-primary) !important;
+}
+
+/* Inputs */
+input[type="text"] {
+  border-color: var(--gso-border) !important;
+}
+input[type="text"]:focus {
+  border-color: var(--gso-primary) !important;
+}
+
+/* Panels (notes, previews) */
+.slide-previews-grid,
+.speaker-notes-content-wrapper {
+  background: var(--gso-bg-panels) !important;
+  border-color: var(--gso-border) !important;
+}
+
+/* Stagetimer (default gradient) */
+.stagetimer-container:not(.disabled):not(.error) {
+  background: linear-gradient(135deg, var(--gso-primary) 0%, var(--gso-primary-end) 100%) !important;
+}
+`;
+
+ipcMain.handle('download-css-template', async () => {
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const defaultName = 'gslide-opener-web-ui-template.css';
+    const result = await dialog.showSaveDialog(win || BrowserWindow.getAllWindows()[0], {
+      title: 'Save CSS template',
+      defaultPath: path.join(app.getPath('downloads'), defaultName),
+      filters: [{ name: 'CSS', extensions: ['css'] }, { name: 'All Files', extensions: ['*'] }]
+    });
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+    fs.writeFileSync(result.filePath, WEB_UI_CSS_TEMPLATE, 'utf8');
+    return { success: true, filePath: result.filePath };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 // Desktop debug log access
@@ -3440,22 +3602,14 @@ function startHttpServer() {
     if (req.method === 'GET' && apiReqPath === '/api/presets') {
       console.log('[API] GET /api/presets - Loading presets');
       const prefs = loadPreferences();
-      console.log('[API] Returning presets:', {
-        presentation1: prefs.presentation1 || '',
-        presentation2: prefs.presentation2 || '',
-        presentation3: prefs.presentation3 || ''
-      });
-      res.writeHead(200, { 
+      const urls = getPresetUrlsFromPrefs(prefs);
+      res.writeHead(200, {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
       });
-      res.end(JSON.stringify({
-        presentation1: prefs.presentation1 || '',
-        presentation2: prefs.presentation2 || '',
-        presentation3: prefs.presentation3 || ''
-      }));
+      res.end(JSON.stringify({ presetUrls: urls }));
       return;
     }
 
@@ -3591,46 +3745,22 @@ function startHttpServer() {
         try {
           logDebug('[API] POST /api/presets - Received body:', body);
           const data = JSON.parse(body);
-          logDebug('[API] Parsed data:', data);
-          
           const prefs = loadPreferences();
-          logDebug('[API] Current preferences before update:', safeStringify(prefs));
-          
-          // Update presets
-          if (data.presentation1 !== undefined) {
-            prefs.presentation1 = data.presentation1;
-            logDebug('[API] Updated presentation1:', data.presentation1);
+          if (Array.isArray(data.presetUrls)) {
+            prefs.presetUrls = data.presetUrls.map(u => String(u || '').trim()).filter(Boolean);
           }
-          if (data.presentation2 !== undefined) {
-            prefs.presentation2 = data.presentation2;
-            logDebug('[API] Updated presentation2:', data.presentation2);
-          }
-          if (data.presentation3 !== undefined) {
-            prefs.presentation3 = data.presentation3;
-            logDebug('[API] Updated presentation3:', data.presentation3);
-          }
-          
-          logDebug('[API] Preferences after update:', safeStringify(prefs));
           savePreferences(prefs);
-          
-          // Verify save by reloading
           const verifyPrefs = loadPreferences();
-          logDebug('[API] Verification - reloaded preferences:', safeStringify(verifyPrefs));
-          
-          res.writeHead(200, { 
+          res.writeHead(200, {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type'
           });
-          res.end(JSON.stringify({ 
-            success: true, 
+          res.end(JSON.stringify({
+            success: true,
             message: 'Presets saved',
-            saved: {
-              presentation1: verifyPrefs.presentation1 || '',
-              presentation2: verifyPrefs.presentation2 || '',
-              presentation3: verifyPrefs.presentation3 || ''
-            }
+            saved: { presetUrls: getPresetUrlsFromPrefs(verifyPrefs) }
           }));
         } catch (error) {
           console.error('[API] Error saving presets:', error);
@@ -3651,7 +3781,7 @@ function startHttpServer() {
       return;
     }
 
-    // POST /api/open-preset - Open a preset by name (1, 2, or 3)
+    // POST /api/open-preset - Open a preset by index (1-based)
     if (req.method === 'POST' && apiReqPath === '/api/open-preset') {
       let body = '';
       req.on('data', chunk => {
@@ -3662,17 +3792,14 @@ function startHttpServer() {
         try {
           const data = JSON.parse(body);
           const presetNumber = parseInt(data.preset, 10);
-          
-          if (isNaN(presetNumber) || presetNumber < 1 || presetNumber > 3) {
+          const prefs = loadPreferences();
+          const urls = getPresetUrlsFromPrefs(prefs);
+          if (isNaN(presetNumber) || presetNumber < 1 || presetNumber > urls.length) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Preset must be 1, 2, or 3' }));
+            res.end(JSON.stringify({ error: `Preset must be between 1 and ${urls.length}` }));
             return;
           }
-          
-          const prefs = loadPreferences();
-          const presetKey = `presentation${presetNumber}`;
-          const url = prefs[presetKey];
-          
+          const url = urls[presetNumber - 1];
           if (!url) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: `Preset ${presetNumber} is not configured` }));
@@ -3933,6 +4060,48 @@ function startWebUiServer() {
 
     const reqPath = String(req.url || '').split('?')[0];
 
+    // GET /custom-style.css - Serve user-selected CSS override (white-label)
+    if (req.method === 'GET' && reqPath === '/custom-style.css') {
+      try {
+        const prefs = loadPreferences();
+        const cssPath = prefs.webUiCustomCssPath;
+        if (!cssPath || !fs.existsSync(cssPath)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not found');
+          return;
+        }
+        const css = fs.readFileSync(cssPath, 'utf8');
+        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.end(css);
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error loading custom CSS');
+      }
+      return;
+    }
+
+    // GET /custom-logo - Serve user-selected brand logo (light/dark themes only)
+    if (req.method === 'GET' && reqPath === '/custom-logo') {
+      try {
+        const prefs = loadPreferences();
+        const logoPath = prefs.webUiLogoPath;
+        if (!logoPath || !fs.existsSync(logoPath)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not found');
+          return;
+        }
+        const ext = path.extname(logoPath).toLowerCase();
+        const mime = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : ext === '.svg' ? 'image/svg+xml' : 'image/png';
+        const buf = fs.readFileSync(logoPath);
+        res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache' });
+        res.end(buf);
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error loading logo');
+      }
+      return;
+    }
+
     // Serve favicon (prevents browser 404 spam)
     if (req.method === 'GET' && (reqPath === '/favicon.ico' || reqPath === '/favicon.png')) {
       const png = getFaviconPngBuffer();
@@ -3959,6 +4128,10 @@ function startWebUiServer() {
       const webUiDebugConsoleEnabled = prefs.webUiDebugConsoleEnabled === true;
       const hasFavicon = !!getFaviconPngBuffer();
       const faviconHref = `/favicon.png?v=${encodeURIComponent(appBuildInfo.buildNumber || '0')}`;
+      const webUiTheme = ['original', 'light', 'dark', 'max', 'touch', 'thumb'].includes(prefs.webUiTheme) ? prefs.webUiTheme : 'original';
+      const webUiCustomCssPath = prefs.webUiCustomCssPath || '';
+      const webUiLogoPath = prefs.webUiLogoPath || '';
+      const showLogo = webUiTheme !== 'max' && webUiLogoPath && fs.existsSync(webUiLogoPath);
       
       // Get version and build number
       const versionString = `v${appBuildInfo.version}.${appBuildInfo.buildNumber}`;
@@ -3982,6 +4155,7 @@ function startWebUiServer() {
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { overflow-x: hidden; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -3990,10 +4164,12 @@ function startWebUiServer() {
       align-items: center;
       justify-content: center;
       padding: 20px;
+      overflow-x: hidden;
+      width: 100%;
     }
     @media (max-width: 768px) {
       body {
-        padding: 8px;
+        padding: 12px;
         align-items: flex-start;
       }
     }
@@ -4003,17 +4179,29 @@ function startWebUiServer() {
       box-shadow: 0 20px 60px rgba(0,0,0,0.3);
       max-width: 600px;
       width: 100%;
+      min-width: 0;
       padding: 40px;
       transition: all 0.3s;
+      margin-left: auto;
+      margin-right: auto;
     }
     @media (max-width: 768px) {
       .container {
         padding: 16px 20px;
+        width: min(100%, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
       }
     }
     body.notes-visible .container,
     body.previews-visible .container {
       max-width: 85%;
+    }
+    @media (max-width: 768px) {
+      body.notes-visible .container,
+      body.previews-visible .container {
+        width: min(100%, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
+      }
     }
     body.notes-visible .container,
     body.previews-visible .container {
@@ -4053,6 +4241,25 @@ function startWebUiServer() {
     body.previews-visible .system-icon {
       width: 24px;
       height: 24px;
+    }
+    .web-ui-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .web-ui-brand-logo {
+      max-height: 56px;
+      width: auto;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+    body.notes-visible .web-ui-brand-logo,
+    body.previews-visible .web-ui-brand-logo {
+      max-height: 40px;
+    }
+    body.theme-max .web-ui-brand-logo {
+      max-height: 24px;
     }
     .preset-group {
       margin-bottom: 24px;
@@ -4644,20 +4851,103 @@ function startWebUiServer() {
       text-transform: uppercase;
     }
   </style>
+  <style id="theme-overrides">
+    /* Light: minimalist white, clean lines, solid corners */
+    body.theme-light { background: #f5f5f5; padding-top: 25vh; }
+    body.theme-light.notes-visible,
+    body.theme-light.previews-visible { padding-top: 4%; }
+    body.theme-light .container { background: #fff; border-radius: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e0e0e0; max-width: 75%; }
+    body.theme-light.notes-visible .container,
+    body.theme-light.previews-visible .container { max-width: 85%; }
+    body.theme-light h1, body.theme-light h2, body.theme-light h3 { color: #212121; }
+    body.theme-light .tab-btn { border-radius: 0; }
+    body.theme-light .btn, body.theme-light .remote-btn, body.theme-light .notes-zoom-btn { border-radius: 0; }
+    body.theme-light .slide-previews-grid, body.theme-light .speaker-notes-content-wrapper { border-radius: 0; }
+    body.theme-light .stagetimer-container { border-radius: 0; }
+    @media (max-width: 768px) {
+      body.theme-light .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
+      body.theme-light.notes-visible .container, body.theme-light.previews-visible .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); }
+    }
+    /* Dark: dark tones */
+    body.theme-dark { background: linear-gradient(180deg, #1c1c1e 0%, #2c2c2e 100%); padding-top: 25vh; }
+    body.theme-dark.notes-visible,
+    body.theme-dark.previews-visible { padding-top: 4%; }
+    body.theme-dark .container { background: rgba(44, 44, 46, 0.72); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 8px 32px rgba(0,0,0,0.4); max-width: 75%; }
+    body.theme-dark.notes-visible .container,
+    body.theme-dark.previews-visible .container { max-width: 85%; }
+    body.theme-dark h1, body.theme-dark h2, body.theme-dark h3 { color: rgba(255,255,255,0.92); }
+    body.theme-dark .tab-btn { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); border: 1px solid rgba(255,255,255,0.15); }
+    body.theme-dark .tab-btn.active { background: rgba(255,255,255,0.2); }
+    body.theme-dark .remote-btn-prev, body.theme-dark .remote-btn-next { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
+    body.theme-dark .remote-btn:hover { background: rgba(255,255,255,0.25); }
+    body.theme-dark .slide-previews-grid, body.theme-dark .speaker-notes-content-wrapper { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; }
+    body.theme-dark .speaker-notes-content { color: rgba(255,255,255,0.88); }
+    body.theme-dark .notes-zoom-btn { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); border-color: rgba(255,255,255,0.15); }
+    @media (max-width: 768px) {
+      body.theme-dark .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
+      body.theme-dark.notes-visible .container, body.theme-dark.previews-visible .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); }
+    }
+    /* Max: maximize screen, compact header, iPad layout - previews top, notes middle, prev/next bottom */
+    body.theme-max .container { max-width: 100%; width: 100%; height: 100vh; max-height: 100vh; padding: 8px 12px; border-radius: 0; display: flex; flex-direction: column; }
+    body.theme-max h1 { font-size: 14px; padding: 4px 0; }
+    body.theme-max .system-icon { width: 18px; height: 18px; }
+    body.theme-max .tabs { padding: 4px 0; }
+    body.theme-max .tab-btn { padding: 6px 14px; font-size: 13px; }
+    body.theme-max #tab-remote { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    body.theme-max .remote-header { flex-shrink: 0; padding: 4px 0; }
+    body.theme-max .remote-header h2 { font-size: 14px; }
+    body.theme-max .slide-previews-container { order: 1; flex: 1 1 auto; min-height: 0; margin-top: 4px; }
+    body.theme-max .speaker-notes-container { order: 2; flex: 1 1 auto; min-height: 0; margin-top: 4px; }
+    body.theme-max .speaker-notes-content-wrapper { height: 120px; min-height: 80px; }
+    body.theme-max .remote-controls { order: 3; flex-shrink: 0; margin-top: 8px; }
+    body.theme-max .remote-btn { min-height: 52px; padding: 12px 16px; font-size: 16px; }
+    body.theme-max .stagetimer-container { flex-shrink: 0; margin-bottom: 8px; height: 72px; padding: 8px 12px; }
+    body.theme-max .stagetimer-time { font-size: 24px; }
+    /* Touch: large tap targets, soft rounded, touch-friendly */
+    body.theme-touch { background: #e8eaf0; padding: 16px; }
+    body.theme-touch .container { background: #fff; border-radius: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); max-width: 90%; padding: 28px; }
+    body.theme-touch .remote-btn { min-height: 80px; padding: 24px 28px; font-size: 22px; border-radius: 20px; -webkit-tap-highlight-color: transparent; }
+    body.theme-touch .remote-btn:active { transform: scale(0.97); }
+    body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; border-radius: 14px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
+    body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; border-radius: 14px; min-height: 48px; }
+    body.theme-touch .slide-previews-grid, body.theme-touch .speaker-notes-content-wrapper { border-radius: 16px; padding: 18px; }
+    body.theme-touch .stagetimer-container { border-radius: 20px; padding: 20px; min-height: 100px; }
+    @media (max-width: 768px) {
+      body.theme-touch .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
+    }
+    /* Thumb: one-handed, primary actions at bottom, large hit areas */
+    body.theme-thumb { background: linear-gradient(180deg, #2d3748 0%, #1a202c 100%); padding: 12px; min-height: 100vh; }
+    body.theme-thumb .container { background: rgba(255,255,255,0.06); border-radius: 20px; max-width: 96%; padding: 16px; display: flex; flex-direction: column; min-height: 90vh; }
+    body.theme-thumb h1 { font-size: 16px; color: rgba(255,255,255,0.85); padding: 6px 0; }
+    body.theme-thumb .tabs { margin-bottom: 12px; }
+    body.theme-thumb .tab-btn { padding: 12px 20px; font-size: 15px; border-radius: 12px; color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.08); -webkit-tap-highlight-color: transparent; }
+    body.theme-thumb .tab-btn.active { background: rgba(255,255,255,0.2); }
+    body.theme-thumb #tab-remote { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    body.theme-thumb .slide-previews-container { order: 1; flex: 1 1 auto; min-height: 0; }
+    body.theme-thumb .speaker-notes-container { order: 2; flex: 1 1 auto; min-height: 0; }
+    body.theme-thumb .remote-controls { order: 3; flex-shrink: 0; margin-top: 12px; }
+    body.theme-thumb .remote-btn { min-height: 72px; padding: 20px 24px; font-size: 20px; border-radius: 18px; -webkit-tap-highlight-color: transparent; }
+    body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    body.theme-thumb .remote-btn:hover { background: rgba(255,255,255,0.35); }
+    body.theme-thumb .remote-btn:active { transform: scale(0.98); }
+    body.theme-thumb .stagetimer-container { border-radius: 16px; margin-bottom: 12px; }
+    body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; color: rgba(255,255,255,0.9); }
+    body.theme-thumb .speaker-notes-content { color: rgba(255,255,255,0.9); }
+    body.theme-thumb .notes-toggle-btn, body.theme-thumb .preview-toggle-btn { background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+    @media (max-width: 768px) {
+      body.theme-thumb .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
+    }
+  </style>
+  ${webUiCustomCssPath ? '<link rel="stylesheet" href="/custom-style.css?v=' + Date.now() + '">' : ''}
 </head>
-<body>
+<body class="theme-${webUiTheme}" data-theme="${webUiTheme}">
   <div class="container">
-    <h1>
-      <svg class="system-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <rect x="2" y="4" width="20" height="12" rx="2" ry="2"></rect>
-        <line x1="6" y1="20" x2="18" y2="20"></line>
-        <line x1="8" y1="16" x2="8" y2="20"></line>
-        <line x1="16" y1="16" x2="16" y2="20"></line>
-        <circle cx="12" cy="10" r="3" fill="currentColor"></circle>
-        <polygon points="10 10 12 9 14 10 12 11" fill="white"></polygon>
-      </svg>
+    <div class="web-ui-header">
+      <h1>
+      ${showLogo ? '<img class="web-ui-brand-logo" src="/custom-logo?v=' + Date.now() + '" alt="">' : '<svg class="system-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="12" rx="2" ry="2"></rect><line x1="6" y1="20" x2="18" y2="20"></line><line x1="8" y1="16" x2="8" y2="20"></line><line x1="16" y1="16" x2="16" y2="20"></line><circle cx="12" cy="10" r="3" fill="currentColor"></circle><polygon points="10 10 12 9 14 10 12 11" fill="white"></polygon></svg>'}
       ${machineName}
     </h1>
+    </div>
     
     <!-- Tabs -->
     <div class="tabs">
@@ -4930,25 +5220,12 @@ function startWebUiServer() {
       <div class="controls-section" style="margin-top: 40px;">
         <h3>Preset Presentations</h3>
         <div class="info" style="margin-bottom: 15px;">
-          Configure preset presentations. These can be opened from Companion using "Open Presentation 1", "Open Presentation 2", or "Open Presentation 3" actions.
+          Configure preset presentations. These can be opened from Companion or the Remote tab. Preset 1, 2, 3… correspond to Companion actions.
         </div>
       
       <form id="preset-form">
-      <div class="preset-group">
-        <label for="preset1">Presentation 1</label>
-        <input type="text" id="preset1" name="preset1" placeholder="https://docs.google.com/presentation/d/..." />
-      </div>
-      
-      <div class="preset-group">
-        <label for="preset2">Presentation 2</label>
-        <input type="text" id="preset2" name="preset2" placeholder="https://docs.google.com/presentation/d/..." />
-      </div>
-      
-      <div class="preset-group">
-        <label for="preset3">Presentation 3</label>
-        <input type="text" id="preset3" name="preset3" placeholder="https://docs.google.com/presentation/d/..." />
-      </div>
-      
+      <div id="web-preset-list" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px;"></div>
+      <button type="button" class="btn btn-secondary" id="web-add-preset" style="margin-bottom: 12px;">+ Add presentation</button>
         <button type="submit" class="btn">Save Presets</button>
         <button type="button" class="btn btn-secondary" id="load-btn">Load Current Presets</button>
       </form>
@@ -5599,56 +5876,85 @@ function startWebUiServer() {
     
     // Speaker notes controls removed from default Controls tab - moved to Settings if needed later
     
-    // Function to create preset buttons
-    function createPresetButtons(presets) {
+    // Function to create preset buttons (uses presetUrls array)
+    function createPresetButtons(data) {
       const container = document.getElementById('preset-buttons-container');
       container.innerHTML = '';
-      
-      for (let i = 1; i <= 3; i++) {
-        const presetUrl = presets[\`presentation\${i}\`];
-        if (!presetUrl || presetUrl.trim() === '') {
-          continue; // Skip empty presets
-        }
-        
+      const urls = Array.isArray(data?.presetUrls) ? data.presetUrls : [];
+      urls.forEach((presetUrl, idx) => {
+        if (!presetUrl || presetUrl.trim() === '') return;
+        const i = idx + 1;
         const presetGroup = document.createElement('div');
         presetGroup.style.cssText = 'display: flex; gap: 10px; margin-bottom: 10px;';
-        
         const label = document.createElement('div');
-        label.textContent = \`Presentation \${i}:\`;
+        label.textContent = 'Presentation ' + i + ':';
         label.style.cssText = 'font-weight: 600; color: #333; padding: 12px 0; min-width: 120px; font-size: 14px;';
-        
         const buttonGroup = document.createElement('div');
         buttonGroup.style.cssText = 'display: flex; gap: 10px; flex: 1;';
-        
         const launchBtn = document.createElement('button');
         launchBtn.type = 'button';
         launchBtn.className = 'btn';
         launchBtn.style.cssText = 'flex: 1;';
         launchBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><polyline points="5 12 3 12 12 3 21 12 19 12"></polyline><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path><polyline points="9 21 9 12 15 12 15 21"></polyline></svg>Launch';
-        launchBtn.addEventListener('click', () => {
-          openPresentation(presetUrl, false);
-        });
-        
+        launchBtn.addEventListener('click', () => { openPresentation(presetUrl, false); });
         const launchWithNotesBtn = document.createElement('button');
         launchWithNotesBtn.type = 'button';
         launchWithNotesBtn.className = 'btn';
         launchWithNotesBtn.style.cssText = 'flex: 1;';
         launchWithNotesBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><polyline points="5 12 3 12 12 3 21 12 19 12"></polyline><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"></path><polyline points="9 21 9 12 15 12 15 21"></polyline></svg>Launch with Notes';
-        launchWithNotesBtn.addEventListener('click', () => {
-          openPresentation(presetUrl, true);
-        });
-        
+        launchWithNotesBtn.addEventListener('click', () => { openPresentation(presetUrl, true); });
         buttonGroup.appendChild(launchBtn);
         buttonGroup.appendChild(launchWithNotesBtn);
-        
         presetGroup.appendChild(label);
         presetGroup.appendChild(buttonGroup);
         container.appendChild(presetGroup);
-      }
-      
+      });
       if (container.children.length === 0) {
         container.innerHTML = '<div style="color: #999; font-style: italic; padding: 20px; text-align: center;">No preset presentations configured. Go to Settings to add presets.</div>';
       }
+    }
+    
+    function webAddPresetRow(initialValue) {
+      const list = document.getElementById('web-preset-list');
+      if (!list) return;
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.gap = '10px';
+      row.style.alignItems = 'center';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'https://docs.google.com/presentation/d/...';
+      input.value = initialValue || '';
+      input.style.flex = '1';
+      input.setAttribute('data-web-preset-url', 'true');
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn btn-secondary';
+      removeBtn.textContent = 'Remove';
+      removeBtn.style.padding = '8px 10px';
+      removeBtn.addEventListener('click', function() {
+        const rows = list.querySelectorAll('[data-web-preset-row]');
+        if (rows.length <= 1) { input.value = ''; return; }
+        row.remove();
+      });
+      row.setAttribute('data-web-preset-row', 'true');
+      row.appendChild(input);
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+    }
+    function webRenderPresetList(urls) {
+      const list = document.getElementById('web-preset-list');
+      if (!list) return;
+      list.innerHTML = '';
+      const arr = Array.isArray(urls) ? urls : [];
+      if (arr.length === 0) { webAddPresetRow(''); return; }
+      arr.forEach(u => webAddPresetRow(u));
+    }
+    function webGetPresetUrls() {
+      const list = document.getElementById('web-preset-list');
+      if (!list) return [];
+      const inputs = list.querySelectorAll('input[data-web-preset-url="true"]');
+      return Array.from(inputs).map(inp => (inp.value || '').trim()).filter(Boolean);
     }
     
     // Test API connection on page load
@@ -5673,10 +5979,7 @@ function startWebUiServer() {
         return res.json();
       })
       .then(data => {
-        document.getElementById('preset1').value = data.presentation1 || '';
-        document.getElementById('preset2').value = data.presentation2 || '';
-        document.getElementById('preset3').value = data.presentation3 || '';
-        // Create preset buttons in Controls tab
+        webRenderPresetList(data.presetUrls || []);
         createPresetButtons(data);
       })
       .catch(err => {
@@ -5712,21 +6015,16 @@ function startWebUiServer() {
       }
     });
     
-    // Load button
+    document.getElementById('web-add-preset').addEventListener('click', () => { webAddPresetRow(''); });
     loadBtn.addEventListener('click', () => {
       fetch(API_BASE + '/api/presets')
         .then(res => {
-          if (!res.ok) {
-            throw new Error('HTTP error! status: ' + res.status);
-          }
+          if (!res.ok) throw new Error('HTTP error! status: ' + res.status);
           return res.json();
         })
         .then(data => {
-          document.getElementById('preset1').value = data.presentation1 || '';
-          document.getElementById('preset2').value = data.presentation2 || '';
-          document.getElementById('preset3').value = data.presentation3 || '';
+          webRenderPresetList(data.presetUrls || []);
           showStatus('Presets loaded', false);
-          // Update preset buttons in Controls tab
           createPresetButtons(data);
         })
         .catch(err => {
@@ -6797,16 +7095,9 @@ function startWebUiServer() {
       updateStagetimerVisibility();
     });
     
-    // Save form
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      
-      const data = {
-        presentation1: document.getElementById('preset1').value.trim(),
-        presentation2: document.getElementById('preset2').value.trim(),
-        presentation3: document.getElementById('preset3').value.trim()
-      };
-      
+      const data = { presetUrls: webGetPresetUrls() };
       fetch(API_BASE + '/api/presets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

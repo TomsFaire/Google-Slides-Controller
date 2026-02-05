@@ -1,0 +1,21 @@
+--- a/main.js
++++ b/main.js
+@@ -2971,7 +2971,7 @@
+               var raw = (el.innerText || el.textContent || '').trim();
+               if (raw.length === 0) return 'No notes available for this slide.';
+               var nl = ${JSON.stringify(newlineChar)};
+-              raw = raw.replace(/\\u2028/g, nl).replace(/\\u2029/g, nl).replace(/\\r\\n/g, nl).replace(/\\r/g, nl);
++              raw = raw.replace(/\u2028/g, nl).replace(/\u2029/g, nl).replace(/\r\n/g, nl).replace(/\r/g, nl);
+               return raw;
+             })()
+           `);
+@@ -2982,6 +2982,7 @@
+               .replace(/\u2028/g, '\n')  // Unicode line separator
+               .replace(/\u2029/g, '\n')  // Unicode paragraph separator
+               .replace(/\r\n/g, '\n')
+-              .replace(/\r/g, '\n');
++              .replace(/\r/g, '\n')
++              .replace(/\uFFFD+/g, '\n');  // Replace replacement chars (mojibake from bad decoding) with newline
+           }
+           
+           jsonUtf8({ success: true, notes: notesContent || 'No notes available for this slide.' });

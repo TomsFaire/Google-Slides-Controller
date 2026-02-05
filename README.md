@@ -2,6 +2,8 @@
 
 A desktop application for running Google Slides across multiple monitors, with a built-in Web UI remote and an HTTP API (for Bitfocus Companion or any other control system).
 
+For recent changes see [CHANGELOG.md](CHANGELOG.md).
+
 ![Web UI Remote](docs/images/web-ui-remote.png)
 
 ## High-level workflow
@@ -56,14 +58,15 @@ The Web UI is served by the Electron app (default: `http://YOUR_PRESENTATION_PC_
 - **Remote** (presenter-facing)
   - Big **Previous/Next** buttons (button text includes the target slide number)
   - Live **stagetimer.io** display (optional)
-  - **Speaker notes** panel (toggleable) with scroll + zoom controls
+  - **Speaker notes** panel (toggleable) with **Scroll Up / Scroll Down** buttons, plus zoom controls; notes text is normalized so line breaks display correctly
   - **Slide previews** panel (toggleable) showing the **current** and **next** slide images (captured from Presenter View)
   - Notes + previews can be open **at the same time** (stacked), and the header UI collapses to maximize usable space
 
 - **Controls** (operator-facing)
   - Open a presentation by URL (with or without speaker notes)
+  - **Open test presentation** – opens a built-in test deck directly in presentation mode (useful for verifying setup)
   - Open **preset** presentations (1/2/3)
-  - Start speaker notes, close presentation, reload presentation, and slide navigation
+  - Start speaker notes, close presentation, **reload presentation** (same slide; notes window size restored if notes were open), and slide navigation
 
 - **Settings**
   - Monitor selection (presentation + notes)
@@ -170,7 +173,7 @@ The API port is configurable in the app (default **9595**). Requests are made to
   { "url": "https://docs.google.com/presentation/d/YOUR_ID/edit" }
   ```
 - `POST /api/close-presentation` - Close current presentation
-- `POST /api/reload-presentation` - Close and reopen the current presentation, returning to the same slide
+- `POST /api/reload-presentation` - Close and reopen the current presentation on the same slide; if speaker notes were open, they reopen with the same window size/position
 - `POST /api/next-slide` - Go to next slide
 - `POST /api/previous-slide` - Go to previous slide
 - `POST /api/go-to-slide` - Navigate to a specific slide number
@@ -186,7 +189,7 @@ The API port is configurable in the app (default **9595**). Requests are made to
 - `POST /api/scroll-notes-up` - Scroll speaker notes up (150px)
 - `POST /api/zoom-in-notes` - Zoom in on speaker notes
 - `POST /api/zoom-out-notes` - Zoom out on speaker notes
-- `GET /api/get-speaker-notes` - Get current speaker notes content (for the Web UI)
+- `GET /api/get-speaker-notes` - Get current speaker notes content, normalized for line breaks (for the Web UI)
 - `GET /api/get-slide-previews` - Get current + next slide preview images (for the Web UI)
 
 **Presets**

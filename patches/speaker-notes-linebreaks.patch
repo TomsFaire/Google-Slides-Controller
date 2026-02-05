@@ -1,0 +1,39 @@
+--- a/main.js
++++ b/main.js
+@@ -2946,10 +2946,14 @@
+     // GET /api/get-speaker-notes - Get current speaker notes content
+     if (req.method === 'GET' && req.url === '/api/get-speaker-notes') {
+       const jsonUtf8 = (obj, status) => {
+-        res.writeHead(status || 200, {
++        const body = JSON.stringify(obj);
++        const buf = Buffer.from(body, 'utf8');
++        res.writeHead(status || 200, {
+           'Content-Type': 'application/json; charset=utf-8',
+           'Access-Control-Allow-Origin': '*'
+-        });
+-        res.end(JSON.stringify(obj), 'utf8');
++          'Content-Length': buf.length
++        });
++        res.end(buf);
+       };
+       if (!notesWindow || notesWindow.isDestroyed()) {
+         jsonUtf8({ success: false, notes: '', error: 'No speaker notes window is open' });
+@@ -2959,14 +2963,16 @@
+       (async () => {
+         try {
+-          let notesContent = await notesWindow.webContents.executeJavaScript(`
++          const newlineChar = '\n';
++          let notesContent = await notesWindow.webContents.executeJavaScript(`
+             (function(){
+-              // Only capture from the scrollable notes body - no tabs, no "AUDIENCE TOOLS" / "Speaker Notes"
+               var el = document.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
+               if (!el) return 'No notes available for this slide.';
+               var raw = (el.innerText || el.textContent || '').trim();
+               if (raw.length === 0) return 'No notes available for this slide.';
+-              // Normalize all line-break forms to plain \\n so they don't appear as replacement chars
+-              raw = raw.replace(/\\u2028/g, '\\n').replace(/\\u2029/g, '\\n').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
++              var nl = ${JSON.stringify(newlineChar)};
++              raw = raw.replace(/\\u2028/g, nl).replace(/\\u2029/g, nl).replace(/\\r\\n/g, nl).replace(/\\r/g, nl);
+               return raw;
+             })()
+           `);

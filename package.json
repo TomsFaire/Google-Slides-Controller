@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
-  "version": "1.8.0",
-  "buildNumber": "54",
+  "version": "1.9.0",
+  "buildNumber": "55",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -10,7 +10,8 @@
     "build": "electron-builder",
     "build:win": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
     "build:linux": "electron-builder --linux AppImage",
-    "build:mac": "electron-builder --mac"
+    "build:mac": "electron-builder --mac",
+    "build:icon:win": "node scripts/build-windows-icon.js"
   },
   "keywords": [
     "electron",
@@ -26,7 +27,8 @@
   "devDependencies": {
     "cross-env": "^10.1.0",
     "electron": "^28.1.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "png-to-ico": "^2.1.8"
   },
   "build": {
     "appId": "com.gslide.opener",
@@ -40,7 +42,8 @@
       "styles.css",
       "BUILD-INFO.txt",
       "build/icon.icns",
-      "build/icon.png"
+      "build/icon.png",
+      "build/icon.ico"
     ],
     "directories": {
       "output": "dist"
@@ -83,7 +86,9 @@
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
-      "electronLanguages": ["en-US"]
+      "electronLanguages": [
+        "en-US"
+      ]
     },
     "extraResources": [
       "BUILD-INFO.txt"

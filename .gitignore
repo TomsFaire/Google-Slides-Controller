@@ -31,3 +31,8 @@ verify-app.sh
 
 # Duplicate/old folders
 github/
+
+# Untested add-ons (do not commit until ready)
+gslide-websocket-addon/
+gslide-chrome-addon/
+sidecar/

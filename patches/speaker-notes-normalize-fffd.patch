@@ -1,0 +1,76 @@
+--- a/main.js
++++ b/main.js
+@@ -70,6 +70,36 @@ function logError(...args) {
+   console.error(...args);
+ }
+ 
++// Normalize speaker-notes text: fix line breaks and replace corruption (U+FFFD) with newlines.
++function normalizeSpeakerNotes(text) {
++  if (text == null || typeof text !== 'string') return '';
++  let s = text
++    .replace(/\r\n/g, '\n')
++    .replace(/\r/g, '\n')
++    .replace(/\u2028/g, '\n')
++    .replace(/\u2029/g, '\n')
++    .replace(/\uFFFD+/g, '\n')
++    .replace(/\u0000/g, '');
++  return s;
++}
++
++// Debug: log index and hex codes around the first U+FFFD in a string (to locate where corruption is introduced).
++function logFirstReplacementCharContext(str, label) {
++  if (str == null || typeof str !== 'string') return;
++  const idx = str.indexOf('\uFFFD');
++  if (idx < 0) return;
++  const start = Math.max(0, idx - 10);
++  const end = Math.min(str.length, idx + 11);
++  const slice = str.slice(start, end);
++  const hexCodes = Array.from(slice).map((c, i) => {
++    const pos = start + i;
++    const hex = 'U+' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
++    return pos === idx ? '[' + hex + ']' : hex;
++  }).join(' ');
++  logDebug('[SpeakerNotes] ' + (label || '') + ' First U+FFFD at index ' + idx + ', hex around: ' + hexCodes);
++}
++
+ // ----------------------------
+ // Live debug log capture (for desktop UI + export)
+ // ----------------------------
+@@ -2963,9 +2993,12 @@
+               return raw.length > 0 ? raw : 'No notes available for this slide.';
+             })()
+           `);
+-          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+-          res.end(JSON.stringify({ success: true, notes: notesContent || 'No notes available for this slide.' }));
++          const rawNotes = notesContent || 'No notes available for this slide.';
++          logFirstReplacementCharContext(rawNotes, 'raw ');
++          const notes = normalizeSpeakerNotes(rawNotes) || 'No notes available for this slide.';
++          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
++          res.end(JSON.stringify({ success: true, notes }));
+         } catch (error) {
+           console.error('[API] Error getting speaker notes:', error);
+           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+@@ -5143,12 +5176,22 @@
+         });
+     }
+     
++    function normalizeSpeakerNotes(text) {
++      if (text == null) return '';
++      var s = String(text);
++      s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\u2028/g, '\n').replace(/\u2029/g, '\n').replace(/\uFFFD+/g, '\n').replace(/\u0000/g, '');
++      return s;
++    }
+     function loadSpeakerNotes() {
+       fetch(API_BASE + '/api/get-speaker-notes')
+         .then(res => res.json())
+         .then(data => {
+           const notesContent = document.getElementById('speaker-notes-content');
+-          if (data.success && data.notes) {
+-            notesContent.textContent = data.notes;
+-          } else {
+-            notesContent.textContent = data.notes || 'No notes available. Make sure speaker notes are open.';
+-          }
++          var raw = (data.success && data.notes) ? data.notes : (data.notes || 'No notes available. Make sure speaker notes are open.');
++          notesContent.textContent = normalizeSpeakerNotes(raw);
+         })
+         .catch(err => {

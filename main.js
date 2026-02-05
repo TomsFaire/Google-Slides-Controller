@@ -71,6 +71,35 @@ function logError(...args) {
   console.error(...args);
 }
 
+// Normalize speaker-notes text: fix line breaks and replace corruption (U+FFFD) with newlines.
+function normalizeSpeakerNotes(text) {
+  if (text == null || typeof text !== 'string') return '';
+  let s = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\u2028/g, '\n')
+    .replace(/\u2029/g, '\n')
+    .replace(/\uFFFD+/g, '\n')
+    .replace(/\u0000/g, '');
+  return s;
+}
+
+// Debug: log index and hex codes around the first U+FFFD in a string (to locate where corruption is introduced).
+function logFirstReplacementCharContext(str, label) {
+  if (str == null || typeof str !== 'string') return;
+  const idx = str.indexOf('\uFFFD');
+  if (idx < 0) return;
+  const start = Math.max(0, idx - 10);
+  const end = Math.min(str.length, idx + 11);
+  const slice = str.slice(start, end);
+  const hexCodes = Array.from(slice).map((c, i) => {
+    const pos = start + i;
+    const hex = 'U+' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+    return pos === idx ? '[' + hex + ']' : hex;
+  }).join(' ');
+  logDebug('[SpeakerNotes] ' + (label || '') + ' First U+FFFD at index ' + idx + ', hex around: ' + hexCodes);
+}
+
 // ----------------------------
 // Live debug log capture (for desktop UI + export)
 // ----------------------------
@@ -196,26 +225,43 @@ let notesWindow = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
 
-function toPresentUrl(inputUrl) {
+// Optional slideNumber: if provided and > 0, append #slide=id.pN so presentation opens on that slide
+function toPresentUrl(inputUrl, slideNumber) {
   try {
     const u = new URL(inputUrl);
-
-    // Extract deck id from any /presentation/d/<ID>/... path
     const m = u.pathname.match(/\/presentation\/d\/([^/]+)/);
     if (!m) return inputUrl;
-
     const id = m[1];
-
-    // Go straight to slideshow mode (avoids platform-specific present hotkeys)
-    return `https://docs.google.com/presentation/d/${id}/present`;
+    let base = `https://docs.google.com/presentation/d/${id}/present`;
+    if (typeof slideNumber === 'number' && slideNumber > 0) {
+      base += `#slide=id.p${slideNumber}`;
+    }
+    return base;
   } catch (e) {
     return inputUrl;
   }
 }
 
-
 // Use a persistent session for Google authentication
 const GOOGLE_SESSION_PARTITION = 'persist:google';
+
+// Build BrowserWindow options for the speaker notes popup so it opens at notes-display size.
+// Google Slides presenter view uses a responsive layout: wide viewport = narrow preview column + wide notes; small viewport = 50/50. Opening at full size avoids the 50/50 split.
+function getSpeakerNotesWindowOptions(notesDisplay) {
+  const bounds = notesDisplay && notesDisplay.bounds ? notesDisplay.bounds : screen.getPrimaryDisplay().bounds;
+  return {
+    frame: false,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: GOOGLE_SESSION_PARTITION
+    }
+  };
+}
 
 // Function to set speaker notes window to fullscreen
 function setSpeakerNotesFullscreen(window) {
@@ -263,17 +309,37 @@ function setSpeakerNotesFullscreen(window) {
   
   // Wait for page to finish loading, then wait a bit more for layout to stabilize
   window.webContents.once('did-finish-load', () => {
-    // Wait a bit longer for images and layout to settle
     setTimeout(showFullscreen, 1500);
   });
-  
-  // Fallback: if did-finish-load already fired, use dom-ready
   if (window.webContents.isLoading() === false) {
     setTimeout(showFullscreen, 1500);
   } else {
     window.webContents.once('dom-ready', () => {
       setTimeout(showFullscreen, 1500);
     });
+  }
+}
+
+// Apply cached bounds to speaker notes window (e.g. after reload so user's size is preserved)
+function setSpeakerNotesBoundsFromCache(window, bounds) {
+  if (!window || window.isDestroyed() || !bounds) return;
+  window.hide();
+  const apply = () => {
+    if (window.isDestroyed()) return;
+    try {
+      window.setBounds(bounds);
+      window.show();
+      logInfo('[Notes] Restored speaker notes window to cached size/position');
+    } catch (e) {
+      logError('[Notes] Error restoring notes bounds:', e);
+      if (!window.isDestroyed()) window.show();
+    }
+  };
+  window.webContents.once('did-finish-load', () => setTimeout(apply, 300));
+  if (window.webContents.isLoading() === false) {
+    setTimeout(apply, 300);
+  } else {
+    window.webContents.once('dom-ready', () => setTimeout(apply, 300));
   }
 }
 
@@ -1159,9 +1225,9 @@ ipcMain.handle('google-signout', async () => {
   return { success: true, message: 'Successfully signed out' };
 });
 
-// Open test presentation
+// Open test presentation (present URL opens directly in presentation/slideshow mode)
 ipcMain.handle('open-test-presentation', async () => {
-  const testUrl = 'https://docs.google.com/presentation/d/1rc9BSX-0TrU7c5LGeLDRyH3zRN89-uDuXEEqOpcnLVg/edit';
+  const testUrl = 'https://docs.google.com/presentation/d/1qKhywpFhjG4tAtA1e2Rk9dB2lVk_uu5_Ol5TaBhvvPo/present';
   
   // Load preferences to get selected displays
   const prefs = loadPreferences();
@@ -1221,27 +1287,11 @@ ipcMain.handle('open-test-presentation', async () => {
       }
     });
 
-    // Handle the speaker notes popup window
+    // Handle the speaker notes popup window (open at notes-display size so Slides uses narrow-preview layout)
     presentationWindow.webContents.setWindowOpenHandler((details) => {
       logDebug('[Test] Window open intercepted:', details.url);
-      logDebug('[Test] Frame name:', details.frameName);
-      logDebug('[Test] Features:', details.features);
-      
-      // Allow Google Slides to open the speaker notes window
-      // Use default size from Google Slides (no size/position override)
-      const windowOptions = {
-        frame: false,
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true,
-          partition: GOOGLE_SESSION_PARTITION
-        }
-      };
-      
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: windowOptions
-      };
+      const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
+      return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
     });
     
     // Listen for new windows being created (this will be the notes window)
@@ -1300,35 +1350,10 @@ ipcMain.handle('open-test-presentation', async () => {
   
   presentationWindow.webContents.on('did-navigate', navigationListener);
   
-  // Listen for page load, then immediately trigger presentation mode
-  presentationWindow.webContents.once('did-finish-load', async () => {
+  // Test URL uses /present so it already opens in slideshow mode; no need to send Ctrl+Shift+F5
+  presentationWindow.webContents.once('did-finish-load', () => {
     if (!presentationWindow || presentationWindow.isDestroyed()) return;
-    
-    const currentUrl = presentationWindow.webContents.getURL();
-    logDebug('[Test] Page loaded:', currentUrl);
-    
-    // Small delay to ensure page is fully interactive
-    await new Promise(resolve => setTimeout(resolve, 200));
-    
-    if (!presentationWindow || presentationWindow.isDestroyed()) return;
-    
-    logDebug('[Test] Triggering Ctrl+Shift+F5 to enter presentation mode...');
-    
-    try {
-      // Focus the window first to ensure it receives the keyboard events
-      presentationWindow.focus();
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
-      // Send real keyboard input events
-      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
-      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
-      
-      logDebug('[Test] Ctrl+Shift+F5 sent via sendInputEvent');
-    } catch (error) {
-      logError('[Test] Error sending Ctrl+Shift+F5:', error);
-    }
-    
-    // No auto-launch of speaker notes - user must call open-speaker-notes separately
+    logDebug('[Test] Page loaded (presentation mode):', presentationWindow.webContents.getURL());
   });
   
   return { success: true };
@@ -1384,27 +1409,11 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     presentationWindow.setSimpleFullScreen(true);
   }
 
-  // Handle the speaker notes popup window
+  // Handle the speaker notes popup window (open at notes-display size so Slides uses narrow-preview layout)
   presentationWindow.webContents.setWindowOpenHandler((details) => {
     logDebug('[Multi-Monitor] Window open intercepted:', details.url);
-    logDebug('[Multi-Monitor] Frame name:', details.frameName);
-    logDebug('[Multi-Monitor] Features:', details.features);
-    
-    // Allow Google Slides to open the speaker notes window
-    // Use default size from Google Slides (no size/position override)
-    const windowOptions = {
-      frame: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        partition: GOOGLE_SESSION_PARTITION
-      }
-    };
-    
-    return {
-      action: 'allow',
-      overrideBrowserWindowOptions: windowOptions
-    };
+    const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
+    return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
   
   // Listen for new windows being created (this will be the notes window)
@@ -1558,6 +1567,9 @@ function startHttpServer() {
     } catch (e) {
       // If allowlist check fails unexpectedly, default to allowing (avoid breaking during startup)
     }
+
+    // Path without query string (for routes that may be called with cache-busting query params)
+    const apiReqPath = String(req.url || '').split('?')[0];
     
     // GET /api/status - Check if app is running and expose state for Companion variables/feedbacks
     if (req.method === 'GET' && req.url === '/api/status') {
@@ -1885,26 +1897,10 @@ function startHttpServer() {
             presentationWindow.setSimpleFullScreen(true);
           }
           
-          // Set up window open handler for speaker notes popup
-          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
-            console.log('[API] Window open intercepted:', url);
-            console.log('[API] Frame name:', frameName);
-            console.log('[API] Features:', features);
-            
-            // Use default size from Google Slides (no size/position override)
-            const windowOptions = {
-              frame: false,
-              webPreferences: {
-                nodeIntegration: false,
-                contextIsolation: true,
-                partition: GOOGLE_SESSION_PARTITION
-              }
-            };
-            
-            return {
-              action: 'allow',
-              overrideBrowserWindowOptions: windowOptions
-            };
+          // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
+          presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
+            return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
           
           // Listen for notes window creation
@@ -2075,22 +2071,10 @@ function startHttpServer() {
             presentationWindow.setSimpleFullScreen(true);
           }
           
-          // Set up window open handler for speaker notes popup
-          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
-            // Use default size from Google Slides (no size/position override)
-            const windowOptions = {
-              frame: false,
-              webPreferences: {
-                nodeIntegration: false,
-                contextIsolation: true,
-                partition: GOOGLE_SESSION_PARTITION
-              }
-            };
-            
-            return {
-              action: 'allow',
-              overrideBrowserWindowOptions: windowOptions
-            };
+          // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
+          presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
+            return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
           
           // Listen for notes window creation
@@ -2099,10 +2083,8 @@ function startHttpServer() {
               console.log('[API] Notes window created');
               notesWindow = window;
               
-              // Add Escape key handler to notes window
               window.webContents.on('before-input-event', (event, input) => {
                 if (input.key === 'Escape' && input.type === 'keyDown') {
-                  console.log('[API] Escape pressed in notes window, closing all windows');
                   event.preventDefault();
                   if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
@@ -2440,8 +2422,17 @@ function startHttpServer() {
           // Step 1: Remember current slide number
           const savedSlide = typeof currentSlide === 'number' ? currentSlide : 1;
           
-          // Step 2: Remember if speaker notes are open (boolean)
+          // Step 2: Remember if speaker notes are open and cache their size/position
           const notesWereOpen = !!(notesWindow && !notesWindow.isDestroyed());
+          let savedNotesBounds = null;
+          if (notesWereOpen && notesWindow && !notesWindow.isDestroyed()) {
+            try {
+              savedNotesBounds = notesWindow.getBounds();
+              console.log('[API] Reload: Cached notes window bounds', savedNotesBounds);
+            } catch (e) {
+              console.warn('[API] Reload: Could not cache notes bounds:', e.message);
+            }
+          }
           
           // Step 3: Remember the URL
           const urlToReload = lastPresentationUrl;
@@ -2492,31 +2483,18 @@ function startHttpServer() {
             presentationWindow.setSimpleFullScreen(true);
           }
 
-          // Set up window open handler for speaker notes popup
-          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
-            // Use default size from Google Slides (no size/position override)
-            const windowOptions = {
-              frame: false,
-              webPreferences: {
-                nodeIntegration: false,
-                contextIsolation: true,
-                partition: GOOGLE_SESSION_PARTITION
-              }
-            };
-            
-            return {
-              action: 'allow',
-              overrideBrowserWindowOptions: windowOptions
-            };
+          // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
+          presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
+            return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
           
-          // Listen for notes window creation
+          // Listen for notes window creation (restore cached size if we have it)
           const windowCreatedListener = (event, window) => {
             if (window !== presentationWindow && window !== mainWindow) {
               console.log('[API] Reload: Notes window created');
               notesWindow = window;
               
-              // Add Escape key handler to notes window
               window.webContents.on('before-input-event', (event, input) => {
                 if (input.key === 'Escape' && input.type === 'keyDown') {
                   event.preventDefault();
@@ -2525,43 +2503,35 @@ function startHttpServer() {
                 }
               });
               
-              // Set speaker notes window to fullscreen when it loads
-              window.webContents.once('did-finish-load', () => {
-                setSpeakerNotesFullscreen(window);
-              });
-              
-              // Also try when DOM is ready (in case did-finish-load fires too early)
-              window.webContents.once('dom-ready', () => {
-                setTimeout(() => {
-                  setSpeakerNotesFullscreen(window);
-                }, 500);
-              });
+              if (savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0) {
+                setSpeakerNotesBoundsFromCache(window, savedNotesBounds);
+              } else {
+                window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window));
+                window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window), 500));
+              }
               
               app.removeListener('browser-window-created', windowCreatedListener);
             }
           };
           app.on('browser-window-created', windowCreatedListener);
           
-          // Set up window event handlers BEFORE loading URL
           presentationWindow.on('closed', () => {
             presentationWindow = null;
             currentSlide = null;
           });
           
-          // Escape key handler for presentation window - set up BEFORE showing window
           presentationWindow.webContents.on('before-input-event', (event, input) => {
             if (input.key === 'Escape' && input.type === 'keyDown') {
-              console.log('[API] Reload: Escape pressed, closing presentation and notes windows');
               event.preventDefault();
               if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
               if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
             }
           });
 
-          // Load the presentation
-          const presentUrl = toPresentUrl(urlToReload);
+          // Load the presentation directly on the saved slide (no need to advance after load)
+          const presentUrl = toPresentUrl(urlToReload, savedSlide);
           lastPresentationUrl = urlToReload;
-          currentSlide = 1; // Will be updated after navigation
+          currentSlide = savedSlide;
           
           presentationWindow.loadURL(presentUrl);
           
@@ -2578,89 +2548,19 @@ function startHttpServer() {
           
           // Trigger presentation mode when page loads
           presentationWindow.webContents.once('did-finish-load', async () => {
-            console.log('[API] Reload: Page finished loading');
-            if (!presentationWindow || presentationWindow.isDestroyed()) {
-              return;
-            }
-            
-            // Ensure window is focused before sending keyboard events
+            if (!presentationWindow || presentationWindow.isDestroyed()) return;
             presentationWindow.focus();
             await new Promise(resolve => setTimeout(resolve, 200));
-            
             if (presentationWindow && !presentationWindow.isDestroyed()) {
-              console.log('[API] Reload: Triggering Ctrl+Shift+F5 for presentation mode');
-              // Focus again before sending keyboard event
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 100));
-              
               presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
               presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
             }
           });
 
-          // Wait for presentation mode to be ready
+          // Wait for presentation mode to be ready (slide was opened via URL fragment)
           await new Promise(resolve => setTimeout(resolve, 2000));
           
-          // Step 6: Navigate to the saved slide number using the go-to-slide endpoint
-          if (presentationWindow && !presentationWindow.isDestroyed() && savedSlide > 1) {
-            console.log('[API] Reload: Navigating to saved slide:', savedSlide);
-            
-            // Use the go-to-slide endpoint to jump directly to the slide
-            const prefs = loadPreferences();
-            const apiPort = prefs.apiPort || DEFAULT_API_PORT;
-            
-            try {
-              const postData = JSON.stringify({ slide: savedSlide });
-              
-              const options = {
-                hostname: '127.0.0.1',
-                port: apiPort,
-                path: '/api/go-to-slide',
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Content-Length': Buffer.byteLength(postData)
-                }
-              };
-              
-              await new Promise((resolve, reject) => {
-                const req = http.request(options, (res) => {
-                  let data = '';
-                  res.on('data', (chunk) => { data += chunk; });
-                  res.on('end', () => {
-                    try {
-                      const result = JSON.parse(data);
-                      if (result.success) {
-                        console.log('[API] Reload: Successfully navigated to slide', savedSlide);
-                      } else {
-                        console.error('[API] Reload: Failed to navigate to slide:', result.error);
-                      }
-                      resolve();
-                    } catch (err) {
-                      console.error('[API] Reload: Error parsing response:', err);
-                      resolve();
-                    }
-                  });
-                });
-                
-                req.on('error', (err) => {
-                  console.error('[API] Reload: Error calling go-to-slide endpoint:', err);
-                  resolve(); // Don't reject, just log the error
-                });
-                
-                req.write(postData);
-                req.end();
-              });
-            } catch (error) {
-              console.error('[API] Reload: Error calling go-to-slide endpoint:', error);
-            }
-          } else if (savedSlide === 1) {
-            // If we're already on slide 1, just update the tracking
-            currentSlide = 1;
-            console.log('[API] Reload: Already on slide 1');
-          }
-          
-          // Step 7: Reopen speaker notes if they were previously open
+          // Reopen speaker notes if they were previously open
           if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
             console.log('[API] Reload: Speaker notes were previously open, launching them now');
             await new Promise(resolve => setTimeout(resolve, 1000)); // Wait longer for presentation mode to be ready
@@ -3049,12 +2949,9 @@ function startHttpServer() {
     }
     
     // GET /api/get-speaker-notes - Get current speaker notes content
-    if (req.method === 'GET' && req.url === '/api/get-speaker-notes') {
+    if (req.method === 'GET' && apiReqPath === '/api/get-speaker-notes') {
       if (!notesWindow || notesWindow.isDestroyed()) {
-        res.writeHead(200, { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
         res.end(JSON.stringify({ success: false, notes: '', error: 'No speaker notes window is open' }));
         return;
       }
@@ -3063,217 +2960,22 @@ function startHttpServer() {
         try {
           const notesContent = await notesWindow.webContents.executeJavaScript(`
             (function(){
-              // First, try to find the specific div that contains only the notes text
-              var notesTextDiv = document.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
-              
-              if (notesTextDiv) {
-                // This is the exact element we want - just get its text
-                var notesText = notesTextDiv.innerText || notesTextDiv.textContent || '';
-                notesText = notesText.trim();
-                
-                if (notesText.length > 0) {
-                  return notesText;
-                }
-              }
-              
-              // Fallback: Look for the table if the specific div isn't found
-              var notesTable = document.querySelector('table.punch-viewer-speakernotes, table[id*="speakernotes"], table[class*="speakernotes"]');
-              
-              if (!notesTable) {
-                // Try alternative selectors
-                notesTable = document.querySelector('[class*="punch-viewer-speakernotes"]');
-              }
-              
-              if (!notesTable) {
-                // Try finding by ID
-                notesTable = document.getElementById('punch-viewer-speakernotes');
-              }
-              
-              if (notesTable) {
-                // Try to find the text body div within the table
-                var textBodyDiv = notesTable.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
-                if (textBodyDiv) {
-                  var notesText = textBodyDiv.innerText || textBodyDiv.textContent || '';
-                  notesText = notesText.trim();
-                  
-                  if (notesText.length > 0) {
-                    return notesText;
-                  }
-                }
-                
-                // Last resort: Clone the table and clean it up
-                var tableClone = notesTable.cloneNode(true);
-                
-                // Remove UI elements that shouldn't be in notes
-                var uiElements = tableClone.querySelectorAll('button, [role="button"], [class*="button"], [class*="control"], [class*="timer"], [class*="thumbnail"], [aria-label*="Pause"], [aria-label*="Reset"], [aria-label*="Next"], [aria-label*="Previous"]');
-                for (var i = 0; i < uiElements.length; i++) {
-                  uiElements[i].remove();
-                }
-                
-                // Remove cells that are clearly UI (short text, button labels, timers)
-                var allCells = tableClone.querySelectorAll('td, th');
-                for (var j = 0; j < allCells.length; j++) {
-                  var cell = allCells[j];
-                  var cellText = (cell.innerText || cell.textContent || '').trim();
-                  
-                  if (cellText.length <= 2) {
-                    cell.remove();
-                    continue;
-                  }
-                  if (/^(Pause|Reset|Next|Previous|Zoom|Timer|Slide)$/i.test(cellText)) {
-                    cell.remove();
-                    continue;
-                  }
-                  if (/^\\d{1,2}:\\d{2}(?::\\d{2})?$/.test(cellText)) {
-                    cell.remove();
-                    continue;
-                  }
-                  if (/^\\d+$/.test(cellText) && cellText.length <= 3) {
-                    cell.remove();
-                    continue;
-                  }
-                }
-                
-                var notesText = tableClone.innerText || tableClone.textContent || '';
-                notesText = notesText.trim();
-                
-                // Remove common UI patterns that might leak through
-                // Only remove these in specific UI contexts, not when they're part of actual notes
-                notesText = notesText.replace(/Slide \\d+ of \\d+/gi, '');
-                notesText = notesText.replace(/^Slide \\d+$/gmi, ''); // Remove standalone "Slide X" lines
-                notesText = notesText.replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, '');
-                // Only remove specific UI button labels (not common words that might be in notes)
-                notesText = notesText.replace(/\\b(Previous Slide|Next Slide)\\b/gi, '');
-                notesText = notesText.replace(/\\b(Pause|Reset)\\b/gi, '');
-                notesText = notesText.replace(/\\b(Zoom In|Zoom Out)\\b/gi, '');
-                notesText = notesText.replace(/AUDIENCE TOOLS|SPEAKER NOTES/gi, '');
-                notesText = notesText.replace(/Q&A|Questions|Answers/gi, '');
-                
-                // Split into lines and filter out slide numbers and blank lines at the start
-                var lines = notesText.split('\\n');
-                var startIndex = 0;
-                // Skip leading blank lines and slide number patterns
-                for (var i = 0; i < lines.length; i++) {
-                  var line = lines[i].trim();
-                  // Skip blank lines
-                  if (line === '') {
-                    continue;
-                  }
-                  // Skip lines that are just slide numbers (e.g., "1", "Slide 1", "1 of 10")
-                  if (/^\\d+$/.test(line) || /^Slide \\d+/i.test(line) || /^\\d+ of \\d+$/i.test(line)) {
-                    continue;
-                  }
-                  // Found first real content line
-                  startIndex = i;
-                  break;
-                }
-                // Rejoin from the first real content line
-                notesText = lines.slice(startIndex).join('\\n');
-                
-                // Clean up multiple newlines and whitespace
-                notesText = notesText.replace(/\\n{3,}/g, '\\n\\n');
-                notesText = notesText.replace(/[ \\t]{2,}/g, ' ');
-                notesText = notesText.trim();
-                
-                if (notesText.length > 0) {
-                  return notesText;
-                }
-              }
-              
-              // Fallback: try to find any element with that class/id pattern
-              var notesElement = document.querySelector('[class*="punch-viewer-speakernotes"], [id*="speakernotes"]');
-              if (notesElement) {
-                // First, try to find the specific text body div within this element
-                var textBodyDiv = notesElement.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
-                if (textBodyDiv) {
-                  var notesText = textBodyDiv.innerText || textBodyDiv.textContent || '';
-                  notesText = notesText.trim();
-                  
-                  if (notesText.length > 0) {
-                    return notesText;
-                  }
-                }
-                
-                // If we didn't find the specific div, fall back to cleaning the element
-                var elementClone = notesElement.cloneNode(true);
-                
-                // Remove UI elements
-                var uiElements = elementClone.querySelectorAll('button, [role="button"], [class*="button"], [class*="control"], [class*="timer"], [class*="thumbnail"], [aria-label*="Pause"], [aria-label*="Reset"], [aria-label*="Next"], [aria-label*="Previous"]');
-                for (var i = 0; i < uiElements.length; i++) {
-                  uiElements[i].remove();
-                }
-                
-                // If it's a table, clean up cells like we did above
-                if (elementClone.tagName === 'TABLE') {
-                  var allCells = elementClone.querySelectorAll('td, th');
-                  for (var j = 0; j < allCells.length; j++) {
-                    var cell = allCells[j];
-                    var cellText = (cell.innerText || cell.textContent || '').trim();
-                    
-                    if (cellText.length <= 2) {
-                      cell.remove();
-                      continue;
-                    }
-                    if (/^(Pause|Reset|Next|Previous|Zoom|Timer|Slide)$/i.test(cellText)) {
-                      cell.remove();
-                      continue;
-                    }
-                    if (/^\\d{1,2}:\\d{2}(?::\\d{2})?$/.test(cellText)) {
-                      cell.remove();
-                      continue;
-                    }
-                    if (/^\\d+$/.test(cellText) && cellText.length <= 3) {
-                      cell.remove();
-                      continue;
-                    }
-                  }
-                }
-                
-                var notesText = elementClone.innerText || elementClone.textContent || '';
-                notesText = notesText.trim();
-                
-                // Clean up remaining patterns
-                notesText = notesText.replace(/Slide \\d+ of \\d+/gi, '');
-                notesText = notesText.replace(/^Slide \\d+$/gmi, '');
-                notesText = notesText.replace(/AUDIENCE TOOLS|SPEAKER NOTES/gi, '');
-                notesText = notesText.replace(/Q&A|Questions|Answers/gi, '');
-                
-                // Split into lines and filter out slide numbers and blank lines at the start
-                var lines = notesText.split('\\n');
-                var startIndex = 0;
-                for (var k = 0; k < lines.length; k++) {
-                  var line = lines[k].trim();
-                  if (line === '') continue;
-                  if (/^\\d+$/.test(line) || /^Slide \\d+/i.test(line) || /^\\d+ of \\d+$/i.test(line)) {
-                    continue;
-                  }
-                  startIndex = k;
-                  break;
-                }
-                notesText = lines.slice(startIndex).join('\\n');
-                notesText = notesText.replace(/\\n{3,}/g, '\\n\\n').trim();
-                
-                if (notesText.length > 0) {
-                  return notesText;
-                }
-              }
-              
-              return 'No notes available for this slide.';
+              // Only the scrollable notes body - no tabs, no "AUDIENCE TOOLS" / "Speaker Notes"
+              var el = document.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
+              if (!el) return 'No notes available for this slide.';
+              var raw = (el.innerText || el.textContent || '').trim();
+              return raw.length > 0 ? raw : 'No notes available for this slide.';
             })()
           `);
-          
-          res.writeHead(200, { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify({ success: true, notes: notesContent || 'No notes available for this slide.' }));
+          const rawNotes = notesContent || 'No notes available for this slide.';
+          logFirstReplacementCharContext(rawNotes, 'raw ');
+          const notes = normalizeSpeakerNotes(rawNotes) || 'No notes available for this slide.';
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ success: true, notes }), 'utf8');
         } catch (error) {
           console.error('[API] Error getting speaker notes:', error);
-          res.writeHead(200, { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          });
-          res.end(JSON.stringify({ success: false, notes: '', error: error.message }));
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ success: false, notes: '', error: error.message }), 'utf8');
         }
       })();
       return;
@@ -3735,7 +3437,7 @@ function startHttpServer() {
     }
     
     // GET /api/presets - Get all preset presentations
-    if (req.method === 'GET' && req.url === '/api/presets') {
+    if (req.method === 'GET' && apiReqPath === '/api/presets') {
       console.log('[API] GET /api/presets - Loading presets');
       const prefs = loadPreferences();
       console.log('[API] Returning presets:', {
@@ -3879,7 +3581,7 @@ function startHttpServer() {
     }
     
     // POST /api/presets - Set preset presentations
-    if (req.method === 'POST' && req.url === '/api/presets') {
+    if (req.method === 'POST' && apiReqPath === '/api/presets') {
       let body = '';
       req.on('data', chunk => {
         body += chunk.toString();
@@ -3950,7 +3652,7 @@ function startHttpServer() {
     }
 
     // POST /api/open-preset - Open a preset by name (1, 2, or 3)
-    if (req.method === 'POST' && req.url === '/api/open-preset') {
+    if (req.method === 'POST' && apiReqPath === '/api/open-preset') {
       let body = '';
       req.on('data', chunk => {
         body += chunk.toString();
@@ -4031,17 +3733,9 @@ function startHttpServer() {
             presentationWindow.setSimpleFullScreen(true);
           }
           
-          // Set up window handlers (same as open-presentation)
-          presentationWindow.webContents.setWindowOpenHandler(({ url, frameName, features }) => {
-            const windowOptions = {
-              frame: false,
-              webPreferences: {
-                nodeIntegration: false,
-                contextIsolation: true,
-                partition: GOOGLE_SESSION_PARTITION
-              }
-            };
-            // Use default size from Google Slides (no size/position override)
+          // Set up window handlers (same as open-presentation; notes open at notes-display size for narrow-preview layout)
+          presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
           
@@ -5028,8 +4722,10 @@ function startWebUiServer() {
 
       <div class="speaker-notes-container" id="speaker-notes-container">
         <div class="notes-zoom-controls" id="notes-zoom-controls">
+          <button type="button" class="notes-zoom-btn" id="btn-scroll-notes-up" title="Scroll speaker notes up">Scroll Up</button>
           <button type="button" class="notes-zoom-btn" id="notes-zoom-out">Zoom Out</button>
           <button type="button" class="notes-zoom-btn" id="notes-zoom-in">Zoom In</button>
+          <button type="button" class="notes-zoom-btn" id="btn-scroll-notes-down" title="Scroll speaker notes down">Scroll Down</button>
         </div>
         <div class="speaker-notes-content-wrapper">
           <div class="speaker-notes-content" id="speaker-notes-content">Loading notes...</div>
@@ -5453,16 +5149,20 @@ function startWebUiServer() {
     let notesZoomLevel = 1; // Numeric zoom level (1 = normal, can go up/down continuously)
     let previewsVisible = false;
     
+    function normalizeSpeakerNotes(text) {
+      if (text == null) return '';
+      var s = String(text);
+      var nl = String.fromCharCode(10);
+      s = s.replace(/\\r\\n/g, nl).replace(/\\r/g, nl).replace(/\\u2028/g, nl).replace(/\\u2029/g, nl).replace(/\\uFFFD+/g, nl).replace(/\\u0000/g, '');
+      return s;
+    }
     function loadSpeakerNotes() {
       fetch(API_BASE + '/api/get-speaker-notes')
         .then(res => res.json())
         .then(data => {
           const notesContent = document.getElementById('speaker-notes-content');
-          if (data.success && data.notes) {
-            notesContent.textContent = data.notes;
-          } else {
-            notesContent.textContent = data.notes || 'No notes available. Make sure speaker notes are open.';
-          }
+          var raw = (data.success && data.notes) ? data.notes : (data.notes || 'No notes available. Make sure speaker notes are open.');
+          notesContent.textContent = normalizeSpeakerNotes(raw);
         })
         .catch(err => {
           console.error('Failed to load speaker notes:', err);
@@ -5880,6 +5580,14 @@ function startWebUiServer() {
     // Start notes button
     document.getElementById('btn-start-notes').addEventListener('click', () => {
       apiCall('/api/open-speaker-notes');
+    });
+    
+    // Scroll notes (scrolls on presentation machine only)
+    document.getElementById('btn-scroll-notes-up').addEventListener('click', () => {
+      apiCall('/api/scroll-notes-up');
+    });
+    document.getElementById('btn-scroll-notes-down').addEventListener('click', () => {
+      apiCall('/api/scroll-notes-down');
     });
     
     // Allow Enter key to trigger open (without notes)

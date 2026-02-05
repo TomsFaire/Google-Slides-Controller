@@ -46,6 +46,7 @@ rm -rf "$ICONSET"
 if [ -f "$OUTPUT" ]; then
     echo "✓ Icon created: $OUTPUT"
     echo "You can now rebuild the app with: npm run build:mac"
+    echo "For Windows, also run: npm run build:icon:win  (creates build/icon.ico from the same PNG)"
 else
     echo "✗ Failed to create icon"
     exit 1

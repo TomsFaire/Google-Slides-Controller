@@ -14,9 +14,8 @@ const backupConfig = document.getElementById('backup-config');
 const backupPortInput = document.getElementById('backup-port');
 const backupIpList = document.getElementById('backup-ip-list');
 const addBackupIpBtn = document.getElementById('add-backup-ip');
-const preset1Input = document.getElementById('preset1');
-const preset2Input = document.getElementById('preset2');
-const preset3Input = document.getElementById('preset3');
+const presetList = document.getElementById('preset-list');
+const addPresetBtn = document.getElementById('add-preset');
 const savePresetsBtn = document.getElementById('save-presets-btn');
 const loadPresetsBtn = document.getElementById('load-presets-btn');
 const stagetimerRoomIdInput = document.getElementById('stagetimer-room-id');
@@ -27,6 +26,15 @@ const saveStagetimerBtn = document.getElementById('save-stagetimer-btn');
 const loadStagetimerBtn = document.getElementById('load-stagetimer-btn');
 const verboseLoggingCheckbox = document.getElementById('verbose-logging');
 const webUiDebugConsoleEnabledCheckbox = document.getElementById('web-ui-debug-console-enabled');
+const webUiThemeSelect = document.getElementById('web-ui-theme');
+const webUiLogoPathInput = document.getElementById('web-ui-logo-path');
+const webUiLogoChooseBtn = document.getElementById('web-ui-logo-choose');
+const webUiLogoClearBtn = document.getElementById('web-ui-logo-clear');
+const webUiCustomCssPathInput = document.getElementById('web-ui-custom-css-path');
+const webUiCustomCssChooseBtn = document.getElementById('web-ui-custom-css-choose');
+const webUiCustomCssClearBtn = document.getElementById('web-ui-custom-css-clear');
+const saveWebUiAppearanceBtn = document.getElementById('save-web-ui-appearance-btn');
+const webUiDownloadCssTemplateBtn = document.getElementById('web-ui-download-css-template');
 const controllerIpList = document.getElementById('controller-ip-list');
 const addControllerIpBtn = document.getElementById('add-controller-ip');
 const debugLogsConsole = document.getElementById('debug-logs-console');
@@ -260,6 +268,18 @@ async function initDisplays() {
     if (webUiDebugConsoleEnabledCheckbox) {
       webUiDebugConsoleEnabledCheckbox.checked = preferences.webUiDebugConsoleEnabled === true;
     }
+
+    // Restore Web UI appearance (theme + logo + custom CSS path)
+    if (webUiThemeSelect) {
+      const theme = preferences.webUiTheme || 'original';
+      webUiThemeSelect.value = ['original', 'light', 'dark', 'max', 'touch', 'thumb'].includes(theme) ? theme : 'original';
+    }
+    if (webUiLogoPathInput) {
+      webUiLogoPathInput.value = preferences.webUiLogoPath || '';
+    }
+    if (webUiCustomCssPathInput) {
+      webUiCustomCssPathInput.value = preferences.webUiCustomCssPath || '';
+    }
     
     // Restore primary/backup mode
     const mode = preferences.primaryBackupMode || 'standalone';
@@ -302,6 +322,64 @@ async function initDisplays() {
     }
     if (webUiDebugConsoleEnabledCheckbox) {
       webUiDebugConsoleEnabledCheckbox.addEventListener('change', saveWebUiDebugConsolePreference);
+    }
+
+    // Web UI appearance: logo and CSS file pickers, save
+    if (webUiLogoChooseBtn && window.electronAPI.showOpenLogoDialog) {
+      webUiLogoChooseBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.showOpenLogoDialog();
+          if (result && result.filePath && webUiLogoPathInput) {
+            webUiLogoPathInput.value = result.filePath;
+          }
+        } catch (e) {
+          console.error('Open logo dialog failed:', e);
+          showStatus('Could not open file dialog', 'error');
+        }
+      });
+    }
+    if (webUiLogoClearBtn && webUiLogoPathInput) {
+      webUiLogoClearBtn.addEventListener('click', () => {
+        webUiLogoPathInput.value = '';
+      });
+    }
+    if (webUiCustomCssChooseBtn && window.electronAPI.showOpenCssDialog) {
+      webUiCustomCssChooseBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.showOpenCssDialog();
+          if (result && result.filePath && webUiCustomCssPathInput) {
+            webUiCustomCssPathInput.value = result.filePath;
+          }
+        } catch (e) {
+          console.error('Open CSS dialog failed:', e);
+          showStatus('Could not open file dialog', 'error');
+        }
+      });
+    }
+    if (webUiCustomCssClearBtn && webUiCustomCssPathInput) {
+      webUiCustomCssClearBtn.addEventListener('click', () => {
+        webUiCustomCssPathInput.value = '';
+      });
+    }
+    if (saveWebUiAppearanceBtn) {
+      saveWebUiAppearanceBtn.addEventListener('click', saveWebUiAppearance);
+    }
+    if (webUiDownloadCssTemplateBtn && window.electronAPI.downloadCssTemplate) {
+      webUiDownloadCssTemplateBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.downloadCssTemplate();
+          if (result && result.success && result.filePath) {
+            showStatus('CSS template saved to: ' + result.filePath, 'info');
+          } else if (result && result.canceled) {
+            showStatus('Save canceled', 'info');
+          } else {
+            showStatus(result && result.error ? result.error : 'Failed to save template', 'error');
+          }
+        } catch (e) {
+          console.error('Download CSS template failed:', e);
+          showStatus('Failed to save CSS template', 'error');
+        }
+      });
     }
     
     // Primary/Backup mode change handlers
@@ -361,6 +439,13 @@ async function initDisplays() {
     await loadStagetimerSettings();
     
     // Set up event handlers for presets
+    if (addPresetBtn) {
+      addPresetBtn.addEventListener('click', () => {
+        addPresetRow('');
+        const inputs = presetList ? presetList.querySelectorAll('input[data-preset-url="true"]') : [];
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      });
+    }
     savePresetsBtn.addEventListener('click', savePresets);
     loadPresetsBtn.addEventListener('click', loadPresets);
     
@@ -642,6 +727,23 @@ async function saveWebUiDebugConsolePreference() {
   }
 }
 
+async function saveWebUiAppearance() {
+  try {
+    const theme = webUiThemeSelect ? webUiThemeSelect.value : 'original';
+    const logoPath = webUiLogoPathInput ? (webUiLogoPathInput.value || '').trim() : '';
+    const path = webUiCustomCssPathInput ? (webUiCustomCssPathInput.value || '').trim() : '';
+    await window.electronAPI.savePreferences({
+      webUiTheme: ['original', 'light', 'dark', 'max', 'touch', 'thumb'].includes(theme) ? theme : 'original',
+      webUiLogoPath: logoPath || null,
+      webUiCustomCssPath: path || null
+    });
+    showStatus('Web UI appearance saved. Reload the Web UI page to see changes.', 'info');
+  } catch (error) {
+    console.error('Failed to save Web UI appearance:', error);
+    showStatus('Failed to save Web UI appearance', 'error');
+  }
+}
+
 // Save primary/backup preferences
 async function savePrimaryBackupPreferences() {
   try {
@@ -727,12 +829,69 @@ async function updateBackupStatus() {
 }
 
 // Preset Presentations Functions
+function getPresetUrlsFromUi() {
+  if (!presetList) return [];
+  const inputs = presetList.querySelectorAll('input[data-preset-url="true"]');
+  return Array.from(inputs).map(inp => (inp.value || '').trim()).filter(Boolean);
+}
+
+function addPresetRow(initialValue = '') {
+  if (!presetList) return;
+  const row = document.createElement('div');
+  row.setAttribute('data-preset-row', 'true');
+  row.style.display = 'flex';
+  row.style.gap = '10px';
+  row.style.alignItems = 'center';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'input-field';
+  input.placeholder = 'https://docs.google.com/presentation/d/...';
+  input.value = initialValue || '';
+  input.setAttribute('data-preset-url', 'true');
+  input.style.flex = '1';
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-secondary';
+  removeBtn.textContent = 'Remove';
+  removeBtn.style.padding = '8px 10px';
+  removeBtn.style.minWidth = '88px';
+  removeBtn.addEventListener('click', () => {
+    const rows = presetList.querySelectorAll('[data-preset-row="true"]');
+    if (rows.length <= 1) {
+      input.value = '';
+      return;
+    }
+    row.remove();
+  });
+
+  row.appendChild(input);
+  row.appendChild(removeBtn);
+  presetList.appendChild(row);
+}
+
+function renderPresetList(urls = []) {
+  if (!presetList) return;
+  presetList.innerHTML = '';
+  const normalized = Array.isArray(urls) ? urls : [];
+  if (normalized.length === 0) {
+    addPresetRow('');
+    return;
+  }
+  normalized.forEach(u => addPresetRow(u));
+}
+
 async function loadPresets() {
   try {
     const preferences = await window.electronAPI.getPreferences();
-    preset1Input.value = preferences.presentation1 || '';
-    preset2Input.value = preferences.presentation2 || '';
-    preset3Input.value = preferences.presentation3 || '';
+    const urls = Array.isArray(preferences.presetUrls) ? preferences.presetUrls : [];
+    if (urls.length === 0) {
+      const legacy = [preferences.presentation1, preferences.presentation2, preferences.presentation3].filter(Boolean);
+      renderPresetList(legacy.length ? legacy : ['']);
+    } else {
+      renderPresetList(urls);
+    }
   } catch (error) {
     console.error('Failed to load presets:', error);
   }
@@ -740,13 +899,8 @@ async function loadPresets() {
 
 async function savePresets() {
   try {
-    const prefs = {
-      presentation1: preset1Input.value.trim(),
-      presentation2: preset2Input.value.trim(),
-      presentation3: preset3Input.value.trim()
-    };
-    
-    await window.electronAPI.savePreferences(prefs);
+    const urls = getPresetUrlsFromUi();
+    await window.electronAPI.savePreferences({ presetUrls: urls });
     showStatus('Presets saved successfully', 'info');
   } catch (error) {
     console.error('Failed to save presets:', error);

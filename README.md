@@ -81,6 +81,16 @@ You can run multiple instances of the app across multiple computers for failover
 - **Backup**: follows commands sent from the primary
 - **Standalone**: normal single-machine mode
 
+## Public access and HTTPS
+
+By default the Web UI is HTTP-only and reachable only on your LAN. For remote users or encrypted connections you can:
+
+- **Tunnel (recommended):** Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) or [ngrok](https://ngrok.com/) to get a public HTTPS URL; paste it into the app’s **Public or tunnel URL** in Network Access to share it easily.
+- **Reverse proxy:** Run nginx or Caddy with TLS (e.g. Let’s Encrypt) and proxy to your presentation machine’s Web UI port.
+- **In-app HTTPS:** In Settings → Network Ports you can enable **Serve Web UI over HTTPS** with a custom cert/key or a self-signed certificate (browsers will show a warning; for public use, a tunnel or reverse proxy is usually better).
+
+See [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md) for short setup steps and commands.
+
 ## Bitfocus Companion module
 
 The Companion module connects to the app’s **HTTP API** (host + API port; default `127.0.0.1:9595` if Companion runs on the same machine, otherwise use the presentation PC IP).
@@ -218,6 +228,10 @@ curl -X POST http://127.0.0.1:9595/api/open-presentation \
 # Close presentation
 curl -X POST http://127.0.0.1:9595/api/close-presentation
 ```
+
+## Crash reports and troubleshooting
+
+If the app crashes or a window closes unexpectedly, crash reports and log excerpts are saved locally. See [docs/CRASH-REPORTS.md](docs/CRASH-REPORTS.md) for where they are stored and how to attach them when reporting an issue.
 
 ## Development (optional)
 

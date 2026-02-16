@@ -79,9 +79,22 @@
               </svg>
               Backup Machines
             </label>
-            <div id="backup-ip-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+            <div id="backup-ip-list" style="display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0;"></div>
             <button type="button" id="add-backup-ip" class="btn btn-secondary" style="margin-top: 10px;">+ Add backup machine</button>
             <small class="field-hint">Enter an IP address or hostname for each backup. Leave blank to remove. Supports any number of backups.</small>
+          </div>
+        </div>
+      </section>
+
+      <!-- Speaker notes (current slide) - clean copy from our API -->
+      <section class="card">
+        <h2>Speaker notes (current slide)</h2>
+        <p class="card-description">Notes for the current slide, with line breaks fixed. Open speaker notes in the presentation to use this. Copy from here for clean text.</p>
+        <div class="form-group">
+          <div id="speaker-notes-capture" class="speaker-notes-capture" style="white-space: pre-wrap; min-height: 120px; max-height: 280px; overflow-y: auto; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); font-size: 14px; line-height: 1.5;">No speaker notes window open.</div>
+          <div style="display: flex; gap: 8px; margin-top: 8px;">
+            <button type="button" id="speaker-notes-refresh" class="btn btn-secondary">Refresh</button>
+            <button type="button" id="speaker-notes-copy" class="btn btn-secondary">Copy to clipboard</button>
           </div>
         </div>
       </section>
@@ -117,6 +130,30 @@
           <small class="field-hint">Port for web interface (default: 80, requires admin for ports &lt;1024)</small>
         </div>
 
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="web-ui-use-https" style="width: auto;" />
+            <span>Serve Web UI over HTTPS</span>
+          </label>
+          <small class="field-hint">Encrypt the Web UI. Use a custom certificate and key below, or leave empty to use a self-signed certificate (browsers will show a warning). Restart required.</small>
+        </div>
+        <div class="form-group" id="web-ui-https-cert-group" style="display: none;">
+          <label>Certificate file (optional)</label>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="web-ui-cert-path" class="input-field" placeholder="Path to certificate (.pem, .crt)" readonly style="flex: 1; min-width: 180px;" />
+            <button type="button" id="web-ui-cert-choose" class="btn btn-secondary">Choose</button>
+            <button type="button" id="web-ui-cert-clear" class="btn btn-secondary">Clear</button>
+          </div>
+        </div>
+        <div class="form-group" id="web-ui-https-key-group" style="display: none;">
+          <label>Private key file (optional)</label>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="web-ui-key-path" class="input-field" placeholder="Path to private key (.pem)" readonly style="flex: 1; min-width: 180px;" />
+            <button type="button" id="web-ui-key-choose" class="btn btn-secondary">Choose</button>
+            <button type="button" id="web-ui-key-clear" class="btn btn-secondary">Clear</button>
+          </div>
+        </div>
+
         <!-- Network Access Information -->
         <div class="network-info">
           <h3>Network Access</h3>
@@ -128,6 +165,14 @@
             <div class="network-group">
               <strong>Web UI:</strong>
               <div id="web-ui-urls" class="url-list"></div>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: 16px;">
+            <label for="tunnel-public-url">Public or tunnel URL (optional)</label>
+            <input type="url" id="tunnel-public-url" class="input-field" placeholder="https://xxx.trycloudflare.com (from Cloudflare Tunnel, ngrok, etc.)" />
+            <small class="field-hint">Paste the public URL from your tunnel so you can share it. The app does not start the tunnel; run cloudflared or ngrok yourself.</small>
+            <div id="share-link-display" style="margin-top: 10px; display: none;">
+              <strong>Share this link:</strong> <span id="share-link-url" style="word-break: break-all;"></span>
             </div>
           </div>
         </div>
@@ -313,7 +358,12 @@
       <section class="card">
         <h2>Debug Logs</h2>
         <p class="card-description">Live application logs and a downloadable debug report for troubleshooting.</p>
-        
+        <div id="crash-info-block" style="margin-bottom: 12px; padding: 10px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
+          <div><strong>Crash reports folder:</strong> <span id="crash-reports-dir">—</span></div>
+          <div style="margin-top: 6px;"><strong>Native crash dumps:</strong> <span id="crash-dumps-dir">—</span></div>
+          <div style="margin-top: 6px;"><strong>Last crash:</strong> <span id="last-crash-time">No crash recorded</span></div>
+          <button type="button" id="open-crash-reports-folder-btn" class="btn btn-secondary" style="margin-top: 8px;">Open crash reports folder</button>
+        </div>
         <div id="debug-logs-console" style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; min-height: 360px; max-height: 480px; overflow-y: auto; margin-bottom: 10px;">
           <div style="color: #888;">Waiting for logs...</div>
         </div>

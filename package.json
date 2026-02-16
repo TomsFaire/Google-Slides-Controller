@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
-  "version": "1.9.1",
-  "buildNumber": "56",
+  "version": "1.9.2",
+  "buildNumber": "57",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -92,6 +92,7 @@
     },
     "extraResources": [
       "BUILD-INFO.txt"
-    ]
+    ],
+    "afterPack": "./scripts/after-pack-mac.js"
   }
 }

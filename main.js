@@ -8,10 +8,13 @@
  * Licensed under the MIT License
  */
 
-const { app, BrowserWindow, ipcMain, screen, session, dialog, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, dialog, nativeImage, crashReporter, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
+const { execSync } = require('child_process');
 const os = require('os');
 const util = require('util');
 
@@ -219,11 +222,97 @@ try {
   logError('[Build Info] Error loading package.json:', error.message);
 }
 
+// Start crash reporter (local-only; dumps written to crashDumps directory)
+try {
+  crashReporter.start({
+    uploadToServer: false,
+    extra: {
+      version: appBuildInfo.version,
+      buildNumber: String(appBuildInfo.buildNumber),
+      platform: process.platform
+    }
+  });
+} catch (e) {
+  logError('[Crash] crashReporter.start failed:', e.message);
+}
+
+// Main process crash handlers: log, write report, then quit
+function handleMainProcessCrash(label, err) {
+  const message = err && (err.message || String(err));
+  const stack = err && err.stack ? err.stack : '';
+  const tail = logBuffer.slice(-LOG_TAIL_LINES).join('\n');
+  const content = [
+    `Google Slides Opener - ${label}`,
+    `Time: ${new Date().toISOString()}`,
+    `Version: ${appBuildInfo.version} Build: ${appBuildInfo.buildNumber}`,
+    `Platform: ${process.platform}`,
+    '',
+    '--- Error ---',
+    message,
+    stack,
+    '',
+    '--- Last log lines ---',
+    tail
+  ].join('\n');
+  const filePath = writeCrashReport('main', content);
+  logError('[Crash]', message);
+  if (filePath) {
+    dialog.showMessageBox(null, {
+      type: 'error',
+      title: 'Application Error',
+      message: 'The app encountered an error and will close.',
+      detail: `A crash report was saved to:\n${filePath}`,
+      buttons: ['OK']
+    }).then(() => app.quit()).catch(() => app.quit());
+  } else {
+    app.quit();
+  }
+}
+
+process.on('uncaughtException', (err) => {
+  handleMainProcessCrash('Uncaught Exception', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  handleMainProcessCrash('Unhandled Rejection', reason instanceof Error ? reason : new Error(String(reason)));
+});
+
 let mainWindow;
 let presentationWindow = null;
 let notesWindow = null;
+let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
+
+// ----------------------------
+// Crash reporting and recovery
+// ----------------------------
+const CRASH_REPORTS_SUBDIR = 'crash-reports';
+const LOG_TAIL_LINES = 500;
+
+function getCrashReportsDir() {
+  return path.join(app.getPath('userData'), CRASH_REPORTS_SUBDIR);
+}
+
+let lastCrashPath = null;
+let lastCrashTime = null;
+
+function writeCrashReport(type, content) {
+  try {
+    const dir = getCrashReportsDir();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const name = `crash-${type}-${ts}.txt`;
+    const filePath = path.join(dir, name);
+    fs.writeFileSync(filePath, content, 'utf8');
+    lastCrashPath = filePath;
+    lastCrashTime = new Date().toISOString();
+    return filePath;
+  } catch (e) {
+    logError('[Crash] Failed to write crash report:', e.message);
+    return null;
+  }
+}
 
 // Optional slideNumber: if provided and > 0, append #slide=id.pN so presentation opens on that slide
 function toPresentUrl(inputUrl, slideNumber) {
@@ -261,6 +350,60 @@ function getSpeakerNotesWindowOptions(notesDisplay) {
       partition: GOOGLE_SESSION_PARTITION
     }
   };
+}
+
+// Normalize speaker notes text in the notes window: replace U+FFFD and "-" with real newlines in text nodes only.
+// Uses TreeWalker so we don't replace the whole div (which broke slide updates). Runs on an interval.
+// Set white-space: pre-wrap on the notes container so newline characters in text nodes actually render as line breaks.
+function getNotesWindowNormalizeScript() {
+  return `
+(function(){
+  var el = document.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
+  if (!el) return;
+  el.style.whiteSpace = 'pre-wrap';
+  var nl = String.fromCharCode(10);
+  var hyphens = { 45:1, 8208:1, 8209:1, 8210:1, 8211:1, 8212:1, 8213:1, 8738:1 };
+  function fixText(str) {
+    if (!str) return str;
+    var out = '';
+    for (var i = 0; i < str.length; i++) {
+      var code = str.charCodeAt(i);
+      if (code === 65533) { out += nl; if (i + 1 < str.length && hyphens[str.charCodeAt(i+1)]) i++; }
+      else if (code === 65532) out += nl;
+      else out += str[i];
+    }
+    return out;
+  }
+  var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+  var node;
+  while ((node = walker.nextNode())) {
+    var fixed = fixText(node.nodeValue);
+    if (fixed !== node.nodeValue) node.nodeValue = fixed;
+  }
+})();
+  `.trim();
+}
+
+function normalizeNotesWindowContent() {
+  if (!notesWindow || notesWindow.isDestroyed()) return;
+  notesWindow.webContents.executeJavaScript(getNotesWindowNormalizeScript()).catch(() => {});
+}
+
+function startNotesWindowNormalizationInterval() {
+  if (notesNormalizeIntervalId != null) return;
+  notesNormalizeIntervalId = setInterval(normalizeNotesWindowContent, 1500);
+}
+
+function stopNotesWindowNormalizationInterval() {
+  if (notesNormalizeIntervalId != null) {
+    clearInterval(notesNormalizeIntervalId);
+    notesNormalizeIntervalId = null;
+  }
+}
+
+function onNotesWindowCreated(win) {
+  startNotesWindowNormalizationInterval();
+  win.once('closed', stopNotesWindowNormalizationInterval);
 }
 
 // Function to set speaker notes window to fullscreen
@@ -565,6 +708,33 @@ async function captureSlidePreviewsFromNotesWindow({ maxSize = 200 } = {}) {
 
 function getGoogleSession() {
   return session.fromPartition(GOOGLE_SESSION_PARTITION);
+}
+
+// Try to ensure Google (Slides/docs) responses are interpreted as UTF-8 when charset is missing.
+// Speaker notes can show U+FFFD if responses are decoded with the wrong encoding; this may help.
+function setupGoogleSessionEncoding() {
+  const googleSession = getGoogleSession();
+  googleSession.webRequest.onHeadersReceived({ urls: ['https://docs.google.com/*', 'https://*.google.com/*'] }, (details, callback) => {
+    const raw = details.responseHeaders || {};
+    const h = {};
+    for (const k of Object.keys(raw)) h[k] = Array.isArray(raw[k]) ? raw[k].slice() : [raw[k]];
+    const ctKey = Object.keys(h).find((k) => k.toLowerCase() === 'content-type');
+    if (ctKey) {
+      const ct = h[ctKey];
+      const arr = Array.isArray(ct) ? ct : [ct];
+      const updated = arr.map((v) => {
+        const s = String(v || '');
+        if ((s.includes('text/') || s.includes('application/javascript') || s.includes('application/json')) && !/charset\s*=/i.test(s)) {
+          return (s.trim().replace(/\s*$/, '') + '; charset=utf-8');
+        }
+        return v;
+      });
+      if (updated.some((v, i) => v !== arr[i])) {
+        h[ctKey] = updated;
+      }
+    }
+    callback({ responseHeaders: h });
+  });
 }
 
 // Get preferences file path
@@ -940,6 +1110,204 @@ function stopBackupStatusPolling() {
   }
 }
 
+async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds) {
+  if (notesWindow && !notesWindow.isDestroyed()) {
+    notesWindow.removeAllListeners('closed');
+    notesWindow.close();
+    notesWindow = null;
+  }
+  if (presentationWindow && !presentationWindow.isDestroyed()) {
+    presentationWindow.removeAllListeners('closed');
+    presentationWindow.close();
+    presentationWindow = null;
+  }
+  currentSlide = null;
+  await new Promise(resolve => setTimeout(resolve, 200));
+
+  const prefs = loadPreferences();
+  const displays = screen.getAllDisplays();
+  const presentationDisplayId = Number(prefs.presentationDisplayId);
+  const notesDisplayId = Number(prefs.notesDisplayId);
+  const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+  const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
+
+  presentationWindow = new BrowserWindow({
+    x: presentationDisplay.bounds.x,
+    y: presentationDisplay.bounds.y,
+    width: presentationDisplay.bounds.width,
+    height: presentationDisplay.bounds.height,
+    frame: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: GOOGLE_SESSION_PARTITION
+    }
+  });
+  if (process.platform === 'darwin') {
+    presentationWindow.setSimpleFullScreen(true);
+  }
+  attachCrashHandlers(presentationWindow, 'presentation');
+
+  presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
+    return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
+  });
+
+  const windowCreatedListener = (event, window) => {
+    if (window !== presentationWindow && window !== mainWindow) {
+      notesWindow = window;
+      onNotesWindowCreated(window);
+      attachCrashHandlers(window, 'notes');
+      window.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'Escape' && input.type === 'keyDown') {
+          event.preventDefault();
+          if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+          if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+        }
+      });
+      if (savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0) {
+        setSpeakerNotesBoundsFromCache(window, savedNotesBounds);
+      } else {
+        window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window));
+        window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window), 500));
+      }
+      app.removeListener('browser-window-created', windowCreatedListener);
+    }
+  };
+  app.on('browser-window-created', windowCreatedListener);
+
+  presentationWindow.on('closed', () => {
+    presentationWindow = null;
+    currentSlide = null;
+  });
+  presentationWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      event.preventDefault();
+      if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+      if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+    }
+  });
+
+  const presentUrl = toPresentUrl(urlToReload, savedSlide);
+  lastPresentationUrl = urlToReload;
+  currentSlide = savedSlide;
+  presentationWindow.loadURL(presentUrl);
+  presentationWindow.show();
+  presentationWindow.focus();
+  presentationWindow.once('ready-to-show', () => {
+    if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.focus();
+  });
+  presentationWindow.webContents.once('did-finish-load', async () => {
+    if (!presentationWindow || presentationWindow.isDestroyed()) return;
+    presentationWindow.focus();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    if (presentationWindow && !presentationWindow.isDestroyed()) {
+      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
+      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
+    }
+  });
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (presentationWindow && !presentationWindow.isDestroyed()) {
+      presentationWindow.focus();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+      presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+    }
+  }
+  if (presentationWindow && !presentationWindow.isDestroyed()) {
+    setTimeout(() => presentationWindow.focus(), 500);
+  }
+}
+
+function attachCrashHandlers(win, label) {
+  if (!win || !win.webContents) return;
+  win.webContents.on('render-process-gone', (event, details) => {
+    const reason = details.reason || 'unknown';
+    const exitCode = details.exitCode != null ? details.exitCode : '?';
+    const content = [
+      `Renderer process gone: ${label}`,
+      `Time: ${new Date().toISOString()}`,
+      `Reason: ${reason}`,
+      `Exit code: ${exitCode}`,
+      '',
+      '--- Last log lines ---',
+      logBuffer.slice(-LOG_TAIL_LINES).join('\n')
+    ].join('\n');
+    writeCrashReport(`renderer-${label}`, content);
+    logError('[Crash] Renderer gone:', label, reason, exitCode);
+
+    if (label === 'presentation') {
+      const url = lastPresentationUrl;
+      const slide = typeof currentSlide === 'number' ? currentSlide : 1;
+      let notesWereOpen = false;
+      let savedNotesBounds = null;
+      if (notesWindow && !notesWindow.isDestroyed()) {
+        notesWereOpen = true;
+        try { savedNotesBounds = notesWindow.getBounds(); } catch (e) {}
+        notesWindow.removeAllListeners('closed');
+        notesWindow.close();
+        notesWindow = null;
+      }
+      presentationWindow = null;
+      currentSlide = null;
+      if (url) {
+        dialog.showMessageBox(null, {
+          type: 'warning',
+          title: 'Presentation Window Closed',
+          message: 'The presentation window closed unexpectedly.',
+          detail: `Reopen and return to slide ${slide}?`,
+          buttons: ['Reopen', 'Cancel'],
+          defaultId: 0,
+          cancelId: 1
+        }).then(({ response }) => {
+          if (response === 0) reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds);
+        }).catch(() => {});
+      }
+    } else if (label === 'notes') {
+      let savedNotesBounds = null;
+      if (notesWindow && !notesWindow.isDestroyed()) {
+        try { savedNotesBounds = notesWindow.getBounds(); } catch (e) {}
+        notesWindow = null;
+      }
+      dialog.showMessageBox(null, {
+        type: 'warning',
+        title: 'Speaker Notes Closed',
+        message: 'The speaker notes window closed unexpectedly.',
+        detail: 'Reopen speaker notes?',
+        buttons: ['Reopen', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1
+      }).then(({ response }) => {
+        if (response === 0 && presentationWindow && !presentationWindow.isDestroyed()) {
+          const boundsToRestore = savedNotesBounds;
+          const onceCreated = (event, newWin) => {
+            if (newWin === presentationWindow || newWin === mainWindow) return;
+            app.removeListener('browser-window-created', onceCreated);
+            notesWindow = newWin;
+            onNotesWindowCreated(newWin);
+            attachCrashHandlers(newWin, 'notes');
+            if (boundsToRestore && boundsToRestore.width > 0 && boundsToRestore.height > 0) {
+              setSpeakerNotesBoundsFromCache(newWin, boundsToRestore);
+            }
+          };
+          app.on('browser-window-created', onceCreated);
+          presentationWindow.focus();
+          setTimeout(() => {
+            if (presentationWindow && !presentationWindow.isDestroyed()) {
+              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+            }
+          }, 100);
+        }
+      }).catch(() => {});
+    }
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
@@ -957,7 +1325,7 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
-  
+  attachCrashHandlers(mainWindow, 'main');
   // Open DevTools for main window to see logs
   // mainWindow.webContents.openDevTools();
 }
@@ -976,6 +1344,61 @@ ipcMain.handle('get-displays', async () => {
 // Get saved preferences
 ipcMain.handle('get-preferences', async () => {
   return loadPreferences();
+});
+
+// Get speaker notes (normalized) for desktop UI - same as GET /api/get-speaker-notes
+ipcMain.handle('get-speaker-notes', async () => {
+  if (!notesWindow || notesWindow.isDestroyed()) {
+    return { success: false, notes: '', error: 'No speaker notes window is open' };
+  }
+  try {
+    const notesContent = await notesWindow.webContents.executeJavaScript(`
+      (function(){
+        var el = document.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
+        if (!el) return 'No notes available for this slide.';
+        var raw = (el.innerText || el.textContent || '').trim();
+        return raw.length > 0 ? raw : 'No notes available for this slide.';
+      })()
+    `);
+    const rawNotes = notesContent || 'No notes available for this slide.';
+    const notes = normalizeSpeakerNotes(rawNotes) || 'No notes available for this slide.';
+    return { success: true, notes };
+  } catch (error) {
+    console.error('[IPC] Error getting speaker notes:', error);
+    return { success: false, notes: '', error: error.message };
+  }
+});
+
+// Crash report paths for Debug Logs UI
+ipcMain.handle('get-crash-info', async () => {
+  try {
+    const crashReportsDir = getCrashReportsDir();
+    let crashDumpsPath = '';
+    try {
+      crashDumpsPath = app.getPath('crashDumps');
+    } catch (e) {
+      crashDumpsPath = '(not set)';
+    }
+    return {
+      crashReportsDir,
+      crashDumpsPath,
+      lastCrashPath: lastCrashPath || '',
+      lastCrashTime: lastCrashTime || ''
+    };
+  } catch (e) {
+    return { crashReportsDir: '', crashDumpsPath: '', lastCrashPath: '', lastCrashTime: '', error: e.message };
+  }
+});
+
+ipcMain.handle('open-crash-reports-folder', async () => {
+  try {
+    const dir = getCrashReportsDir();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    await shell.openPath(dir);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
 // Get build info (version and build number)
@@ -1052,6 +1475,32 @@ ipcMain.handle('show-open-logo-dialog', async () => {
     title: 'Select brand logo image',
     properties: ['openFile'],
     filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('show-open-cert-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select TLS certificate file',
+    properties: ['openFile'],
+    filters: [{ name: 'Certificate', extensions: ['pem', 'crt', 'cer'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('show-open-key-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select TLS private key file',
+    properties: ['openFile'],
+    filters: [{ name: 'Key', extensions: ['pem', 'key'] }, { name: 'All Files', extensions: ['*'] }]
   });
   if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
     return { canceled: true, filePath: null };
@@ -1433,6 +1882,7 @@ ipcMain.handle('open-test-presentation', async () => {
     if (process.platform === 'darwin') {
       presentationWindow.setSimpleFullScreen(true);
     }
+    attachCrashHandlers(presentationWindow, 'presentation');
 
     presentationWindow.on('closed', () => {
       presentationWindow = null;
@@ -1463,7 +1913,8 @@ ipcMain.handle('open-test-presentation', async () => {
         logDebug('[Test] Presentation display ID:', presentationDisplay.id);
         logDebug('[Test] Notes display ID:', notesDisplay.id);
         notesWindow = window;
-        
+        onNotesWindowCreated(window);
+        attachCrashHandlers(window, 'notes');
         const initialBounds = window.getBounds();
         logDebug('[Test] Initial window bounds:', initialBounds);
         
@@ -1570,6 +2021,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   if (process.platform === 'darwin') {
     presentationWindow.setSimpleFullScreen(true);
   }
+  attachCrashHandlers(presentationWindow, 'presentation');
 
   // Handle the speaker notes popup window (open at notes-display size so Slides uses narrow-preview layout)
   presentationWindow.webContents.setWindowOpenHandler((details) => {
@@ -1587,7 +2039,8 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
       logDebug('[Multi-Monitor] Notes display ID:', notesDisplayIdNum);
       logDebug('[Multi-Monitor] Notes display object:', notesDisplay);
       notesWindow = window;
-      
+      onNotesWindowCreated(window);
+      attachCrashHandlers(window, 'notes');
       // Get initial window bounds
       const initialBounds = window.getBounds();
       logDebug('[Multi-Monitor] Initial window bounds:', initialBounds);
@@ -1689,6 +2142,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 // Ports are configurable via preferences, defaults below
 const DEFAULT_API_PORT = 9595;
 const DEFAULT_WEB_UI_PORT = 80;
+const DEFAULT_WEB_UI_HTTPS_PORT = 443;
 let httpServer;
 let webUiServer;
 
@@ -2058,6 +2512,7 @@ function startHttpServer() {
           if (process.platform === 'darwin') {
             presentationWindow.setSimpleFullScreen(true);
           }
+          attachCrashHandlers(presentationWindow, 'presentation');
           
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -2070,7 +2525,8 @@ function startHttpServer() {
             if (window !== presentationWindow && window !== mainWindow) {
               console.log('[API] Notes window created');
               notesWindow = window;
-              
+              onNotesWindowCreated(window);
+              attachCrashHandlers(window, 'notes');
               // Add Escape key handler to notes window
               window.webContents.on('before-input-event', (event, input) => {
                 if (input.key === 'Escape' && input.type === 'keyDown') {
@@ -2232,6 +2688,7 @@ function startHttpServer() {
           if (process.platform === 'darwin') {
             presentationWindow.setSimpleFullScreen(true);
           }
+          attachCrashHandlers(presentationWindow, 'presentation');
           
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -2244,7 +2701,8 @@ function startHttpServer() {
             if (window !== presentationWindow && window !== mainWindow) {
               console.log('[API] Notes window created');
               notesWindow = window;
-              
+              onNotesWindowCreated(window);
+              attachCrashHandlers(window, 'notes');
               window.webContents.on('before-input-event', (event, input) => {
                 if (input.key === 'Escape' && input.type === 'keyDown') {
                   event.preventDefault();
@@ -2252,7 +2710,6 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
-              
               // Set speaker notes window to fullscreen when it loads
               window.webContents.once('did-finish-load', () => {
                 setSpeakerNotesFullscreen(window);
@@ -2578,13 +3035,10 @@ function startHttpServer() {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'Reloading presentation...' }));
 
-      // Do the reload asynchronously
+      // Do the reload asynchronously (reuses shared reopenPresentationAtSlide)
       (async () => {
         try {
-          // Step 1: Remember current slide number
           const savedSlide = typeof currentSlide === 'number' ? currentSlide : 1;
-          
-          // Step 2: Remember if speaker notes are open and cache their size/position
           const notesWereOpen = !!(notesWindow && !notesWindow.isDestroyed());
           let savedNotesBounds = null;
           if (notesWereOpen && notesWindow && !notesWindow.isDestroyed()) {
@@ -2595,163 +3049,10 @@ function startHttpServer() {
               console.warn('[API] Reload: Could not cache notes bounds:', e.message);
             }
           }
-          
-          // Step 3: Remember the URL
           const urlToReload = lastPresentationUrl;
-          
           console.log('[API] Reload: Saving state - slide:', savedSlide, 'notes open:', notesWereOpen, 'URL:', urlToReload);
-          
-          // Step 4: Close the presentation
-          if (notesWindow && !notesWindow.isDestroyed()) {
-            notesWindow.removeAllListeners('closed');
-            notesWindow.close();
-            notesWindow = null;
-          }
-          if (presentationWindow && !presentationWindow.isDestroyed()) {
-            presentationWindow.removeAllListeners('closed');
-            presentationWindow.close();
-            presentationWindow = null;
-          }
-          currentSlide = null;
-
-          // Wait for windows to close
-          await new Promise(resolve => setTimeout(resolve, 200));
-
-          // Step 5: Reopen the presentation (using same logic as /api/open-presentation)
-          const prefs = loadPreferences();
-          const displays = screen.getAllDisplays();
-          const presentationDisplayId = Number(prefs.presentationDisplayId);
-          const notesDisplayId = Number(prefs.notesDisplayId);
-          const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
-          const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-
-          // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
-          // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
-          presentationWindow = new BrowserWindow({
-            x: presentationDisplay.bounds.x,
-            y: presentationDisplay.bounds.y,
-            width: presentationDisplay.bounds.width,
-            height: presentationDisplay.bounds.height,
-            frame: false,
-            webPreferences: {
-              nodeIntegration: false,
-              contextIsolation: true,
-              partition: GOOGLE_SESSION_PARTITION
-            }
-          });
-          
-          // Set simple fullscreen on macOS to avoid Spaces conflicts
-          if (process.platform === 'darwin') {
-            presentationWindow.setSimpleFullScreen(true);
-          }
-
-          // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
-          presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
-            const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
-            return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
-          });
-          
-          // Listen for notes window creation (restore cached size if we have it)
-          const windowCreatedListener = (event, window) => {
-            if (window !== presentationWindow && window !== mainWindow) {
-              console.log('[API] Reload: Notes window created');
-              notesWindow = window;
-              
-              window.webContents.on('before-input-event', (event, input) => {
-                if (input.key === 'Escape' && input.type === 'keyDown') {
-                  event.preventDefault();
-                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-                }
-              });
-              
-              if (savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0) {
-                setSpeakerNotesBoundsFromCache(window, savedNotesBounds);
-              } else {
-                window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window));
-                window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window), 500));
-              }
-              
-              app.removeListener('browser-window-created', windowCreatedListener);
-            }
-          };
-          app.on('browser-window-created', windowCreatedListener);
-          
-          presentationWindow.on('closed', () => {
-            presentationWindow = null;
-            currentSlide = null;
-          });
-          
-          presentationWindow.webContents.on('before-input-event', (event, input) => {
-            if (input.key === 'Escape' && input.type === 'keyDown') {
-              event.preventDefault();
-              if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-              if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-            }
-          });
-
-          // Load the presentation directly on the saved slide (no need to advance after load)
-          const presentUrl = toPresentUrl(urlToReload, savedSlide);
-          lastPresentationUrl = urlToReload;
-          currentSlide = savedSlide;
-          
-          presentationWindow.loadURL(presentUrl);
-          
-          // Show and focus the window immediately to ensure it receives keyboard events
-          presentationWindow.show();
-          presentationWindow.focus();
-          
-          // Also focus when window becomes ready
-          presentationWindow.once('ready-to-show', () => {
-            if (presentationWindow && !presentationWindow.isDestroyed()) {
-              presentationWindow.focus();
-            }
-          });
-          
-          // Trigger presentation mode when page loads
-          presentationWindow.webContents.once('did-finish-load', async () => {
-            if (!presentationWindow || presentationWindow.isDestroyed()) return;
-            presentationWindow.focus();
-            await new Promise(resolve => setTimeout(resolve, 200));
-            if (presentationWindow && !presentationWindow.isDestroyed()) {
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
-            }
-          });
-
-          // Wait for presentation mode to be ready (slide was opened via URL fragment)
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Reopen speaker notes if they were previously open
-          if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
-            console.log('[API] Reload: Speaker notes were previously open, launching them now');
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait longer for presentation mode to be ready
-            
-            // Ensure window has focus before sending keyboard events
-            if (presentationWindow && !presentationWindow.isDestroyed()) {
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 200));
-              
-              // Send the 's' key to open speaker notes
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-              
-              console.log('[API] Reload: Speaker notes launch command sent');
-            }
-          } else {
-            console.log('[API] Reload: Speaker notes were not previously open, skipping');
-          }
-          
-          // Final focus to ensure window is ready for keyboard input
-          if (presentationWindow && !presentationWindow.isDestroyed()) {
-            setTimeout(() => {
-              presentationWindow.focus();
-            }, 500);
-          }
-          
+          await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds);
           console.log('[API] Reload: Complete');
-
         } catch (error) {
           console.error('[API] Error during reload:', error);
         }
@@ -3859,6 +4160,7 @@ function startHttpServer() {
           if (process.platform === 'darwin') {
             presentationWindow.setSimpleFullScreen(true);
           }
+          attachCrashHandlers(presentationWindow, 'presentation');
           
           // Set up window handlers (same as open-presentation; notes open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -3869,6 +4171,8 @@ function startHttpServer() {
           const windowCreatedListener = (event, window) => {
             if (window !== presentationWindow && window !== mainWindow) {
               notesWindow = window;
+              onNotesWindowCreated(window);
+              attachCrashHandlers(window, 'notes');
               window.webContents.on('before-input-event', (event, input) => {
                 if (input.key === 'Escape' && input.type === 'keyDown') {
                   event.preventDefault();
@@ -3880,7 +4184,6 @@ function startHttpServer() {
               window.webContents.once('did-finish-load', () => {
                 setSpeakerNotesFullscreen(window);
               });
-              
               // Also try when DOM is ready (in case did-finish-load fires too early)
               window.webContents.once('dom-ready', () => {
                 setTimeout(() => {
@@ -4032,9 +4335,55 @@ function startHttpServer() {
   });
 }
 
+// Get HTTPS credentials for Web UI: user-provided cert/key or self-signed in userData. Returns { key, cert } or null.
+function getWebUiHttpsCredentials() {
+  const prefs = loadPreferences();
+  if (!prefs.webUiUseHttps) return null;
+  const certPath = (prefs.webUiCertPath || '').trim();
+  const keyPath = (prefs.webUiKeyPath || '').trim();
+  if (certPath && keyPath && fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    try {
+      return {
+        key: fs.readFileSync(keyPath, 'utf8'),
+        cert: fs.readFileSync(certPath, 'utf8')
+      };
+    } catch (e) {
+      console.error('[Web UI] Failed to read HTTPS cert/key files:', e.message);
+      return null;
+    }
+  }
+  const userData = app.getPath('userData');
+  const selfKeyPath = path.join(userData, 'webui-selfsigned-key.pem');
+  const selfCertPath = path.join(userData, 'webui-selfsigned-cert.pem');
+  if (fs.existsSync(selfKeyPath) && fs.existsSync(selfCertPath)) {
+    try {
+      return {
+        key: fs.readFileSync(selfKeyPath, 'utf8'),
+        cert: fs.readFileSync(selfCertPath, 'utf8')
+      };
+    } catch (e) {
+      console.error('[Web UI] Failed to read self-signed cert:', e.message);
+      return null;
+    }
+  }
+  try {
+    execSync(
+      `openssl req -x509 -newkey rsa:2048 -keyout "${selfKeyPath}" -out "${selfCertPath}" -days 365 -nodes -subj "/CN=localhost"`,
+      { stdio: 'pipe' }
+    );
+    return {
+      key: fs.readFileSync(selfKeyPath, 'utf8'),
+      cert: fs.readFileSync(selfCertPath, 'utf8')
+    };
+  } catch (e) {
+    console.error('[Web UI] Could not generate self-signed certificate (openssl not available?):', e.message);
+    return null;
+  }
+}
+
 // Start web UI server for preset management
 function startWebUiServer() {
-  webUiServer = http.createServer((req, res) => {
+  const requestHandler = (req, res) => {
     // Enable CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -4144,6 +4493,16 @@ function startWebUiServer() {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
+
+      const tunnelPublicUrl = (prefs.tunnelPublicUrl || '').trim();
+      const tunnelPublicUrlEscaped = tunnelPublicUrl
+        ? tunnelPublicUrl
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;')
+        : '';
       
       const html = `<!DOCTYPE html>
 <html lang="en">
@@ -4248,6 +4607,32 @@ function startWebUiServer() {
       gap: 12px;
       flex-wrap: wrap;
     }
+    .share-link-bar {
+      width: 100%;
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: rgba(102, 126, 234, 0.12);
+      border-radius: 8px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .share-link-label { color: #555; font-weight: 600; }
+    .share-link-url { color: #667eea; word-break: break-all; }
+    .share-link-url:hover { text-decoration: underline; }
+    .share-link-copy {
+      padding: 4px 10px;
+      font-size: 12px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .share-link-copy:hover { background: #5568d3; }
     .web-ui-brand-logo {
       max-height: 56px;
       width: auto;
@@ -4664,6 +5049,19 @@ function startWebUiServer() {
       align-items: center;
       width: min(220px, 45vw);
     }
+    .slide-preview-card.clickable {
+      cursor: pointer;
+      border-radius: 12px;
+      padding: 4px;
+      margin: -4px;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+    .slide-preview-card.clickable:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+    .slide-preview-card.clickable:active {
+      transform: scale(0.98);
+    }
     .slide-preview-label {
       font-size: 12px;
       font-weight: 700;
@@ -4947,6 +5345,7 @@ function startWebUiServer() {
       ${showLogo ? '<img class="web-ui-brand-logo" src="/custom-logo?v=' + Date.now() + '" alt="">' : '<svg class="system-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="12" rx="2" ry="2"></rect><line x1="6" y1="20" x2="18" y2="20"></line><line x1="8" y1="16" x2="8" y2="20"></line><line x1="16" y1="16" x2="16" y2="20"></line><circle cx="12" cy="10" r="3" fill="currentColor"></circle><polygon points="10 10 12 9 14 10 12 11" fill="white"></polygon></svg>'}
       ${machineName}
     </h1>
+    ${tunnelPublicUrlEscaped ? '<div class="share-link-bar"><span class="share-link-label">Share this link:</span> <a href="' + tunnelPublicUrlEscaped + '" class="share-link-url" target="_blank" rel="noopener">' + tunnelPublicUrlEscaped + '</a> <button type="button" class="share-link-copy" title="Copy link">Copy</button></div>' : ''}
     </div>
     
     <!-- Tabs -->
@@ -4999,13 +5398,13 @@ function startWebUiServer() {
       </div>
       <div class="slide-previews-container" id="slide-previews-container">
         <div class="slide-previews-grid">
-          <div class="slide-preview-card">
+          <div class="slide-preview-card clickable" id="slide-preview-current-card" title="Click to go to previous slide">
             <div class="slide-preview-label" id="slide-preview-current-label">Current Slide</div>
-            <img class="slide-preview-img empty" id="slide-preview-current-img" alt="Current slide preview" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+            <img class="slide-preview-img empty" id="slide-preview-current-img" alt="Current slide — click to go back" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
           </div>
-          <div class="slide-preview-card">
+          <div class="slide-preview-card clickable" id="slide-preview-next-card" title="Click to go to next slide">
             <div class="slide-preview-label" id="slide-preview-next-label">Next Slide</div>
-            <img class="slide-preview-img empty" id="slide-preview-next-img" alt="Next slide preview" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+            <img class="slide-preview-img empty" id="slide-preview-next-img" alt="Next slide — click to advance" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
           </div>
         </div>
       </div>
@@ -5185,7 +5584,7 @@ function startWebUiServer() {
           
           <div class="preset-group">
             <label>Backup Machines</label>
-            <div id="web-backup-ip-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+            <div id="web-backup-ip-list" style="display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0;"></div>
             <button type="button" class="btn btn-secondary" id="web-add-backup-ip" style="margin-top: 10px;">+ Add backup machine</button>
             <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Enter an IP address or hostname for each backup. Supports any number of backups.</small>
           </div>
@@ -5348,6 +5747,21 @@ function startWebUiServer() {
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         document.getElementById('tab-' + tabName).classList.add('active');
       });
+    });
+
+    // Share link copy button
+    document.addEventListener('click', function(e) {
+      if (e.target && e.target.classList && e.target.classList.contains('share-link-copy')) {
+        const bar = e.target.closest('.share-link-bar');
+        const link = bar && bar.querySelector('.share-link-url');
+        if (link && link.href) {
+          navigator.clipboard.writeText(link.href).then(function() {
+            var lbl = e.target.textContent;
+            e.target.textContent = 'Copied!';
+            setTimeout(function() { e.target.textContent = lbl; }, 2000);
+          }).catch(function() { showStatus('Failed to copy', true); });
+        }
+      }
     });
     
     function apiCall(endpoint, method = 'POST') {
@@ -5720,6 +6134,27 @@ function startWebUiServer() {
         updateSlideButtons();
       });
     });
+    
+    // Clickable preview images: current → previous slide, next → next slide
+    function refreshAfterSlideChange() {
+      if (notesVisible) loadSpeakerNotes();
+      if (previewsVisible) loadSlidePreviews();
+      updateSlideButtons();
+    }
+    const currentCard = document.getElementById('slide-preview-current-card');
+    const nextCard = document.getElementById('slide-preview-next-card');
+    if (currentCard) {
+      currentCard.addEventListener('click', () => {
+        triggerHapticFeedback();
+        apiCall('/api/previous-slide').then(refreshAfterSlideChange);
+      });
+    }
+    if (nextCard) {
+      nextCard.addEventListener('click', () => {
+        triggerHapticFeedback();
+        apiCall('/api/next-slide').then(refreshAfterSlideChange);
+      });
+    }
     
     // Function to update slide button text with current slide information
     function updateSlideButtons() {
@@ -6703,14 +7138,18 @@ function startWebUiServer() {
       row.style.display = 'flex';
       row.style.gap = '10px';
       row.style.alignItems = 'center';
+      row.style.width = '100%';
+      row.style.minWidth = '0';
 
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'input-field';
-      input.placeholder = '192.168.1.100';
+      input.placeholder = '192.168.1.100 or hostname';
       input.value = initialValue || '';
       input.setAttribute('data-web-backup-ip', 'true');
-      input.style.flex = '1';
+      input.style.flex = '1 1 0%';
+      input.style.width = '100%';
+      input.style.minWidth = '140px';
 
       const badge = document.createElement('span');
       badge.setAttribute('data-web-backup-status', 'true');
@@ -7185,13 +7624,23 @@ function startWebUiServer() {
     // 404 for other routes
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
-  });
-  
+  };
+
+  const creds = getWebUiHttpsCredentials();
   const prefs = loadPreferences();
-  const webUiPort = prefs.webUiPort || DEFAULT_WEB_UI_PORT;
-  
+  let webUiPort = prefs.webUiPort || DEFAULT_WEB_UI_PORT;
+  if (creds && webUiPort === 80) {
+    webUiPort = DEFAULT_WEB_UI_HTTPS_PORT;
+  }
+  if (creds) {
+    webUiServer = https.createServer(creds, requestHandler);
+  } else {
+    webUiServer = http.createServer(requestHandler);
+  }
+
+  const protocol = creds ? 'https' : 'http';
   webUiServer.listen(webUiPort, '0.0.0.0', () => {
-    console.log(`[Web UI] Server listening on http://0.0.0.0:${webUiPort}`);
+    console.log(`[Web UI] Server listening on ${protocol}://0.0.0.0:${webUiPort}`);
   }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[Web UI] Port ${webUiPort} is already in use`);
@@ -7211,6 +7660,7 @@ function startWebUiServer() {
 }
 
 app.whenReady().then(() => {
+  setupGoogleSessionEncoding();
   createWindow();
   startHttpServer();
   startWebUiServer();

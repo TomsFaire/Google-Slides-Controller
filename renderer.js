@@ -35,11 +35,30 @@ const webUiCustomCssChooseBtn = document.getElementById('web-ui-custom-css-choos
 const webUiCustomCssClearBtn = document.getElementById('web-ui-custom-css-clear');
 const saveWebUiAppearanceBtn = document.getElementById('save-web-ui-appearance-btn');
 const webUiDownloadCssTemplateBtn = document.getElementById('web-ui-download-css-template');
+const tunnelPublicUrlInput = document.getElementById('tunnel-public-url');
+const shareLinkDisplay = document.getElementById('share-link-display');
+const shareLinkUrlSpan = document.getElementById('share-link-url');
+const webUiUseHttpsCheckbox = document.getElementById('web-ui-use-https');
+const webUiCertPathInput = document.getElementById('web-ui-cert-path');
+const webUiKeyPathInput = document.getElementById('web-ui-key-path');
+const webUiCertChooseBtn = document.getElementById('web-ui-cert-choose');
+const webUiCertClearBtn = document.getElementById('web-ui-cert-clear');
+const webUiKeyChooseBtn = document.getElementById('web-ui-key-choose');
+const webUiKeyClearBtn = document.getElementById('web-ui-key-clear');
+const webUiHttpsCertGroup = document.getElementById('web-ui-https-cert-group');
+const webUiHttpsKeyGroup = document.getElementById('web-ui-https-key-group');
 const controllerIpList = document.getElementById('controller-ip-list');
 const addControllerIpBtn = document.getElementById('add-controller-ip');
+const speakerNotesCapture = document.getElementById('speaker-notes-capture');
+const speakerNotesRefreshBtn = document.getElementById('speaker-notes-refresh');
+const speakerNotesCopyBtn = document.getElementById('speaker-notes-copy');
 const debugLogsConsole = document.getElementById('debug-logs-console');
 const debugLogsClearBtn = document.getElementById('debug-logs-clear');
 const debugLogsSaveBtn = document.getElementById('debug-logs-save');
+const crashReportsDirEl = document.getElementById('crash-reports-dir');
+const crashDumpsDirEl = document.getElementById('crash-dumps-dir');
+const lastCrashTimeEl = document.getElementById('last-crash-time');
+const openCrashReportsFolderBtn = document.getElementById('open-crash-reports-folder-btn');
 
 let isSignedIn = false;
 
@@ -111,6 +130,26 @@ async function initDebugLogs() {
         } else {
           showStatus('Failed to save debug log', 'error');
         }
+      });
+    }
+
+    async function refreshCrashInfo() {
+      if (!window.electronAPI?.getCrashInfo) return;
+      try {
+        const info = await window.electronAPI.getCrashInfo();
+        if (crashReportsDirEl) crashReportsDirEl.textContent = info.crashReportsDir || '—';
+        if (crashDumpsDirEl) crashDumpsDirEl.textContent = info.crashDumpsPath || '—';
+        if (lastCrashTimeEl) lastCrashTimeEl.textContent = info.lastCrashTime || 'No crash recorded';
+      } catch (e) {
+        if (crashReportsDirEl) crashReportsDirEl.textContent = '—';
+        if (crashDumpsDirEl) crashDumpsDirEl.textContent = '—';
+        if (lastCrashTimeEl) lastCrashTimeEl.textContent = 'Error loading';
+      }
+    }
+    await refreshCrashInfo();
+    if (openCrashReportsFolderBtn && window.electronAPI.openCrashReportsFolder) {
+      openCrashReportsFolderBtn.addEventListener('click', async () => {
+        await window.electronAPI.openCrashReportsFolder();
       });
     }
   } catch (error) {
@@ -260,6 +299,18 @@ async function initDisplays() {
     } else {
       webUiPortInput.value = '80'; // Default
     }
+
+    if (tunnelPublicUrlInput) {
+      tunnelPublicUrlInput.value = preferences.tunnelPublicUrl || '';
+      updateShareLinkDisplay();
+    }
+
+    if (webUiUseHttpsCheckbox) {
+      webUiUseHttpsCheckbox.checked = preferences.webUiUseHttps === true;
+      updateHttpsCertKeyVisibility();
+    }
+    if (webUiCertPathInput) webUiCertPathInput.value = preferences.webUiCertPath || '';
+    if (webUiKeyPathInput) webUiKeyPathInput.value = preferences.webUiKeyPath || '';
     
     // Restore logging preferences
     if (verboseLoggingCheckbox) {
@@ -317,6 +368,62 @@ async function initDisplays() {
     machineNameInput.addEventListener('change', saveMachineName);
     apiPortInput.addEventListener('change', savePortPreferences);
     webUiPortInput.addEventListener('change', savePortPreferences);
+    if (tunnelPublicUrlInput) {
+      tunnelPublicUrlInput.addEventListener('change', saveTunnelPublicUrl);
+      tunnelPublicUrlInput.addEventListener('input', () => updateShareLinkDisplay());
+    }
+    if (webUiUseHttpsCheckbox) {
+      webUiUseHttpsCheckbox.addEventListener('change', () => {
+        if (webUiUseHttpsCheckbox.checked && webUiPortInput) {
+          const port = parseInt(webUiPortInput.value, 10);
+          if (port === 80 || !port) {
+            webUiPortInput.value = '443';
+          }
+        }
+        updateHttpsCertKeyVisibility();
+        saveHttpsPreferences();
+      });
+    }
+    if (webUiCertChooseBtn && window.electronAPI.showOpenCertDialog) {
+      webUiCertChooseBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.showOpenCertDialog();
+          if (result && result.filePath && webUiCertPathInput) {
+            webUiCertPathInput.value = result.filePath;
+            saveHttpsPreferences();
+          }
+        } catch (e) {
+          console.error('Open cert dialog failed:', e);
+          showStatus('Could not open file dialog', 'error');
+        }
+      });
+    }
+    if (webUiCertClearBtn && webUiCertPathInput) {
+      webUiCertClearBtn.addEventListener('click', () => {
+        webUiCertPathInput.value = '';
+        saveHttpsPreferences();
+      });
+    }
+    if (webUiKeyChooseBtn && window.electronAPI.showOpenKeyDialog) {
+      webUiKeyChooseBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.showOpenKeyDialog();
+          if (result && result.filePath && webUiKeyPathInput) {
+            webUiKeyPathInput.value = result.filePath;
+            saveHttpsPreferences();
+          }
+        } catch (e) {
+          console.error('Open key dialog failed:', e);
+          showStatus('Could not open file dialog', 'error');
+        }
+      });
+    }
+    if (webUiKeyClearBtn && webUiKeyPathInput) {
+      webUiKeyClearBtn.addEventListener('click', () => {
+        webUiKeyPathInput.value = '';
+        saveHttpsPreferences();
+      });
+    }
     if (verboseLoggingCheckbox) {
       verboseLoggingCheckbox.addEventListener('change', saveLoggingPreferences);
     }
@@ -452,6 +559,33 @@ async function initDisplays() {
     // Set up event handlers for stagetimer
     saveStagetimerBtn.addEventListener('click', saveStagetimerSettings);
     loadStagetimerBtn.addEventListener('click', loadStagetimerSettings);
+
+    // Speaker notes capture (clean text via IPC - no fetch/port needed)
+    async function refreshSpeakerNotesCapture() {
+      if (!speakerNotesCapture) return;
+      try {
+        const data = await window.electronAPI.getSpeakerNotes();
+        if (data.success && data.notes) {
+          speakerNotesCapture.textContent = data.notes;
+        } else {
+          speakerNotesCapture.textContent = data.error || 'No speaker notes window open.';
+        }
+      } catch (err) {
+        speakerNotesCapture.textContent = 'Could not load notes. Is speaker notes open?';
+      }
+    }
+    if (speakerNotesRefreshBtn) speakerNotesRefreshBtn.addEventListener('click', refreshSpeakerNotesCapture);
+    if (speakerNotesCopyBtn && speakerNotesCapture) {
+      speakerNotesCopyBtn.addEventListener('click', () => {
+        const text = speakerNotesCapture.textContent || '';
+        if (!text || text.startsWith('No speaker notes') || text.startsWith('Could not load')) {
+          showStatus('Nothing to copy. Open speaker notes and click Refresh.', 'error');
+          return;
+        }
+        navigator.clipboard.writeText(text).then(() => showStatus('Speaker notes copied to clipboard', 'info')).catch(() => showStatus('Copy failed', 'error'));
+      });
+    }
+    refreshSpeakerNotesCapture();
     
   } catch (error) {
     showStatus('Failed to load displays', 'error');
@@ -529,14 +663,18 @@ function addBackupIpRow(initialValue = '') {
   row.style.display = 'flex';
   row.style.gap = '10px';
   row.style.alignItems = 'center';
+  row.style.width = '100%';
+  row.style.minWidth = '0';
 
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'input-field';
-  input.placeholder = '192.168.1.100';
+  input.placeholder = '192.168.1.100 or hostname';
   input.value = initialValue || '';
   input.setAttribute('data-backup-ip', 'true');
-  input.style.flex = '1';
+  input.style.flex = '1 1 0%';
+  input.style.width = '100%';
+  input.style.minWidth = '140px';
 
   const badge = document.createElement('span');
   badge.setAttribute('data-backup-status', 'true');
@@ -600,8 +738,10 @@ async function updateNetworkInfo() {
     const preferences = await window.electronAPI.getPreferences();
     
     const apiPort = preferences.apiPort || 9595;
-    const webUiPort = preferences.webUiPort || 80;
-    
+    let webUiPort = preferences.webUiPort || 80;
+    if (preferences.webUiUseHttps && webUiPort === 80) webUiPort = 443;
+    const webUiProtocol = preferences.webUiUseHttps ? 'https' : 'http';
+
     // Display API URLs
     const apiUrlsDiv = document.getElementById('api-urls');
     apiUrlsDiv.innerHTML = '';
@@ -630,7 +770,7 @@ async function updateNetworkInfo() {
       networkInfo.forEach(ip => {
         const urlItem = document.createElement('div');
         urlItem.className = 'url-item' + (ip.internal ? ' internal' : '');
-        urlItem.textContent = `http://${ip.address}:${webUiPort}`;
+        urlItem.textContent = `${webUiProtocol}://${ip.address}:${webUiPort}`;
         if (ip.internal) {
           urlItem.title = 'Localhost/internal interface';
         }
@@ -671,7 +811,56 @@ async function saveMachineName() {
 }
 
 // Save port preferences
-  async function savePortPreferences() {
+function updateShareLinkDisplay() {
+  if (!shareLinkDisplay || !shareLinkUrlSpan || !tunnelPublicUrlInput) return;
+  const url = (tunnelPublicUrlInput.value || '').trim();
+  if (url) {
+    shareLinkDisplay.style.display = 'block';
+    shareLinkUrlSpan.textContent = url;
+  } else {
+    shareLinkDisplay.style.display = 'none';
+    shareLinkUrlSpan.textContent = '';
+  }
+}
+
+async function saveTunnelPublicUrl() {
+  try {
+    const url = tunnelPublicUrlInput ? (tunnelPublicUrlInput.value || '').trim() : '';
+    await window.electronAPI.savePreferences({ tunnelPublicUrl: url || null });
+    updateShareLinkDisplay();
+    showStatus('Public URL saved', 'info');
+  } catch (error) {
+    console.error('Failed to save tunnel public URL:', error);
+    showStatus('Failed to save public URL', 'error');
+  }
+}
+
+function updateHttpsCertKeyVisibility() {
+  if (!webUiHttpsCertGroup || !webUiHttpsKeyGroup || !webUiUseHttpsCheckbox) return;
+  const show = webUiUseHttpsCheckbox.checked;
+  webUiHttpsCertGroup.style.display = show ? 'block' : 'none';
+  webUiHttpsKeyGroup.style.display = show ? 'block' : 'none';
+}
+
+async function saveHttpsPreferences() {
+  try {
+    const useHttps = webUiUseHttpsCheckbox ? webUiUseHttpsCheckbox.checked === true : false;
+    const port = webUiPortInput ? (parseInt(webUiPortInput.value, 10) || (useHttps ? 443 : 80)) : undefined;
+    const prefs = {
+      webUiUseHttps: useHttps,
+      webUiCertPath: webUiCertPathInput ? (webUiCertPathInput.value || '').trim() || null : null,
+      webUiKeyPath: webUiKeyPathInput ? (webUiKeyPathInput.value || '').trim() || null : null
+    };
+    if (port !== undefined) prefs.webUiPort = port;
+    await window.electronAPI.savePreferences(prefs);
+    showStatus('HTTPS settings saved. Restart the app for Web UI to use HTTPS.', 'info');
+  } catch (error) {
+    console.error('Failed to save HTTPS preferences:', error);
+    showStatus('Failed to save HTTPS settings', 'error');
+  }
+}
+
+async function savePortPreferences() {
   try {
     const apiPort = parseInt(apiPortInput.value, 10);
     const webUiPort = parseInt(webUiPortInput.value, 10);

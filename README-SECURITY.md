@@ -10,9 +10,19 @@ When you first launch the app after downloading, macOS will show a security warn
 
 **Right-click the app** and select **"Open"** from the context menu. macOS will show a dialog asking if you want to open it - click **"Open"** in that dialog. This is the easiest way to launch the app for the first time.
 
-## Alternative Method
+## If macOS Says the App Is "Damaged"
 
-If you double-click the app and see a security error:
+Sometimes macOS reports that the app "is damaged and can't be opened" when you open an unsigned build (e.g. from a zip). This is usually due to quarantine attributes. Fix it in Terminal:
+
+```bash
+xattr -cr "/path/to/Google Slides Opener.app"
+```
+
+Use the actual path to the app (e.g. in your Downloads folder or Applications). Then open the app again (right-click → Open if needed).
+
+## Alternative Method (Security Warning)
+
+If you double-click the app and see a security error (not "damaged"):
 
 1. Go to **System Settings** → **Privacy & Security**
 2. Scroll down to find a message about "Google Slides Opener" being blocked

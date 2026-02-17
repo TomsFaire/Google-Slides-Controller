@@ -14,7 +14,13 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
+let nodePty = null;
+try {
+  nodePty = require('node-pty');
+} catch (e) {
+  // node-pty optional
+}
 const os = require('os');
 const util = require('util');
 
@@ -73,6 +79,16 @@ function logWarn(...args) {
 function logError(...args) {
   console.error(...args);
 }
+
+// Count U+FFFD (replacement characters) in raw notes text before normalization.
+function countReplacementChars(text) {
+  if (text == null || typeof text !== 'string') return 0;
+  const m = text.match(/\uFFFD/g);
+  return m ? m.length : 0;
+}
+
+// Track last-seen encoding issue state so /api/status can expose it cheaply.
+let lastNotesEncodingIssue = false;
 
 // Normalize speaker-notes text: fix line breaks and replace corruption (U+FFFD) with newlines.
 function normalizeSpeakerNotes(text) {
@@ -1361,8 +1377,11 @@ ipcMain.handle('get-speaker-notes', async () => {
       })()
     `);
     const rawNotes = notesContent || 'No notes available for this slide.';
+    const replacementCharsFound = countReplacementChars(rawNotes);
+    const encodingIssuesDetected = replacementCharsFound > 0;
+    lastNotesEncodingIssue = encodingIssuesDetected;
     const notes = normalizeSpeakerNotes(rawNotes) || 'No notes available for this slide.';
-    return { success: true, notes };
+    return { success: true, notes, encodingIssuesDetected, replacementCharsFound };
   } catch (error) {
     console.error('[IPC] Error getting speaker notes:', error);
     return { success: false, notes: '', error: error.message };
@@ -2145,6 +2164,7 @@ const DEFAULT_WEB_UI_PORT = 80;
 const DEFAULT_WEB_UI_HTTPS_PORT = 443;
 let httpServer;
 let webUiServer;
+let currentWebUiPort = null; // Set when Web UI server starts
 
 function startHttpServer() {
   httpServer = http.createServer(async (req, res) => {
@@ -2347,6 +2367,7 @@ function startHttpServer() {
         const prefs = loadPreferences();
         state.presentationDisplayId = prefs.presentationDisplayId || null;
         state.notesDisplayId = prefs.notesDisplayId || null;
+        state.notesEncodingIssue = lastNotesEncodingIssue;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
       })().catch(err => {
@@ -3432,9 +3453,12 @@ function startHttpServer() {
           `);
           const rawNotes = notesContent || 'No notes available for this slide.';
           logFirstReplacementCharContext(rawNotes, 'raw ');
+          const replacementCharsFound = countReplacementChars(rawNotes);
+          const encodingIssuesDetected = replacementCharsFound > 0;
+          lastNotesEncodingIssue = encodingIssuesDetected;
           const notes = normalizeSpeakerNotes(rawNotes) || 'No notes available for this slide.';
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-          res.end(JSON.stringify({ success: true, notes }), 'utf8');
+          res.end(JSON.stringify({ success: true, notes, encodingIssuesDetected, replacementCharsFound }), 'utf8');
         } catch (error) {
           console.error('[API] Error getting speaker notes:', error);
           res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
@@ -5418,6 +5442,7 @@ function startWebUiServer() {
         </div>
         <div class="speaker-notes-content-wrapper">
           <div class="speaker-notes-content" id="speaker-notes-content">Loading notes...</div>
+          <div id="notes-encoding-warning" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#b26a00; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); border-radius:6px;">Line break encoding issues detected on this slide. Notes are displayed with corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the <a href="https://github.com/TomsFaire/Google-Slides-Controller/blob/main/docs/fix-speaker-notes.gs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">cleanup script</a>.</div>
         </div>
       </div>
     </div>
@@ -5854,10 +5879,14 @@ function startWebUiServer() {
           const notesContent = document.getElementById('speaker-notes-content');
           var raw = (data.success && data.notes) ? data.notes : (data.notes || 'No notes available. Make sure speaker notes are open.');
           notesContent.textContent = normalizeSpeakerNotes(raw);
+          var warn = document.getElementById('notes-encoding-warning');
+          if (warn) warn.style.display = data.encodingIssuesDetected ? 'block' : 'none';
         })
         .catch(err => {
           console.error('Failed to load speaker notes:', err);
           document.getElementById('speaker-notes-content').textContent = 'Failed to load notes.';
+          var warn = document.getElementById('notes-encoding-warning');
+          if (warn) warn.style.display = 'none';
         });
     }
 
@@ -7639,6 +7668,7 @@ function startWebUiServer() {
   }
 
   const protocol = creds ? 'https' : 'http';
+  currentWebUiPort = webUiPort;
   webUiServer.listen(webUiPort, '0.0.0.0', () => {
     console.log(`[Web UI] Server listening on ${protocol}://0.0.0.0:${webUiPort}`);
   }).on('error', (err) => {

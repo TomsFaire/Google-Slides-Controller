@@ -33,3 +33,33 @@
 
 - **Fixing only in the window**  
   Any fix that changes what the user sees in the notes window (e.g. a script that rewrites text nodes in that div) would run **in** that window and was rolled back because it caused other issues (notes not advancing with slides, or characters deleted instead of replaced). Re-enabling such a fix would require making it robust (e.g. correct newlines, no full-div replacement so slide updates still work).
+
+## Detection
+
+The app now detects encoding issues at read-time. Both the IPC (`get-speaker-notes`) and HTTP (`GET /api/get-speaker-notes`) responses include:
+
+- `encodingIssuesDetected` (boolean) — `true` if U+FFFD characters were found in the raw notes before normalization.
+- `replacementCharsFound` (number) — count of U+FFFD characters found.
+
+The `GET /api/status` response also includes `notesEncodingIssue` (boolean), reflecting the last-seen state, so Companion modules or other integrations can surface the warning.
+
+When issues are detected:
+
+- **Web UI**: a small warning appears below the speaker notes panel.
+- **Desktop app**: a warning appears below the speaker notes capture section.
+
+## Fixing at the source
+
+The cleanest fix is to repair the notes **inside** the Google Slides presentation so the broken characters are never produced in the first place.
+
+### Option A: Google Apps Script (recommended for bulk fixes)
+
+A ready-to-use script is provided in [`docs/fix-speaker-notes.gs`](fix-speaker-notes.gs). It iterates all slides, checks for U+FFFD / U+FFFC / null bytes in speaker notes, replaces them with newlines, and writes the cleaned text back. Instructions are in the file header.
+
+### Option B: Manual editing
+
+Open the presentation in the Google Slides editor, go to the notes area for each affected slide, delete the line break, and press Enter to re-enter it. This forces Google to store a clean line break character.
+
+### Cross-app validation
+
+This is not unique to our app. The [Remote for Slides](https://chromewebstore.google.com/detail/remote-for-slides/pojijacppbhikhkmegdoechbfiiibppi) Chrome extension (which runs entirely in Chrome, not Electron) shows the same broken characters in its speaker notes display. This confirms the issue is upstream in how Google Slides renders or encodes notes in Presenter View.

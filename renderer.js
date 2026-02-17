@@ -563,15 +563,19 @@ async function initDisplays() {
     // Speaker notes capture (clean text via IPC - no fetch/port needed)
     async function refreshSpeakerNotesCapture() {
       if (!speakerNotesCapture) return;
+      const warnEl = document.getElementById('notes-encoding-warning-desktop');
       try {
         const data = await window.electronAPI.getSpeakerNotes();
         if (data.success && data.notes) {
           speakerNotesCapture.textContent = data.notes;
+          if (warnEl) warnEl.style.display = data.encodingIssuesDetected ? 'block' : 'none';
         } else {
           speakerNotesCapture.textContent = data.error || 'No speaker notes window open.';
+          if (warnEl) warnEl.style.display = 'none';
         }
       } catch (err) {
         speakerNotesCapture.textContent = 'Could not load notes. Is speaker notes open?';
+        if (warnEl) warnEl.style.display = 'none';
       }
     }
     if (speakerNotesRefreshBtn) speakerNotesRefreshBtn.addEventListener('click', refreshSpeakerNotesCapture);
@@ -586,7 +590,7 @@ async function initDisplays() {
       });
     }
     refreshSpeakerNotesCapture();
-    
+
   } catch (error) {
     showStatus('Failed to load displays', 'error');
   }

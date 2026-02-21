@@ -19,5 +19,10 @@
   },
   "devDependencies": {
     "@companion-module/tools": "^2.0.0"
-  }
+  },
+  "engines": {
+    "node": "^22.20",
+    "yarn": "^4"
+  },
+  "packageManager": "yarn@4.12.0"
 }

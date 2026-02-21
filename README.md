@@ -27,7 +27,7 @@ Original work by [nerif-tafu](https://github.com/nerif-tafu). This fork includes
    - Presentation + Notes monitor selection
    - Network ports (Web UI + API)
    - (Optional) preset presentations, stagetimer integration, and primary/backup mode
-4. If you use Bitfocus Companion, download `companion-module-gslide-opener.tgz` on your Companion machine and import it in Companion.
+4. If you use Bitfocus Companion, get the **Google Slides Controller** module from [bitfocus/companion-module-google-slidescontroller](https://github.com/bitfocus/companion-module-google-slidescontroller) (releases or Bitfocus Developer Portal) and import the `.tgz` in Companion.
 
 ## Web UI (browser remote)
 
@@ -65,8 +65,10 @@ The Web UI is served by the Electron app (default: `http://YOUR_PRESENTATION_PC_
   - Machine name (shown in the Web UI header)
   - Network ports (Web UI + API)
   - Primary/backup mode configuration (see below)
+  - **Display brightness (exposure)** – A slider to dim only the **page background** behind the Web UI (e.g. when the presenter’s screen is in front of the camera and you want to reduce the light on their face). Text and panels keep their normal theme colors; only the background darkens. Changes apply immediately and sync across devices (operator and presenter).
   - stagetimer.io connection settings (Room ID, API key, enable/visibility)
   - Verbose logging toggle (useful for troubleshooting)
+  - **Slido**: If you use [Slido](https://www.slido.com/) (polls, Q&A, quizzes) with Google Slides, you can run it inside the app so remotes still work: in the **Slido** section set **Slido Chrome extension (unpacked folder)** to the extension folder (e.g. copy from Chrome’s `Extensions` directory after installing the [Slido extension](https://chromewebstore.google.com/detail/slido/dhhclfjehmpacimcdknijodpjpmppkii)), click **Save Web UI Appearance**, then restart the app. The presentation window uses a Chrome user agent and can load the extension. Alternatively **Open presentation in browser** / **Open Slido** open in your system browser (remotes will not control that tab).
 
 ### Primary/Backup mode (optional failover)
 
@@ -97,8 +99,8 @@ The Companion module connects to the app’s **HTTP API** (host + API port; defa
 
 ### Setup in Companion
 
-1. In Companion, go to **Modules** → **Import module package** and select `companion-module-gslide-opener.tgz`.
-2. Add a connection for **Google Slides Opener**.
+1. Get the Companion module from [bitfocus/companion-module-google-slidescontroller](https://github.com/bitfocus/companion-module-google-slidescontroller) (releases or [Bitfocus Developer Portal](https://developer.bitfocus.io/)). In Companion, go to **Modules** → **Import module package** and select the `.tgz` file.
+2. Add a connection for **Google Slides Controller** (or **Google Slides Opener** if you use an older module).
 3. Set:
    - **Host**: the presentation computer IP (or `127.0.0.1` if Companion is on the same machine)
    - **Port**: the app’s API port (default **9595**)
@@ -142,6 +144,7 @@ The Companion module connects to the app’s **HTTP API** (host + API port; defa
 - `notes_display_id`
 - `login_state` (Yes/No)
 - `logged_in_user` (email)
+- `display_brightness` (0–100, Web UI page background exposure)
 
 ### Feedbacks
 
@@ -216,6 +219,10 @@ The API port is configurable in the app (default **9595**). Requests are made to
 - `GET /api/backup-status` (primary mode)
 - `GET /api/stagetimer-settings`
 - `POST /api/stagetimer-settings`
+- `POST /api/web-ui-display-brightness` – Set Web UI page background brightness (exposure), 0–100 (only the background dims; text/panels unchanged)
+  ```json
+  { "displayBrightness": 50 }
+  ```
 
 ### Example with curl
 
@@ -247,5 +254,6 @@ To build distributables:
 ```bash
 npm run build:win # Builds the .exe for windows
 npm run build:linux # Builds the appimage for Linux
-./package-companion.ps1 # Builds the companion .tgz
 ```
+
+The Bitfocus Companion module is developed and released from [bitfocus/companion-module-google-slidescontroller](https://github.com/bitfocus/companion-module-google-slidescontroller).

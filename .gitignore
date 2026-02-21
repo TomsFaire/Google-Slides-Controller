@@ -4,8 +4,6 @@ release/
 *.log
 .DS_Store
 preferences.json
-companion-module-gslide-opener/node_modules/
-
 # Build artifacts
 *.exe
 *.AppImage
@@ -14,6 +12,7 @@ companion-module-gslide-opener/node_modules/
 *.tar.gz
 *.tgz
 *.app
+
 test-package-temp/
 pkg/
 
@@ -31,6 +30,9 @@ verify-app.sh
 
 # Duplicate/old folders
 github/
+
+# New companion module (separate repo at bitfocus/companion-module-google-slidescontroller)
+companion-module-google-slidescontroller/
 
 # Untested add-ons (do not commit until ready)
 gslide-websocket-addon/

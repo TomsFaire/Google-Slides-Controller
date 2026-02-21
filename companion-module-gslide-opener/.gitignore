@@ -1,6 +1,0 @@
-node_modules/
-package-lock.json
-/pkg
-/*.tgz
-gslide-opener-*.tgz
-/.yarn

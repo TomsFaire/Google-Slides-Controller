@@ -1238,6 +1238,152 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
   }
 }
 
+// ============================================================
+// Share Link Generation (plan3)
+// ============================================================
+
+// Word lists for share code generation
+const ADJECTIVES = [
+  'happy', 'sunny', 'quick', 'bright', 'swift', 'calm', 'bold', 'keen',
+  'vivid', 'fresh', 'smooth', 'great', 'ready', 'wild', 'wise', 'kind',
+  'lively', 'proud', 'noble', 'eager', 'tidy', 'witty', 'vast', 'warm'
+];
+
+const NOUNS = [
+  'cloud', 'star', 'tiger', 'eagle', 'river', 'ocean', 'forest', 'mountain',
+  'sunset', 'shadow', 'thunder', 'beacon', 'rocket', 'dragon', 'crystal', 'lotus',
+  'phoenix', 'glacier', 'tornado', 'compass', 'harbor', 'summit', 'valley', 'peak'
+];
+
+// Generate a random share code: "word-word-hex8"
+function genShareCode() {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const hex = crypto.randomBytes(4).toString('hex');
+  return `${adj}-${noun}-${hex}`;
+}
+
+// Register a share code with the redirect service
+// Returns Promise<{ url, code, expiresAt }>
+async function registerShareCode(code) {
+  return new Promise((resolve, reject) => {
+    const prefs = loadPreferences();
+
+    // Validate required configuration
+    if (!prefs.tunnelPublicUrl) {
+      return reject(new Error('Set Public or tunnel URL first'));
+    }
+    if (!prefs.shareRegisterUrl || !prefs.shareApiKey) {
+      return reject(new Error('Configure shareBaseUrl/shareRegisterUrl/shareApiKey'));
+    }
+
+    // Parse the registration URL
+    let hostname, port, path, protocol;
+    try {
+      const url = new URL(prefs.shareRegisterUrl);
+      hostname = url.hostname;
+      port = url.port || (url.protocol === 'https:' ? 443 : 80);
+      path = url.pathname + url.search;
+      protocol = url.protocol === 'https:' ? 'https' : 'http';
+    } catch (e) {
+      return reject(new Error(`Invalid shareRegisterUrl: ${e.message}`));
+    }
+
+    const ttlSec = prefs.shareTtlSec || 3600; // Default 1 hour
+    const body = JSON.stringify({
+      key: prefs.shareApiKey,
+      code: code,
+      target: prefs.tunnelPublicUrl,
+      ttlSec: ttlSec
+    });
+
+    const lib = protocol === 'https' ? https : http;
+    const options = {
+      hostname: hostname,
+      port: port,
+      path: path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      },
+      timeout: 5000
+    };
+
+    const req = lib.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk.toString();
+      });
+      res.on('end', () => {
+        try {
+          const response = JSON.parse(data);
+          if (response.ok) {
+            resolve({
+              url: response.url,
+              code: code,
+              expiresAt: response.expiresAt
+            });
+          } else {
+            reject(new Error(`Failed to register share code: ${response.error || 'unknown error'}`));
+          }
+        } catch (e) {
+          reject(new Error(`Failed to parse redirect service response: ${e.message}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      reject(new Error(`Failed to register share code: ${err.message}`));
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Failed to register share code: timeout'));
+    });
+
+    req.write(body);
+    req.end();
+  });
+}
+
+// Get or generate a share link with caching
+// Returns Promise<{ url, code, expiresAt }>
+async function getShareLink({ forceNew = false } = {}) {
+  const prefs = loadPreferences();
+
+  // Check cache if not forcing new
+  if (!forceNew && prefs.shareCache) {
+    const cache = prefs.shareCache;
+    if (cache.expiresAt && cache.expiresAt > Date.now() / 1000 + 60) {
+      // Cache valid for at least another minute
+      logDebug('[ShareLink] Using cached share link:', cache.code);
+      return {
+        url: cache.url,
+        code: cache.code,
+        expiresAt: cache.expiresAt
+      };
+    }
+  }
+
+  // Generate new code and register
+  logDebug('[ShareLink] Generating new share code');
+  const code = genShareCode();
+  const result = await registerShareCode(code);
+
+  // Cache the result
+  const cacheData = {
+    url: result.url,
+    code: result.code,
+    expiresAt: result.expiresAt
+  };
+  prefs.shareCache = cacheData;
+  savePreferences(prefs);
+  logDebug('[ShareLink] Registered and cached share code:', code);
+
+  return result;
+}
+
 function attachCrashHandlers(win, label) {
   if (!win || !win.webContents) return;
   win.webContents.on('render-process-gone', (event, details) => {
@@ -4518,16 +4664,6 @@ function startWebUiServer() {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
 
-      const tunnelPublicUrl = (prefs.tunnelPublicUrl || '').trim();
-      const tunnelPublicUrlEscaped = tunnelPublicUrl
-        ? tunnelPublicUrl
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;')
-        : '';
-      
       const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4631,32 +4767,6 @@ function startWebUiServer() {
       gap: 12px;
       flex-wrap: wrap;
     }
-    .share-link-bar {
-      width: 100%;
-      margin-top: 8px;
-      padding: 8px 12px;
-      background: rgba(102, 126, 234, 0.12);
-      border-radius: 8px;
-      font-size: 13px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .share-link-label { color: #555; font-weight: 600; }
-    .share-link-url { color: #667eea; word-break: break-all; }
-    .share-link-url:hover { text-decoration: underline; }
-    .share-link-copy {
-      padding: 4px 10px;
-      font-size: 12px;
-      background: #667eea;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
-    .share-link-copy:hover { background: #5568d3; }
     .web-ui-brand-logo {
       max-height: 56px;
       width: auto;
@@ -5369,7 +5479,6 @@ function startWebUiServer() {
       ${showLogo ? '<img class="web-ui-brand-logo" src="/custom-logo?v=' + Date.now() + '" alt="">' : '<svg class="system-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="12" rx="2" ry="2"></rect><line x1="6" y1="20" x2="18" y2="20"></line><line x1="8" y1="16" x2="8" y2="20"></line><line x1="16" y1="16" x2="16" y2="20"></line><circle cx="12" cy="10" r="3" fill="currentColor"></circle><polygon points="10 10 12 9 14 10 12 11" fill="white"></polygon></svg>'}
       ${machineName}
     </h1>
-    ${tunnelPublicUrlEscaped ? '<div class="share-link-bar"><span class="share-link-label">Share this link:</span> <a href="' + tunnelPublicUrlEscaped + '" class="share-link-url" target="_blank" rel="noopener">' + tunnelPublicUrlEscaped + '</a> <button type="button" class="share-link-copy" title="Copy link">Copy</button></div>' : ''}
     </div>
     
     <!-- Tabs -->
@@ -5774,21 +5883,6 @@ function startWebUiServer() {
       });
     });
 
-    // Share link copy button
-    document.addEventListener('click', function(e) {
-      if (e.target && e.target.classList && e.target.classList.contains('share-link-copy')) {
-        const bar = e.target.closest('.share-link-bar');
-        const link = bar && bar.querySelector('.share-link-url');
-        if (link && link.href) {
-          navigator.clipboard.writeText(link.href).then(function() {
-            var lbl = e.target.textContent;
-            e.target.textContent = 'Copied!';
-            setTimeout(function() { e.target.textContent = lbl; }, 2000);
-          }).catch(function() { showStatus('Failed to copy', true); });
-        }
-      }
-    });
-    
     function apiCall(endpoint, method = 'POST') {
       const url = API_BASE + endpoint;
       console.log('[Web UI] Making API call:', method, url);

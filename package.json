@@ -18,7 +18,7 @@
     "google-slides",
     "presentation"
   ],
-  "author": "TomsFaire (based on work by nerif-tafu)",
+  "author": "TomsFaire <tom@example.com> (based on work by nerif-tafu)",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -68,6 +68,13 @@
         {
           "target": "AppImage",
           "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
             "x64"
           ]
         }
@@ -80,7 +87,8 @@
         {
           "target": "zip",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],

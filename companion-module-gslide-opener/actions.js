@@ -286,8 +286,65 @@ module.exports = function (self) {
 				}
 			},
 		},
+
+		show_share_qr: {
+			name: 'Show Share QR',
+			description: 'Display a QR code overlay on the presentation with the share link',
+			options: [
+				{
+					id: 'durationSec',
+					type: 'number',
+					label: 'Display Duration (seconds)',
+					default: 20,
+					min: 5,
+					max: 300,
+					required: true,
+					useVariables: true,
+				},
+				{
+					id: 'forceNew',
+					type: 'checkbox',
+					label: 'Generate New Share Link',
+					default: false,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const durationStr = await self.parseVariablesInString(String(event.options.durationSec))
+					const durationSec = parseInt(durationStr, 10)
+
+					if (isNaN(durationSec) || durationSec < 5 || durationSec > 300) {
+						self.log('error', `Invalid duration: ${durationStr} (must be 5-300 seconds)`)
+						return
+					}
+
+					const forceNew = event.options.forceNew || false
+
+					self.log('info', `Showing QR code for ${durationSec} seconds (forceNew: ${forceNew})`)
+					const response = await self.apiRequest('POST', '/api/show-share-qr', { durationSec, forceNew })
+					self.log('info', response.message || `QR shown for ${durationSec} seconds`)
+				} catch (error) {
+					self.log('error', `Failed to show QR: ${error.message}`)
+				}
+			},
+		},
+
+		hide_share_qr: {
+			name: 'Hide Share QR',
+			description: 'Hide the QR code overlay immediately',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Hiding QR code overlay')
+					const response = await self.apiRequest('POST', '/api/hide-share-qr', {})
+					self.log('info', response.message || 'QR hidden')
+				} catch (error) {
+					self.log('error', `Failed to hide QR: ${error.message}`)
+				}
+			},
+		},
 	}
-	
+
 	console.log('[gslide-opener] actions.js - Registering', Object.keys(actionDefinitions).length, 'actions')
 	self.log('info', `Registering ${Object.keys(actionDefinitions).length} actions`)
 	self.setActionDefinitions(actionDefinitions)

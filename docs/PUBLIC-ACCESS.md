@@ -15,7 +15,7 @@ A tunnel gives you a public HTTPS URL that forwards to your Web UI. No port forw
    ```bash
    cloudflared tunnel --url http://localhost:80
    ```
-3. Use the printed URL (e.g. `https://xxx.trycloudflare.com`) and optionally paste it into the app’s **Public or tunnel URL** field in Network Access so it’s easy to share.
+3. Use the printed URL (e.g. `https://xxx.trycloudflare.com`) and share it with users who need remote access.
 
 **ngrok**
 
@@ -25,7 +25,7 @@ A tunnel gives you a public HTTPS URL that forwards to your Web UI. No port forw
    ngrok http 80
    ```
    (Use your Web UI port if you changed it.)
-3. Use the generated `https://xxx.ngrok.io` URL and optionally paste it into the app’s **Public or tunnel URL** field.
+3. Use the generated `https://xxx.ngrok.io` URL and share it with users who need remote access.
 
 ### 2. Reverse proxy (if you have a domain and server)
 

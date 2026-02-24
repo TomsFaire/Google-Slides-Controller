@@ -9,14 +9,14 @@ Set-Location companion-module-gslide-opener
 # Install dependencies if not present
 if (-not (Test-Path "node_modules")) {
     Write-Host "Installing dependencies..." -ForegroundColor Yellow
-    npm ci
+    yarn install --frozen-lockfile
 } else {
     Write-Host "Dependencies already installed" -ForegroundColor Gray
 }
 
 # Run official build command
 Write-Host "Building package with companion-module-build..." -ForegroundColor Yellow
-npm run package
+yarn package
 
 # Move the package to root and rename
 Set-Location ..

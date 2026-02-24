@@ -24,6 +24,9 @@
     "type": "git",
     "url": "https://github.com/TomsFaire/Google-Slides-Controller.git"
   },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
   "devDependencies": {
     "cross-env": "^10.1.0",
     "electron": "^28.1.0",

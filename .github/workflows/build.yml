@@ -146,11 +146,11 @@ jobs:
           rm -rf "$TEMP_DIR"
       
       - name: Install Companion Module dependencies
-        run: npm ci
+        run: corepack enable && yarn install --immutable
         working-directory: ./companion-module-gslide-opener
       
       - name: Package Companion Module
-        run: npm run package
+        run: yarn run package
         working-directory: ./companion-module-gslide-opener
       
       - name: Move companion module package to root

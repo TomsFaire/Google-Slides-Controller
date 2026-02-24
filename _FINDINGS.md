@@ -166,3 +166,96 @@
 - plan3: ~8k (main.js share link helpers)
 - **Total: ~23.5k of 200k budget**
 - **Remaining: ~176.5k tokens**
+
+---
+
+## Plan4 Findings (API Endpoints for Share Links)
+
+### Code Patterns Discovered
+
+✅ **API endpoint structure: Simple and consistent**
+- Single request handler with route checking: `if (req.method === 'POST' && req.url === '/api/share-link')`
+- No external router library (no Express, pure Node.js http module)
+- CORS headers applied globally at handler start
+- IP allowlist check happens early, returns 403 if not allowed
+
+✅ **Error response format: Consistent pattern**
+- Success: `res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, ... }))`
+- Error: `res.writeHead(statusCode, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'message' }))`
+- Status codes: 400 for config errors, 500 for server errors, 502 for external service failures
+- All POST endpoints use `req.on('data', ...)` + `req.on('end', ...)` pattern for body parsing
+
+✅ **IP allowlist checking: Straightforward integration**
+- `isControllerAllowedRequest(req, prefs)` is called early in handler
+- Returns boolean, no exceptions for invalid configs
+- Already integrated before any endpoint processing
+
+✅ **Async/await support: Clean integration**
+- HTTP handler uses `async (req, res) =>` syntax
+- POST endpoints can use `async () => { ... }` in `req.on('end', ...)`
+- getShareLink() is async and returns Promise
+- No callback hell needed; straightforward error handling
+
+### Integration Difficulty Assessment
+
+✅ **Easy - Endpoints fit cleanly into existing pattern**
+- Three new endpoints follow identical structure to existing POST endpoints
+- Error mapping is straightforward (check error message, set status code)
+- Stub functions (showQrOverlay, hideQrOverlay) are simple placeholders
+- Total endpoint code: ~120 lines (including error handling and comments)
+
+### Implementation Summary
+
+**Code added**:
+- 2 stub functions for QR (showQrOverlay, hideQrOverlay) ~17 lines
+- 3 API endpoints (/api/share-link, /api/show-share-qr, /api/hide-share-qr) ~120 lines
+- Total: ~137 lines
+
+**Patterns followed**:
+- All endpoints use IP allowlist check (inherited from server-wide check)
+- Body parsing: standard `req.on('data')` + `req.on('end')` pattern
+- Error handling: status codes mapped to error types
+- Async/await for getShareLink() call (works in req.on('end') callback)
+
+**Tests done**:
+- Syntax validation: ✅ Passed
+- Endpoint routing logic: Matches existing patterns
+- Error code mapping: 400 for config, 500 for server, 502 for external service
+- Stub functions: Properly integrated, can be enhanced in plan5
+
+### Complexity for plan5
+
+**Main.js patterns are stable and predictable:**
+- Window creation patterns are clear (lines 1144–1180 from plan3 findings)
+- No hidden complexity in HTTP error handling
+- Stub functions are simple to replace with real implementations
+
+**Recommendation for plan5 (Window + QR Overlay):**
+- **Model: Sonnet is SUFFICIENT**
+- HTTP integration was straightforward (no complex context-switching)
+- Window management will be the main challenge, not API integration
+- Existing window patterns are well-documented in code
+
+**Recommendation for plan6 (Companion Actions):**
+- **Model: Haiku CONFIRMED**
+- Actions only need to call these three endpoints
+- Response format is stable: `{ ok: true, url, code, expiresAt }` or `{ error: 'message' }`
+- No server-side changes needed
+
+### Status
+
+✅ **plan4 COMPLETE**
+- 3 endpoints fully implemented with error handling
+- All IP allowlist checks in place
+- Stub functions ready for plan5
+- Syntax validation passed
+
+**Cumulative token usage**:
+- plan1: ~5.5k
+- plan2: ~10k
+- plan3: ~8k
+- plan4: ~10k (less reading needed due to _FINDINGS.md documentation)
+- **Total: ~33.5k of 200k budget**
+- **Remaining: ~166.5k tokens** ✅
+
+**Status**: READY FOR plan5 & plan6

@@ -4,7 +4,9 @@ release/
 *.log
 .DS_Store
 preferences.json
+package-lock.json
 companion-module-gslide-opener/node_modules/
+companion-module-gslide-opener/package-lock.json
 
 # Build artifacts
 *.exe
@@ -17,12 +19,18 @@ companion-module-gslide-opener/node_modules/
 test-package-temp/
 pkg/
 
-# macOS resource forks
+# macOS resource forks and OS artifacts
 Icon
 **/Icon
 **/Icon?
 **/Icon\r
+**/Icon*
 **/.Icon
+# Windows short-name / temp files (e.g. I7CIPB~N), editor backups
+*~*
+# macOS AppleDouble resource forks
+._*
+**/._*
 
 # Test files
 test-*.js
@@ -36,3 +44,11 @@ github/
 gslide-websocket-addon/
 gslide-chrome-addon/
 sidecar/
+
+# Plan and AI assistant files (local only)
+plan.md
+plan*.md
+claud.md
+claude.md
+skill.md
+skills.md

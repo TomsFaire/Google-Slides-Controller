@@ -23,6 +23,7 @@ try {
 }
 const os = require('os');
 const util = require('util');
+const QRCode = require('qrcode');
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -2303,6 +2304,168 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   return { success: true };
 });
 
+// ============================================================
+// QR Overlay Functions (plan5 implementation)
+// ============================================================
+
+let qrOverlayWindow = null;
+let qrOverlayHideTimeout = null;
+
+// Generate HTML/CSS for QR overlay display
+function generateQrOverlayHtml(qrDataUrl, shareUrl) {
+  const encodedUrl = shareUrl.replace(/'/g, "\\'");
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        body {
+          background-color: #000;
+          color: #fff;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100vh;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          user-select: none;
+        }
+        .container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 20px;
+        }
+        .qr-code {
+          width: 300px;
+          height: 300px;
+          background: white;
+          padding: 10px;
+          border-radius: 8px;
+          box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        .qr-code img {
+          width: 100%;
+          height: 100%;
+        }
+        .fallback-url {
+          max-width: 400px;
+          text-align: center;
+          font-size: 14px;
+          color: #ccc;
+          word-break: break-all;
+          padding: 0 20px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="qr-code">
+          <img src="${qrDataUrl}" alt="QR Code">
+        </div>
+        <div class="fallback-url">${shareUrl}</div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+
+// Show QR overlay on presentation display
+async function showQrOverlay(linkData, durationSec = 20) {
+  logDebug('[QR] showQrOverlay called:', { code: linkData.code, duration: durationSec });
+
+  try {
+    // Hide any existing overlay first
+    hideQrOverlay();
+
+    // Generate QR code from URL
+    const qrDataUrl = await QRCode.toDataURL(linkData.url, {
+      width: 300,
+      margin: 1,
+      color: { dark: '#000', light: '#fff' }
+    });
+
+    // Get display information
+    const prefs = loadPreferences();
+    const displays = screen.getAllDisplays();
+    const presentationDisplayId = Number(prefs.presentationDisplayId);
+    const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+
+    if (!presentationDisplay) {
+      logDebug('[QR] No presentation display found');
+      return;
+    }
+
+    // Generate HTML content
+    const htmlContent = generateQrOverlayHtml(qrDataUrl, linkData.url);
+    const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent);
+
+    // Create frameless, transparent window
+    qrOverlayWindow = new BrowserWindow({
+      x: presentationDisplay.bounds.x + (presentationDisplay.bounds.width - 400) / 2,
+      y: presentationDisplay.bounds.y + (presentationDisplay.bounds.height - 400) / 2,
+      width: 400,
+      height: 400,
+      frameless: true,
+      transparent: true,
+      alwaysOnTop: true,
+      visibleOnAllWorkspaces: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true
+      }
+    });
+
+    // Load the data URL
+    qrOverlayWindow.loadURL(dataUrl);
+    qrOverlayWindow.show();
+
+    // Set up auto-hide timeout
+    if (durationSec > 0) {
+      qrOverlayHideTimeout = setTimeout(() => {
+        hideQrOverlay();
+      }, durationSec * 1000);
+    }
+
+    // Clean up window reference when closed
+    qrOverlayWindow.on('closed', () => {
+      qrOverlayWindow = null;
+      if (qrOverlayHideTimeout) {
+        clearTimeout(qrOverlayHideTimeout);
+        qrOverlayHideTimeout = null;
+      }
+    });
+
+    logDebug('[QR] QR overlay displayed successfully');
+  } catch (error) {
+    logDebug('[QR] Error showing QR overlay:', error);
+    hideQrOverlay();
+  }
+}
+
+// Hide QR overlay
+function hideQrOverlay() {
+  logDebug('[QR] hideQrOverlay called');
+
+  // Clear pending hide timeout
+  if (qrOverlayHideTimeout) {
+    clearTimeout(qrOverlayHideTimeout);
+    qrOverlayHideTimeout = null;
+  }
+
+  // Close window if it exists
+  if (qrOverlayWindow && !qrOverlayWindow.isDestroyed()) {
+    qrOverlayWindow.close();
+    qrOverlayWindow = null;
+  }
+}
+
 // HTTP API for Bitfocus Companion integration
 // Ports are configurable via preferences, defaults below
 const DEFAULT_API_PORT = 9595;
@@ -4476,7 +4639,119 @@ function startHttpServer() {
       });
       return;
     }
-    
+
+    // POST /api/share-link - Generate or return cached share link
+    if (req.method === 'POST' && req.url === '/api/share-link') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+
+      req.on('end', async () => {
+        try {
+          let data = {};
+          if (body) {
+            data = JSON.parse(body);
+          }
+
+          const forceNew = data.forceNew === true;
+          const result = await getShareLink({ forceNew });
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            url: result.url,
+            code: result.code,
+            expiresAt: result.expiresAt
+          }));
+        } catch (error) {
+          logDebug('[API] Error in /api/share-link:', error.message);
+
+          // Map error messages to appropriate status codes
+          const errorMsg = error.message;
+          let statusCode = 500;
+
+          if (errorMsg.includes('Set Public or tunnel URL first')) {
+            statusCode = 400;
+          } else if (errorMsg.includes('Configure shareBaseUrl/shareRegisterUrl/shareApiKey')) {
+            statusCode = 400;
+          } else if (errorMsg.includes('Failed to register')) {
+            statusCode = 502;
+          }
+
+          res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: errorMsg }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/show-share-qr - Generate share link and show QR overlay
+    if (req.method === 'POST' && req.url === '/api/show-share-qr') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+
+      req.on('end', async () => {
+        try {
+          let data = {};
+          if (body) {
+            data = JSON.parse(body);
+          }
+
+          const forceNew = data.forceNew === true;
+          const durationSec = data.durationSec || undefined;
+
+          const result = await getShareLink({ forceNew });
+
+          // Show QR overlay on presentation display
+          showQrOverlay(result, durationSec);
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            ok: true,
+            url: result.url,
+            code: result.code,
+            expiresAt: result.expiresAt
+          }));
+        } catch (error) {
+          logDebug('[API] Error in /api/show-share-qr:', error.message);
+
+          // Map error messages to appropriate status codes
+          const errorMsg = error.message;
+          let statusCode = 500;
+
+          if (errorMsg.includes('Set Public or tunnel URL first')) {
+            statusCode = 400;
+          } else if (errorMsg.includes('Configure shareBaseUrl/shareRegisterUrl/shareApiKey')) {
+            statusCode = 400;
+          } else if (errorMsg.includes('Failed to register')) {
+            statusCode = 502;
+          }
+
+          res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: errorMsg }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/hide-share-qr - Hide QR overlay
+    if (req.method === 'POST' && req.url === '/api/hide-share-qr') {
+      try {
+        hideQrOverlay();
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (error) {
+        logDebug('[API] Error in /api/hide-share-qr:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
     // 404 for unknown endpoints
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));

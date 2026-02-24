@@ -85,7 +85,7 @@ You can run multiple instances of the app across multiple computers for failover
 
 By default the Web UI is HTTP-only and reachable only on your LAN. For remote users or encrypted connections you can:
 
-- **Tunnel (recommended):** Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) or [ngrok](https://ngrok.com/) to get a public HTTPS URL; paste it into the app’s **Public or tunnel URL** in Network Access to share it easily.
+- **Tunnel:** Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) or [ngrok](https://ngrok.com/) to get a public HTTPS URL that forwards to your Web UI port.
 - **Reverse proxy:** Run nginx or Caddy with TLS (e.g. Let’s Encrypt) and proxy to your presentation machine’s Web UI port.
 - **In-app HTTPS:** In Settings → Network Ports you can enable **Serve Web UI over HTTPS** with a custom cert/key or a self-signed certificate (browsers will show a warning; for public use, a tunnel or reverse proxy is usually better).
 

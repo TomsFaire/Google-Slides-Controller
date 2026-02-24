@@ -168,14 +168,6 @@
               <div id="web-ui-urls" class="url-list"></div>
             </div>
           </div>
-          <div class="form-group" style="margin-top: 16px;">
-            <label for="tunnel-public-url">Public or tunnel URL (optional)</label>
-            <input type="url" id="tunnel-public-url" class="input-field" placeholder="https://xxx.trycloudflare.com (from Cloudflare Tunnel, ngrok, etc.)" />
-            <small class="field-hint">Paste the public URL from your tunnel so you can share it. The app does not start the tunnel; run cloudflared or ngrok yourself.</small>
-            <div id="share-link-display" style="margin-top: 10px; display: none;">
-              <strong>Share this link:</strong> <span id="share-link-url" style="word-break: break-all;"></span>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -297,6 +289,44 @@
         
         <button id="save-stagetimer-btn" class="btn">Save Stagetimer Settings</button>
         <button id="load-stagetimer-btn" class="btn btn-secondary">Load Current Settings</button>
+      </section>
+
+      <!-- Share Settings Section -->
+      <section class="card">
+        <h2>Share Settings</h2>
+        <p class="card-description">Configure share link generation for remote access. Generate temporary shareable links with configurable TTL.</p>
+
+        <div class="form-group">
+          <label for="share-base-url">Base URL</label>
+          <input type="text" id="share-base-url" class="input-field" placeholder="https://slides.example.com" />
+        </div>
+
+        <div class="form-group">
+          <label for="share-register-url">Register URL</label>
+          <input type="text" id="share-register-url" class="input-field" placeholder="https://slides.example.com/api/register" />
+        </div>
+
+        <div class="form-group">
+          <label for="share-api-key">API Key</label>
+          <input type="password" id="share-api-key" class="input-field" placeholder="Enter your API key" />
+        </div>
+
+        <div class="form-group">
+          <label for="share-ttl-sec">TTL (seconds)</label>
+          <input type="number" id="share-ttl-sec" class="input-field" placeholder="86400" min="1" />
+        </div>
+
+        <div class="form-group">
+          <label>Last Generated URL</label>
+          <div id="share-last-url" style="padding: 8px; background: #f5f5f5; border-radius: 4px; min-height: 20px; color: #666; word-break: break-all;">
+            —
+          </div>
+        </div>
+
+        <button id="share-save-settings-btn" class="btn">Save Share Settings</button>
+        <button id="share-generate-link-btn" class="btn btn-secondary">Generate Share Link</button>
+        <button id="share-show-qr-btn" class="btn btn-secondary">Show QR on Presentation</button>
+        <button id="share-hide-qr-btn" class="btn btn-secondary">Hide QR</button>
       </section>
 
       <!-- Web UI Appearance Section -->

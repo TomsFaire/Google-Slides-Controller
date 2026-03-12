@@ -33,6 +33,9 @@ const webUiLogoClearBtn = document.getElementById('web-ui-logo-clear');
 const webUiCustomCssPathInput = document.getElementById('web-ui-custom-css-path');
 const webUiCustomCssChooseBtn = document.getElementById('web-ui-custom-css-choose');
 const webUiCustomCssClearBtn = document.getElementById('web-ui-custom-css-clear');
+const slidoExtensionPathInput = document.getElementById('slido-extension-path');
+const slidoExtensionChooseBtn = document.getElementById('slido-extension-choose');
+const slidoExtensionClearBtn = document.getElementById('slido-extension-clear');
 const saveWebUiAppearanceBtn = document.getElementById('save-web-ui-appearance-btn');
 const webUiDownloadCssTemplateBtn = document.getElementById('web-ui-download-css-template');
 const tunnelPublicUrlInput = document.getElementById('tunnel-public-url');
@@ -322,14 +325,17 @@ async function initDisplays() {
 
     // Restore Web UI appearance (theme + logo + custom CSS path)
     if (webUiThemeSelect) {
-      const theme = preferences.webUiTheme || 'original';
-      webUiThemeSelect.value = ['original', 'light', 'dark', 'max', 'touch', 'thumb'].includes(theme) ? theme : 'original';
+      const theme = preferences.webUiTheme || 'faire';
+      webUiThemeSelect.value = ['original', 'light', 'dark', 'max', 'touch', 'thumb', 'faire'].includes(theme) ? theme : 'faire';
     }
     if (webUiLogoPathInput) {
       webUiLogoPathInput.value = preferences.webUiLogoPath || '';
     }
     if (webUiCustomCssPathInput) {
       webUiCustomCssPathInput.value = preferences.webUiCustomCssPath || '';
+    }
+    if (slidoExtensionPathInput) {
+      slidoExtensionPathInput.value = preferences.slidoExtensionPath || '';
     }
     
     // Restore primary/backup mode
@@ -466,6 +472,24 @@ async function initDisplays() {
     if (webUiCustomCssClearBtn && webUiCustomCssPathInput) {
       webUiCustomCssClearBtn.addEventListener('click', () => {
         webUiCustomCssPathInput.value = '';
+      });
+    }
+    if (slidoExtensionChooseBtn && window.electronAPI.showOpenSlidoExtensionDialog) {
+      slidoExtensionChooseBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.showOpenSlidoExtensionDialog();
+          if (result && result.filePath && slidoExtensionPathInput) {
+            slidoExtensionPathInput.value = result.filePath;
+          }
+        } catch (e) {
+          console.error('Open Slido extension dialog failed:', e);
+          showStatus('Could not open folder dialog', 'error');
+        }
+      });
+    }
+    if (slidoExtensionClearBtn && slidoExtensionPathInput) {
+      slidoExtensionClearBtn.addEventListener('click', () => {
+        slidoExtensionPathInput.value = '';
       });
     }
     if (saveWebUiAppearanceBtn) {
@@ -922,15 +946,17 @@ async function saveWebUiDebugConsolePreference() {
 
 async function saveWebUiAppearance() {
   try {
-    const theme = webUiThemeSelect ? webUiThemeSelect.value : 'original';
+    const theme = webUiThemeSelect ? webUiThemeSelect.value : 'faire';
     const logoPath = webUiLogoPathInput ? (webUiLogoPathInput.value || '').trim() : '';
     const path = webUiCustomCssPathInput ? (webUiCustomCssPathInput.value || '').trim() : '';
+    const slidoPath = slidoExtensionPathInput ? (slidoExtensionPathInput.value || '').trim() : '';
     await window.electronAPI.savePreferences({
-      webUiTheme: ['original', 'light', 'dark', 'max', 'touch', 'thumb'].includes(theme) ? theme : 'original',
+      webUiTheme: ['original', 'light', 'dark', 'max', 'touch', 'thumb', 'faire'].includes(theme) ? theme : 'faire',
       webUiLogoPath: logoPath || null,
-      webUiCustomCssPath: path || null
+      webUiCustomCssPath: path || null,
+      slidoExtensionPath: slidoPath || null
     });
-    showStatus('Web UI appearance saved. Reload the Web UI page to see changes.', 'info');
+    showStatus('Web UI appearance saved. Reload the Web UI page to see changes.' + (slidoPath ? ' Restart the app for the Slido extension to load.' : ''), 'info');
   } catch (error) {
     console.error('Failed to save Web UI appearance:', error);
     showStatus('Failed to save Web UI appearance', 'error');
@@ -1259,6 +1285,71 @@ testBtn.addEventListener('click', async () => {
     }, 1000);
   }
 });
+
+// Slido: open presentation in browser (for add-on) or open Slido
+const slidoOpenInBrowserBtn = document.getElementById('slido-open-presentation-in-browser');
+const slidoOpenSlidoBtn = document.getElementById('slido-open-slido');
+const slidoPresentationHint = document.getElementById('slido-presentation-hint');
+
+if (slidoOpenInBrowserBtn) {
+  slidoOpenInBrowserBtn.addEventListener('click', async () => {
+    try {
+      const editUrl = await window.electronAPI.getPresentationEditUrl();
+      if (!editUrl) {
+        showStatus('No presentation open. Open a presentation first.', 'error');
+        return;
+      }
+      await window.electronAPI.openUrlInBrowser(editUrl);
+      showStatus('Opened presentation in browser.', 'success');
+    } catch (error) {
+      showStatus('Failed to open in browser', 'error');
+    }
+  });
+}
+
+if (slidoOpenSlidoBtn) {
+  slidoOpenSlidoBtn.addEventListener('click', async () => {
+    try {
+      await window.electronAPI.openUrlInBrowser('https://app.slido.com');
+    } catch (error) {
+      showStatus('Failed to open Slido', 'error');
+    }
+  });
+}
+
+// Slido: open presentation in edit mode (authenticate Slido), then switch to present
+const slidoOpenEditModeBtn = document.getElementById('slido-open-edit-mode');
+const slidoSwitchToPresentBtn = document.getElementById('slido-switch-to-present');
+
+if (slidoOpenEditModeBtn) {
+  slidoOpenEditModeBtn.addEventListener('click', async () => {
+    try {
+      const result = await window.electronAPI.openPresentationEdit();
+      if (result.success) {
+        showStatus('Opened in edit mode. Use Extensions → Slido to sign in, then click Switch to present.', 'success');
+      } else {
+        showStatus(result.message || 'Failed to open in edit mode', 'error');
+      }
+    } catch (error) {
+      showStatus('Failed to open in edit mode', 'error');
+    }
+  });
+}
+
+if (slidoSwitchToPresentBtn) {
+  slidoSwitchToPresentBtn.addEventListener('click', async () => {
+    try {
+      const result = await window.electronAPI.switchPresentationToPresent();
+      if (result.success) {
+        showStatus('Switched to present mode.', 'success');
+      } else {
+        showStatus(result.message || 'Failed to switch to present', 'error');
+      }
+    } catch (error) {
+      showStatus('Failed to switch to present', 'error');
+    }
+  });
+}
 
 // Check sign-in status on load
 async function checkSignInStatus() {

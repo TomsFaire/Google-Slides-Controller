@@ -2,6 +2,13 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.4] - Unreleased
+
+### Added
+- **Display brightness (exposure)** – In Web UI Settings, a slider adjusts only the **page background** darkness (e.g. when the presenter’s display is in front of the camera). Text and all panels keep their original theme colors; only the background dims. Value is stored in preferences, included in `GET /api/status` as `displayBrightness` (0–100), and can be set via `POST /api/web-ui-display-brightness` with `{ "displayBrightness": number }`. Changes sync across devices so an operator can dim the presenter’s screen remotely.
+
+---
+
 ## [1.9.0] - 2025-01-22
 
 ### Added

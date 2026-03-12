@@ -1,0 +1,282 @@
+/*
+  Faire Design Language — Web UI theme
+  Warm monochromatic palette, Inter/Lora typography, near-black primary actions.
+  Loaded when Theme is set to "Faire" in Web UI Appearance. Requires Inter and Lora
+  to be loaded (app adds the Google Fonts link when this theme is selected).
+*/
+
+/* ── Design tokens (scoped to Faire theme) ─────────────────────────────────── */
+body.theme-faire {
+  /* Fonts */
+  --faire-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --faire-font-serif: 'Lora', Georgia, serif;
+  /* Text */
+  --faire-text-primary: #333333;
+  --faire-text-subdued: #757575;
+  --faire-text-inverse: #ffffff;
+  /* Surfaces */
+  --faire-surface-page: #f5f5f5;
+  --faire-surface-card: #ffffff;
+  --faire-surface-tertiary: #f7f7f7;
+  /* Borders */
+  --faire-border: #dfe0e1;
+  --faire-border-strong: #757575;
+  --faire-focus: #275ec5;
+  /* Actions */
+  --faire-action: #333333;
+  --faire-action-hover: #000000;
+  --faire-action-disabled-bg: #f7f7f7;
+  --faire-action-disabled-text: #757575;
+  /* Status */
+  --faire-error-surface: #f2e5e1;
+  --faire-error-border: #d17e70;
+  --faire-error-text: #921100;
+  --faire-warning-surface: #f6efdb;
+  --faire-warning-border: #d1b985;
+  --faire-warning-text: #907c3a;
+  --faire-success-surface: #e9f1e5;
+  --faire-success-border: #91a793;
+  --faire-success-text: #49694c;
+  --faire-info-surface: #e2e7f0;
+  --faire-info-text: #1b2834;
+  /* Spacing / radius / shadow */
+  --faire-radius-sm: 4px;
+  --faire-radius-md: 8px;
+  --faire-radius-lg: 16px;
+  --faire-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+body.theme-faire {
+  background: var(--faire-surface-page) !important;
+  font-family: var(--faire-font-sans) !important;
+  font-size: 14px !important;
+  line-height: 20px !important;
+  letter-spacing: 0.15px !important;
+  color: var(--faire-text-primary) !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Page title — serif, editorial (Faire page-heading) */
+body.theme-faire h1 {
+  font-family: var(--faire-font-serif) !important;
+  font-size: 22px !important;
+  font-weight: 400 !important;
+  line-height: 32px !important;
+  letter-spacing: 0 !important;
+  color: var(--faire-text-primary) !important;
+}
+
+/* Section headings — sans, medium */
+body.theme-faire h2,
+body.theme-faire h3 {
+  font-family: var(--faire-font-sans) !important;
+  font-size: 22px !important;
+  font-weight: 500 !important;
+  color: var(--faire-text-primary) !important;
+}
+
+/* ── Main container (panel: 4px radius + border, no gradient shadow) ──────── */
+body.theme-faire .container {
+  background: var(--faire-surface-card) !important;
+  border: 1px solid var(--faire-border) !important;
+  border-radius: var(--faire-radius-sm) !important;
+  box-shadow: none !important;
+}
+
+/* ── System icon (no purple) ──────────────────────────────────────────────── */
+body.theme-faire .system-icon {
+  color: var(--faire-action) !important;
+}
+
+/* ── Share link bar ────────────────────────────────────────────────────────── */
+body.theme-faire .share-link-bar {
+  background: var(--faire-info-surface) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+body.theme-faire .share-link-label {
+  color: var(--faire-text-subdued) !important;
+}
+body.theme-faire .share-link-url {
+  color: var(--faire-action) !important;
+}
+body.theme-faire .share-link-copy {
+  background: var(--faire-action) !important;
+  color: var(--faire-text-inverse) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+body.theme-faire .share-link-copy:hover {
+  background: var(--faire-action-hover) !important;
+}
+
+/* ── Buttons: primary near-black, 4px radius ──────────────────────────────── */
+body.theme-faire .btn:not(.btn-secondary),
+body.theme-faire .remote-btn-prev,
+body.theme-faire .remote-btn-next,
+body.theme-faire .notes-toggle-btn.active,
+body.theme-faire .preview-toggle-btn.active {
+  background: var(--faire-action) !important;
+  color: var(--faire-text-inverse) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+body.theme-faire .btn:not(.btn-secondary):hover,
+body.theme-faire .remote-btn-prev:hover,
+body.theme-faire .remote-btn-next:hover,
+body.theme-faire .notes-toggle-btn.active:hover,
+body.theme-faire .preview-toggle-btn.active:hover {
+  background: var(--faire-action-hover) !important;
+}
+
+body.theme-faire .btn-secondary,
+body.theme-faire .notes-toggle-btn:not(.active),
+body.theme-faire .preview-toggle-btn:not(.active) {
+  background: var(--faire-surface-card) !important;
+  color: var(--faire-text-primary) !important;
+  border: 1px solid var(--faire-border) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+body.theme-faire .btn-secondary:hover,
+body.theme-faire .notes-toggle-btn:not(.active):hover,
+body.theme-faire .preview-toggle-btn:not(.active):hover {
+  background: var(--faire-surface-tertiary) !important;
+  border-color: var(--faire-action-hover) !important;
+  color: var(--faire-action-hover) !important;
+}
+
+/* ── Inputs ────────────────────────────────────────────────────────────────── */
+body.theme-faire input[type="text"] {
+  border: 1px solid var(--faire-border) !important;
+  border-radius: var(--faire-radius-sm) !important;
+  background: var(--faire-surface-card) !important;
+  color: var(--faire-text-primary) !important;
+}
+body.theme-faire input[type="text"]:focus {
+  outline: none !important;
+  border-color: var(--faire-action-hover) !important;
+}
+body.theme-faire input[type="text"]:focus-visible {
+  outline: 2px solid var(--faire-focus) !important;
+  outline-offset: 2px !important;
+}
+
+/* ── Tabs: emphasis through darkness, no blue ────────────────────────────── */
+body.theme-faire .tab-btn {
+  color: var(--faire-text-subdued) !important;
+}
+body.theme-faire .tab-btn:hover {
+  color: var(--faire-text-primary) !important;
+}
+body.theme-faire .tab-btn.active {
+  color: var(--faire-text-primary) !important;
+  border-bottom-color: var(--faire-action-hover) !important;
+}
+
+/* ── Remote header ────────────────────────────────────────────────────────── */
+body.theme-faire .remote-header h2 {
+  color: var(--faire-text-primary) !important;
+}
+
+/* ── Control buttons (e.g. Controls tab) ──────────────────────────────────── */
+body.theme-faire .btn-control {
+  background: var(--faire-surface-card) !important;
+  color: var(--faire-text-primary) !important;
+  border: 1px solid var(--faire-border) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+body.theme-faire .btn-control:hover {
+  background: var(--faire-action) !important;
+  color: var(--faire-text-inverse) !important;
+  border-color: var(--faire-action) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* ── Slide previews & speaker notes panels ─────────────────────────────────── */
+body.theme-faire .slide-previews-grid,
+body.theme-faire .speaker-notes-content-wrapper {
+  background: var(--faire-surface-tertiary) !important;
+  border: 1px solid var(--faire-border) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+body.theme-faire .speaker-notes-content {
+  color: var(--faire-text-primary) !important;
+}
+body.theme-faire .slide-preview-label {
+  color: var(--faire-text-primary) !important;
+}
+
+/* ── Notes zoom buttons ────────────────────────────────────────────────────── */
+body.theme-faire .notes-zoom-btn {
+  background: var(--faire-surface-tertiary) !important;
+  border: 1px solid var(--faire-border) !important;
+  border-radius: var(--faire-radius-sm) !important;
+  color: var(--faire-text-primary) !important;
+}
+body.theme-faire .notes-zoom-btn:hover {
+  background: var(--faire-action) !important;
+  color: var(--faire-text-inverse) !important;
+  border-color: var(--faire-action) !important;
+}
+
+/* ── Status toasts & info (Faire status palette) ───────────────────────────── */
+body.theme-faire .status.success {
+  background: var(--faire-success-surface) !important;
+  color: var(--faire-success-text) !important;
+  border: 1px solid var(--faire-success-border) !important;
+}
+body.theme-faire .status.error {
+  background: var(--faire-error-surface) !important;
+  color: var(--faire-error-text) !important;
+  border: 1px solid var(--faire-error-border) !important;
+}
+body.theme-faire .info {
+  background: var(--faire-info-surface) !important;
+  border: 1px solid var(--faire-border-strong) !important;
+  color: var(--faire-info-text) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+
+/* ── Encoding warning (Faire warning colors) ────────────────────────────────── */
+body.theme-faire #notes-encoding-warning {
+  background: var(--faire-warning-surface) !important;
+  border: 1px solid var(--faire-warning-border) !important;
+  color: var(--faire-warning-text) !important;
+  border-radius: var(--faire-radius-sm) !important;
+}
+
+/* ── Stagetimer: solid colors, no gradients ────────────────────────────────── */
+body.theme-faire .stagetimer-container {
+  background: var(--faire-action) !important;
+  color: var(--faire-text-inverse) !important;
+  border-radius: var(--faire-radius-sm) !important;
+  box-shadow: var(--faire-shadow-card) !important;
+}
+body.theme-faire .stagetimer-container.running {
+  background: var(--faire-success-text) !important;
+}
+body.theme-faire .stagetimer-container.warning {
+  background: var(--faire-warning-text) !important;
+}
+body.theme-faire .stagetimer-container.critical,
+body.theme-faire .stagetimer-container.error {
+  background: var(--faire-error-text) !important;
+}
+body.theme-faire .stagetimer-container.disabled {
+  background: var(--faire-border) !important;
+  color: var(--faire-text-subdued) !important;
+}
+body.theme-faire .stagetimer-messages {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+/* ── Tooltips (already dark in base; ensure Faire consistency) ───────────────── */
+body.theme-faire .btn-control[data-tooltip]:hover::after {
+  background: var(--faire-action) !important;
+}
+
+/* ── Build number ─────────────────────────────────────────────────────────── */
+body.theme-faire .build-number {
+  color: var(--faire-text-subdued) !important;
+}

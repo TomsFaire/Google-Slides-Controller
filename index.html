@@ -307,7 +307,8 @@
         <div class="form-group">
           <label for="web-ui-theme">Theme</label>
           <select id="web-ui-theme" class="select-input">
-            <option value="original">Original</option>
+            <option value="faire">Faire</option>
+            <option value="original">Purple Haze</option>
             <option value="light">Light (minimalist white)</option>
             <option value="dark">Dark</option>
             <option value="max">Max (iPad, maximize space)</option>
@@ -340,6 +341,36 @@
         </div>
         
         <button id="save-web-ui-appearance-btn" class="btn">Save Web UI Appearance</button>
+      </section>
+
+      <!-- Slido Section -->
+      <section class="card">
+        <h2>Slido</h2>
+        <p class="card-description">Slido uses a <a href="https://workspace.google.com/marketplace/app/slido_for_google_slides/240609050747" target="_blank" rel="noopener">Google Slides add-on</a> and a <a href="https://chromewebstore.google.com/detail/slido/dhhclfjehmpacimcdknijodpjpmppkii" target="_blank" rel="noopener">Chrome extension</a>. Open the deck in edit mode to sign in to Slido (Extensions → Slido), then switch to present when ready.</p>
+        <div class="form-group">
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button type="button" id="slido-open-edit-mode" class="btn btn-secondary">Open in edit mode (for Slido)</button>
+            <button type="button" id="slido-switch-to-present" class="btn btn-secondary">Switch to present</button>
+          </div>
+          <small class="field-hint">Open a presentation first (e.g. from Web UI Controls), then click “Open in edit mode”. In the deck use Extensions → Slido to sign in. When done, click “Switch to present” or close the window and open the presentation again.</small>
+        </div>
+        <div class="form-group">
+          <label>Slido Chrome extension (unpacked folder)</label>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="slido-extension-path" class="input-field" placeholder="No folder selected" readonly style="flex: 1; min-width: 180px;" />
+            <button type="button" id="slido-extension-choose" class="btn btn-secondary">Choose folder</button>
+            <button type="button" id="slido-extension-clear" class="btn btn-secondary">Clear</button>
+          </div>
+          <small class="field-hint">Install Slido in Chrome, then copy its extension folder (e.g. <code>~/Library/Application Support/Google/Chrome/Default/Extensions/dhhclfjehmpacimcdknijodpjpmppkii/&lt;version&gt;/</code> on macOS). Click Save Web UI Appearance above, then restart the app.</small>
+        </div>
+        <div class="form-group">
+          <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 12px;">Or open the presentation in your browser to use Slido there (remotes will not control that tab):</p>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button type="button" id="slido-open-presentation-in-browser" class="btn btn-secondary">Open presentation in browser (for Slido)</button>
+            <button type="button" id="slido-open-slido" class="btn btn-secondary">Open Slido</button>
+          </div>
+          <small class="field-hint" id="slido-presentation-hint">Open a presentation first to enable “Open presentation in browser”.</small>
+        </div>
       </section>
 
       <!-- Test Presentation Section -->

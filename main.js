@@ -272,16 +272,20 @@ function handleMainProcessCrash(label, err) {
   ].join('\n');
   const filePath = writeCrashReport('main', content);
   logError('[Crash]', message);
-  if (filePath) {
-    dialog.showMessageBox(null, {
-      type: 'error',
-      title: 'Application Error',
-      message: 'The app encountered an error and will close.',
-      detail: `A crash report was saved to:\n${filePath}`,
-      buttons: ['OK']
-    }).then(() => app.quit()).catch(() => app.quit());
+  if (typeof app !== 'undefined' && app.quit) {
+    if (filePath && typeof dialog !== 'undefined' && dialog.showMessageBox) {
+      dialog.showMessageBox(null, {
+        type: 'error',
+        title: 'Application Error',
+        message: 'The app encountered an error and will close.',
+        detail: `A crash report was saved to:\n${filePath}`,
+        buttons: ['OK']
+      }).then(() => app.quit()).catch(() => app.quit());
+    } else {
+      app.quit();
+    }
   } else {
-    app.quit();
+    process.exit(1);
   }
 }
 
@@ -307,7 +311,12 @@ const CRASH_REPORTS_SUBDIR = 'crash-reports';
 const LOG_TAIL_LINES = 500;
 
 function getCrashReportsDir() {
-  return path.join(app.getPath('userData'), CRASH_REPORTS_SUBDIR);
+  try {
+    if (typeof app !== 'undefined' && app.getPath) {
+      return path.join(app.getPath('userData'), CRASH_REPORTS_SUBDIR);
+    }
+  } catch (e) { /* ignore */ }
+  return path.join(os.tmpdir(), 'gslide-opener-crash-reports');
 }
 
 let lastCrashPath = null;
@@ -342,6 +351,19 @@ function toPresentUrl(inputUrl, slideNumber) {
       base += `#slide=id.p${slideNumber}`;
     }
     return base;
+  } catch (e) {
+    return inputUrl;
+  }
+}
+
+// Return the edit URL for a Google Slides presentation (for use in browser with add-ons like Slido)
+function toEditUrl(inputUrl) {
+  try {
+    const u = new URL(inputUrl);
+    const m = u.pathname.match(/\/presentation\/d\/([^/]+)/);
+    if (!m) return inputUrl;
+    const id = m[1];
+    return `https://docs.google.com/presentation/d/${id}/edit`;
   } catch (e) {
     return inputUrl;
   }
@@ -726,6 +748,14 @@ function getGoogleSession() {
   return session.fromPartition(GOOGLE_SESSION_PARTITION);
 }
 
+// Chrome user agent so Google/Slido may serve add-on and extension content in the presentation window.
+const CHROME_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+function setupGoogleSessionForSlido() {
+  const googleSession = getGoogleSession();
+  googleSession.setUserAgent(CHROME_USER_AGENT);
+}
+
 // Try to ensure Google (Slides/docs) responses are interpreted as UTF-8 when charset is missing.
 // Speaker notes can show U+FFFD if responses are decoded with the wrong encoding; this may help.
 function setupGoogleSessionEncoding() {
@@ -751,6 +781,37 @@ function setupGoogleSessionEncoding() {
     }
     callback({ responseHeaders: h });
   });
+}
+
+// Load the Slido Chrome extension (unpacked) into the Google session so it can run in the presentation window.
+// Must be called before any window using the Google partition loads a URL. Only works with unpacked extensions.
+function loadSlidoExtensionIfConfigured() {
+  try {
+    const prefs = loadPreferences();
+    const extPath = prefs.slidoExtensionPath;
+    if (!extPath || typeof extPath !== 'string') return;
+    const trimmed = extPath.trim();
+    if (!trimmed) return;
+    if (!fs.existsSync(trimmed)) {
+      logWarn('[Slido] Extension path does not exist:', trimmed);
+      return;
+    }
+    const stat = fs.statSync(trimmed);
+    if (!stat.isDirectory()) {
+      logWarn('[Slido] Extension path is not a directory:', trimmed);
+      return;
+    }
+    const googleSession = getGoogleSession();
+    return googleSession.loadExtension(trimmed, { allowFileAccess: true })
+      .then((ext) => {
+        logInfo('[Slido] Loaded extension:', ext.name, ext.version);
+      })
+      .catch((err) => {
+        logError('[Slido] Failed to load extension:', err.message);
+      });
+  } catch (e) {
+    logError('[Slido] Error loading extension:', e.message);
+  }
 }
 
 // Get preferences file path
@@ -1436,6 +1497,25 @@ ipcMain.handle('get-build-info', async () => {
   }
 });
 
+// Get last-opened presentation URL (for Slido / open in browser)
+ipcMain.handle('get-last-presentation-url', async () => {
+  return lastPresentationUrl || null;
+});
+
+// Get edit URL for current presentation (for opening in browser with Slido add-on)
+ipcMain.handle('get-presentation-edit-url', async () => {
+  if (!lastPresentationUrl) return null;
+  return toEditUrl(lastPresentationUrl);
+});
+
+// Open a URL in the system default browser (e.g. for Slido login or presentation in Chrome)
+ipcMain.handle('open-url-in-browser', async (event, url) => {
+  if (!url || typeof url !== 'string') return;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('https://') && !trimmed.startsWith('http://')) return;
+  await shell.openExternal(trimmed);
+});
+
 // Get network interfaces and IP addresses
 ipcMain.handle('get-network-info', async () => {
   const interfaces = os.networkInterfaces();
@@ -1520,6 +1600,18 @@ ipcMain.handle('show-open-key-dialog', async () => {
     title: 'Select TLS private key file',
     properties: ['openFile'],
     filters: [{ name: 'Key', extensions: ['pem', 'key'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('show-open-slido-extension-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select Slido Chrome extension folder (unpacked)',
+    properties: ['openDirectory']
   });
   if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
     return { canceled: true, filePath: null };
@@ -2157,6 +2249,81 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   return { success: true };
 });
 
+// Open the current presentation in edit mode (so user can use Extensions → Slido to authenticate)
+ipcMain.handle('open-presentation-edit', async () => {
+  if (!lastPresentationUrl || !lastPresentationUrl.trim()) {
+    return { success: false, message: 'No presentation URL. Open a presentation first, or open one from the Web UI Controls tab.' };
+  }
+  const prefs = loadPreferences();
+  const displays = screen.getAllDisplays();
+  const presentationDisplayIdNum = Number(prefs.presentationDisplayId);
+  const notesDisplayIdNum = Number(prefs.notesDisplayId);
+  const presentationDisplay = displays.find(d => d.id === presentationDisplayIdNum) || displays[0];
+  const notesDisplay = displays.find(d => d.id === notesDisplayIdNum) || displays[0];
+
+  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+  currentSlide = null;
+
+  presentationWindow = new BrowserWindow({
+    x: presentationDisplay.bounds.x,
+    y: presentationDisplay.bounds.y,
+    width: presentationDisplay.bounds.width,
+    height: presentationDisplay.bounds.height,
+    frame: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: GOOGLE_SESSION_PARTITION
+    }
+  });
+  if (process.platform === 'darwin') {
+    presentationWindow.setSimpleFullScreen(true);
+  }
+  attachCrashHandlers(presentationWindow, 'presentation');
+
+  presentationWindow.webContents.setWindowOpenHandler(() => {
+    const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
+    return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
+  });
+
+  presentationWindow.on('closed', () => {
+    presentationWindow = null;
+    currentSlide = null;
+  });
+
+  presentationWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      event.preventDefault();
+      if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+      if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+    }
+  });
+
+  const editUrl = toEditUrl(lastPresentationUrl);
+  logDebug('[Slido] Opening in edit mode:', editUrl);
+  presentationWindow.loadURL(editUrl);
+  presentationWindow.show();
+
+  return { success: true };
+});
+
+// Switch the current window from edit mode to present mode (load present URL in existing window)
+ipcMain.handle('switch-presentation-to-present', async () => {
+  if (!lastPresentationUrl || !lastPresentationUrl.trim()) {
+    return { success: false, message: 'No presentation URL.' };
+  }
+  if (!presentationWindow || presentationWindow.isDestroyed()) {
+    return { success: false, message: 'No presentation window open.' };
+  }
+  const presentUrl = toPresentUrl(lastPresentationUrl);
+  logDebug('[Slido] Switching to present mode:', presentUrl);
+  presentationWindow.loadURL(presentUrl);
+  presentationWindow.show();
+  currentSlide = 1;
+  return { success: true };
+});
+
 // HTTP API for Bitfocus Companion integration
 // Ports are configurable via preferences, defaults below
 const DEFAULT_API_PORT = 9595;
@@ -2243,6 +2410,7 @@ function startHttpServer() {
           console.error('[API] Error checking login state:', error);
         }
         
+        const prefsForStatus = loadPreferences();
         const state = {
           status: 'ok',
           version: appBuildInfo.version,
@@ -2260,7 +2428,8 @@ function startHttpServer() {
           presentationTitle: null,
           timerElapsed: null,
           loginState: loginState,
-          loggedInUser: loggedInUser || null
+          loggedInUser: loggedInUser || null,
+          displayBrightness: typeof prefsForStatus.webUiDisplayBrightness === 'number' ? Math.max(0, Math.min(100, prefsForStatus.webUiDisplayBrightness)) : 100
         };
         
         // Get slide info and other data from notes window DOM
@@ -4106,6 +4275,34 @@ function startHttpServer() {
       return;
     }
 
+    // POST /api/web-ui-display-brightness - Set display brightness (0-100) for Web UI to reduce light on presenter
+    if (req.method === 'POST' && apiReqPath === '/api/web-ui-display-brightness') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          let v = typeof data.displayBrightness === 'number' ? data.displayBrightness : (typeof data.displayBrightness === 'string' ? parseFloat(data.displayBrightness, 10) : NaN);
+          if (isNaN(v)) v = 100;
+          v = Math.max(0, Math.min(100, v));
+          const prefs = loadPreferences();
+          prefs.webUiDisplayBrightness = v;
+          savePreferences(prefs);
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+          });
+          res.end(JSON.stringify({ success: true, displayBrightness: v }));
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+      return;
+    }
+
     // POST /api/open-preset - Open a preset by index (1-based)
     if (req.method === 'POST' && apiReqPath === '/api/open-preset') {
       let body = '';
@@ -4453,6 +4650,25 @@ function startWebUiServer() {
       return;
     }
 
+    // GET /faire-style.css - Serve built-in Faire theme (when Theme is Faire)
+    if (req.method === 'GET' && reqPath === '/faire-style.css') {
+      try {
+        const fairePath = path.join(__dirname, 'Faire.css');
+        if (!fs.existsSync(fairePath)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not found');
+          return;
+        }
+        const css = fs.readFileSync(fairePath, 'utf8');
+        res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.end(css);
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error loading Faire theme');
+      }
+      return;
+    }
+
     // GET /custom-logo - Serve user-selected brand logo (light/dark themes only)
     if (req.method === 'GET' && reqPath === '/custom-logo') {
       try {
@@ -4501,7 +4717,8 @@ function startWebUiServer() {
       const webUiDebugConsoleEnabled = prefs.webUiDebugConsoleEnabled === true;
       const hasFavicon = !!getFaviconPngBuffer();
       const faviconHref = `/favicon.png?v=${encodeURIComponent(appBuildInfo.buildNumber || '0')}`;
-      const webUiTheme = ['original', 'light', 'dark', 'max', 'touch', 'thumb'].includes(prefs.webUiTheme) ? prefs.webUiTheme : 'original';
+      const webUiTheme = ['original', 'light', 'dark', 'max', 'touch', 'thumb', 'faire'].includes(prefs.webUiTheme) ? prefs.webUiTheme : 'faire';
+      const webUiDisplayBrightness = typeof prefs.webUiDisplayBrightness === 'number' ? Math.max(0, Math.min(100, prefs.webUiDisplayBrightness)) : 100;
       const webUiCustomCssPath = prefs.webUiCustomCssPath || '';
       const webUiLogoPath = prefs.webUiLogoPath || '';
       const showLogo = webUiTheme !== 'max' && webUiLogoPath && fs.existsSync(webUiLogoPath);
@@ -4535,7 +4752,9 @@ function startWebUiServer() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Google Slides Opener - Preset Manager</title>
   ${hasFavicon ? `<link rel="icon" type="image/png" href="${faviconHref}"><link rel="shortcut icon" href="${faviconHref}">` : ``}
+  ${webUiTheme === 'faire' ? `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">` : ''}
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  ${webUiTheme === 'faire' ? '<link rel="stylesheet" href="/faire-style.css?v=' + Date.now() + '">' : ''}
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html { overflow-x: hidden; }
@@ -4557,6 +4776,8 @@ function startWebUiServer() {
       }
     }
     .container {
+      position: relative;
+      z-index: 9999;
       background: white;
       border-radius: 16px;
       box-shadow: 0 20px 60px rgba(0,0,0,0.3);
@@ -5359,10 +5580,11 @@ function startWebUiServer() {
     @media (max-width: 768px) {
       body.theme-thumb .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
     }
-  </style>
+      </style>
   ${webUiCustomCssPath ? '<link rel="stylesheet" href="/custom-style.css?v=' + Date.now() + '">' : ''}
 </head>
-<body class="theme-${webUiTheme}" data-theme="${webUiTheme}">
+<body class="theme-${webUiTheme}" data-theme="${webUiTheme}" data-display-brightness="${webUiDisplayBrightness}">
+  <div id="display-brightness-overlay" style="position:fixed;inset:0;z-index:9998;pointer-events:none;background:#000;opacity:${(100 - webUiDisplayBrightness) / 100};transition:opacity 0.2s ease;" aria-hidden="true"></div>
   <div class="container">
     <div class="web-ui-header">
       <h1>
@@ -5540,6 +5762,19 @@ function startWebUiServer() {
     
     <!-- Settings Tab (Hidden by default) -->
     <div id="tab-settings" class="tab-content">
+      <!-- Display brightness: dim the Web UI to reduce light on presenter (e.g. display in front of camera) -->
+      <div class="controls-section">
+        <h3>Display brightness</h3>
+        <div class="info" style="margin-bottom: 15px;">
+          Dim this display to reduce light on the presenter (e.g. when the Web UI is in front of the camera). Changes apply immediately and sync across devices. 100% = full brightness, 0% = fully dimmed.
+        </div>
+        <div class="preset-group" style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+          <label for="web-display-brightness" style="margin-bottom: 0;">Brightness</label>
+          <input type="range" id="web-display-brightness" min="0" max="100" value="${webUiDisplayBrightness}" style="flex: 1; min-width: 120px; max-width: 200px;" />
+          <span id="web-display-brightness-value" style="font-variant-numeric: tabular-nums;">${webUiDisplayBrightness}%</span>
+        </div>
+      </div>
+      
       <!-- Monitor Setup Section -->
       <div class="controls-section">
         <h3>Monitor Setup</h3>
@@ -6241,6 +6476,16 @@ function startWebUiServer() {
               nextBtnControls.innerHTML = nextIconSmall + ' Next Slide';
             }
           }
+          // Sync display brightness from server (e.g. changed by operator on another device)
+          if (typeof data.displayBrightness === 'number') {
+            const v = Math.max(0, Math.min(100, data.displayBrightness));
+            const overlay = document.getElementById('display-brightness-overlay');
+            const slider = document.getElementById('web-display-brightness');
+            const label = document.getElementById('web-display-brightness-value');
+            if (overlay) overlay.style.opacity = (100 - v) / 100;
+            if (slider && parseInt(slider.value, 10) !== v) slider.value = v;
+            if (label) label.textContent = v + '%';
+          }
         })
         .catch(err => {
           // Silently fail - connection might be down, don't spam logs
@@ -6248,6 +6493,34 @@ function startWebUiServer() {
         });
     }
     
+    // Display brightness: only adjust the page background (overlay behind content). Text and panels keep original theme CSS.
+    function applyDisplayBrightness(val) {
+      const v = Math.max(0, Math.min(100, Number(val)));
+      const overlay = document.getElementById('display-brightness-overlay');
+      const slider = document.getElementById('web-display-brightness');
+      const label = document.getElementById('web-display-brightness-value');
+      if (overlay) overlay.style.opacity = (100 - v) / 100;
+      if (slider) slider.value = v;
+      if (label) label.textContent = v + '%';
+      document.body.setAttribute('data-display-brightness', String(v));
+    }
+    
+    const webDisplayBrightnessEl = document.getElementById('web-display-brightness');
+    if (webDisplayBrightnessEl) {
+      webDisplayBrightnessEl.addEventListener('input', function() {
+        const v = parseInt(this.value, 10);
+        applyDisplayBrightness(v);
+        fetch(API_BASE + '/api/web-ui-display-brightness', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayBrightness: v })
+        }).catch(function() {});
+      });
+    }
+    // Set initial dimmed text color from server-rendered brightness
+    var initialBrightness = parseInt(document.body.getAttribute('data-display-brightness'), 10);
+    if (!isNaN(initialBrightness)) applyDisplayBrightness(initialBrightness);
+
     // Helper function to validate and open presentation
     function openPresentation(url, withNotes = false) {
       if (!url) {
@@ -7689,8 +7962,10 @@ function startWebUiServer() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   setupGoogleSessionEncoding();
+  setupGoogleSessionForSlido();
+  await loadSlidoExtensionIfConfigured();
   createWindow();
   startHttpServer();
   startWebUiServer();

@@ -31,8 +31,10 @@ verify-app.sh
 # Duplicate/old folders
 github/
 
-# New companion module (separate repo at bitfocus/companion-module-google-slidescontroller)
-companion-module-google-slidescontroller/
+# Companion module (also has its own repo) – don’t commit its .git or deps
+companion-module-google-slidescontroller/.git
+companion-module-google-slidescontroller/node_modules/
+companion-module-google-slidescontroller/.yarn/
 
 # Untested add-ons (do not commit until ready)
 gslide-websocket-addon/

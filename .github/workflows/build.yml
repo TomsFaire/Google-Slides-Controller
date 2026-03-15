@@ -16,14 +16,14 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
-      
+
       - name: Clean up problematic Icon files
         run: |
           # Some repos can accidentally contain a macOS Finder icon file named "Icon" with a carriage return ("Icon\r"),
@@ -31,10 +31,10 @@ jobs:
           python3 - <<'PY'
           import os
           import subprocess
-          
+
           out = subprocess.check_output(["git", "ls-files", "-z"])
           paths = out.decode("utf-8", "surrogateescape").split("\0")
-          
+
           bad = []
           for p in paths:
             if not p:
@@ -46,123 +46,102 @@ jobs:
               if p.startswith("build/icon."):
                 continue
               bad.append(p)
-          
+
           if bad:
             for p in bad:
               subprocess.run(["git", "rm", "--cached", p], check=False)
           PY
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Build macOS app (unsigned)
+
+      - name: Set version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Build macOS app (arm64 + x64, unsigned)
         run: npm run build:mac
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
-      
-      - name: Verify app structure
+
+      - name: Sign and zip macOS arm64
         run: |
-          echo "Checking app structure..."
           APP_PATH="dist/mac-arm64/Google Slides Opener.app"
-          if [ -d "$APP_PATH" ]; then
-            echo "App exists at: $APP_PATH"
-            ls -la "$APP_PATH/Contents/"
-            echo "Checking Electron Framework symlink..."
-            ls -la "$APP_PATH/Contents/Frameworks/Electron Framework.framework/" || echo "Framework check failed"
-            echo "Checking executable..."
-            ls -la "$APP_PATH/Contents/MacOS/" || echo "MacOS check failed"
-          else
+          if [ ! -d "$APP_PATH" ]; then
             echo "ERROR: App not found at $APP_PATH"
             ls -la dist/
             exit 1
           fi
-      
-      - name: Remove quarantine and ad-hoc sign app bundle
+          echo "Removing quarantine (app root only; -r hits symlinks in Electron)..."
+          xattr -c "$APP_PATH" 2>/dev/null || true
+          echo "Signing nested frameworks and helpers (hardened runtime)..."
+          find "$APP_PATH" -name "*.framework" -exec codesign --force --sign - --options=runtime {} \;
+          find "$APP_PATH" -name "*Helper*.app" -exec codesign --force --sign - --options=runtime {} \;
+          echo "Ad-hoc signing main app (hardened runtime + entitlements)..."
+          codesign --force --deep --sign - --entitlements entitlements.mac.plist --options=runtime "$APP_PATH"
+          codesign --verify --verbose "$APP_PATH"
+          cd dist/mac-arm64
+          ditto -c -k --keepParent "Google Slides Opener.app" "../Google Slides Opener-${{ steps.version.outputs.version }}-arm64-mac.zip"
+          cd ../..
+
+      - name: Sign and zip macOS x64
         run: |
-          APP_PATH="dist/mac-arm64/Google Slides Opener.app"
-          if [ -d "$APP_PATH" ]; then
-            echo "Removing quarantine attribute..."
-            xattr -cr "$APP_PATH"
-            
-            # Sign all nested frameworks and helper apps first
-            echo "Signing nested frameworks and helpers..."
-            find "$APP_PATH" -name "*.framework" -exec codesign --force --sign - {} \;
-            find "$APP_PATH" -name "*Helper*.app" -exec codesign --force --sign - {} \;
-            
-            # Then sign the main app bundle with entitlements
-            echo "Ad-hoc signing main app with entitlements (allows it to run without real certificate)..."
-            codesign --force --deep --sign - --entitlements entitlements.mac.plist "$APP_PATH"
-            
-            echo "Verifying signature..."
-            codesign --verify --verbose "$APP_PATH"
-            
-            echo "Checking signature details..."
-            codesign -dv "$APP_PATH"
-          else
-            echo "ERROR: App not found at $APP_PATH"
+          # electron-builder may output x64 as "mac" or "mac-x64"
+          for dir in dist/mac-x64 dist/mac; do
+            if [ -d "$dir/Google Slides Opener.app" ]; then
+              APP_PATH="$dir/Google Slides Opener.app"
+              echo "Found x64 app at $dir"
+              echo "Removing quarantine (app root only; -r hits symlinks in Electron)..."
+              xattr -c "$APP_PATH" 2>/dev/null || true
+              echo "Signing nested frameworks and helpers (hardened runtime)..."
+              find "$APP_PATH" -name "*.framework" -exec codesign --force --sign - --options=runtime {} \;
+              find "$APP_PATH" -name "*Helper*.app" -exec codesign --force --sign - --options=runtime {} \;
+              echo "Ad-hoc signing main app (hardened runtime + entitlements)..."
+              codesign --force --deep --sign - --entitlements entitlements.mac.plist --options=runtime "$APP_PATH"
+              codesign --verify --verbose "$APP_PATH"
+              cd "$dir"
+              ditto -c -k --keepParent "Google Slides Opener.app" "../Google Slides Opener-${{ steps.version.outputs.version }}-x64-mac.zip"
+              cd ../..
+              break
+            fi
+          done
+          if [ ! -f "dist/Google Slides Opener-"*"-x64-mac.zip" ]; then
+            echo "ERROR: x64 zip was not created"
+            ls -la dist/
             exit 1
           fi
-      
-      - name: Re-create ZIP with signed app
-        run: |
-          cd dist
-          # Find the ZIP file that electron-builder created
-          ZIP_FILE=$(ls -1 *.zip | head -1)
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found in dist/"
-            ls -la
-            exit 1
-          fi
-          echo "Found ZIP file: $ZIP_FILE"
-          
-          # The app is already signed in dist/mac-arm64, so just re-zip it
-          APP_PATH="mac-arm64/Google Slides Opener.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "ERROR: Signed app not found at $APP_PATH"
-            exit 1
-          fi
-          
-          # Remove old ZIP
-          rm -f "$ZIP_FILE"
-          
-          # Create new ZIP with signed app using ditto (preserves symlinks and metadata)
-          cd mac-arm64
-          ditto -c -k --keepParent "Google Slides Opener.app" "../$ZIP_FILE"
-          cd ..
-          
-          echo "Created signed ZIP: $ZIP_FILE"
-          ls -lh "$ZIP_FILE"
-          
-          # Verify the app in the new ZIP is signed
-          TEMP_DIR=$(mktemp -d)
-          unzip -q "$ZIP_FILE" -d "$TEMP_DIR"
-          codesign --verify --verbose "$TEMP_DIR/Google Slides Opener.app" && echo "✓ App in ZIP is properly signed"
-          rm -rf "$TEMP_DIR"
-      
+
       - name: Install Companion Module dependencies
         run: corepack enable && yarn install --immutable
         working-directory: ./companion-module-gslide-opener
-      
+
       - name: Package Companion Module
         run: yarn run package
         working-directory: ./companion-module-gslide-opener
-      
+
       - name: Move companion module package to root
         run: mv companion-module-gslide-opener/*.tgz companion-module-gslide-opener.tgz || true
-      
-      - name: Upload macOS artifact
+
+      - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gslide-opener-macos-zip
-          path: dist/*.zip
+          name: gslide-opener-macos-arm64-zip
+          path: dist/Google Slides Opener-*-arm64-mac.zip
           retention-days: 30
-      
+
+      - name: Upload macOS x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gslide-opener-macos-x64-zip
+          path: dist/Google Slides Opener-*-x64-mac.zip
+          retention-days: 30
+
       - name: Upload Companion Module artifact
         uses: actions/upload-artifact@v4
         with:
@@ -171,31 +150,89 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Clean up problematic Icon files
+        run: |
+          python3 - <<'PY'
+          import os, subprocess
+          out = subprocess.check_output(["git", "ls-files", "-z"])
+          paths = out.decode("utf-8", "surrogateescape").split("\0")
+          bad = [p for p in paths if p and ("\r" in p or os.path.basename(p) in ("Icon", "Icon\r")) and not p.startswith("build/icon.")]
+          for p in bad:
+            subprocess.run(["git", "rm", "--cached", p], check=False)
+          PY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Linux (AppImage x64, AppImage arm64, deb x64)
+        run: npm run build:linux
+        env:
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gslide-opener-linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          retention-days: 30
+
   release:
-    needs: [build-macos]
+    needs: [build-macos, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-    
+
     steps:
-      - name: Download macOS artifact
+      - name: Download macOS arm64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: gslide-opener-macos-zip
-          path: artifacts/macos
-      
+          name: gslide-opener-macos-arm64-zip
+          path: artifacts/macos-arm64
+
+      - name: Download macOS x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gslide-opener-macos-x64-zip
+          path: artifacts/macos-x64
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: gslide-opener-linux
+          path: artifacts/linux
+
       - name: Download Companion Module artifact
         uses: actions/download-artifact@v4
         with:
           name: companion-module-gslide-opener
           path: artifacts/companion
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/macos/*.zip
+            artifacts/macos-arm64/*.zip
+            artifacts/macos-x64/*.zip
+            artifacts/linux/*
             artifacts/companion/*.tgz
           draft: false
           prerelease: false

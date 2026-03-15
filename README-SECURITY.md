@@ -1,42 +1,35 @@
-# Security Notice for macOS Users
+# Security on macOS
 
-## Expected Behavior
+## That security warning is normal
 
-**This security warning is expected and normal behavior** when downloading the app from GitHub. The app is safe to use - you can review the source code in this repository.
+When you download and launch the app, macOS shows a security warning. This is expected. The app is safe—you can review the source code here on GitHub to verify it yourself.
 
-When you first launch the app after downloading, macOS will show a security warning because the app is not notarized by Apple. This is expected for apps that use ad-hoc code signing (self-signed) rather than Apple's notarization service.
+The warning appears because the app uses self-signed code signing instead of Apple's official notarization service.
 
-## First Launch - Recommended Method
+## First launch
 
-**Right-click the app** and select **"Open"** from the context menu. macOS will show a dialog asking if you want to open it - click **"Open"** in that dialog. This is the easiest way to launch the app for the first time.
+**Right-click the app** and select **Open**. macOS will ask for confirmation—click **Open** again. That's the easiest way.
 
-## If macOS Says the App Is "Damaged"
+After the first launch, macOS remembers your choice and won't bother you again.
 
-Sometimes macOS reports that the app "is damaged and can't be opened" when you open an unsigned build (e.g. from a zip). This is usually due to quarantine attributes. Fix it in Terminal:
+## App says it's "damaged"?
+
+Sometimes macOS reports the app as "damaged" when extracted from a ZIP. This is just a quarantine flag. Fix it with:
 
 ```bash
 xattr -cr "/path/to/Google Slides Opener.app"
 ```
 
-Use the actual path to the app (e.g. in your Downloads folder or Applications). Then open the app again (right-click → Open if needed).
+Then try opening it again (right-click → Open).
 
-## Alternative Method (Security Warning)
+## Alternative: System Settings
 
-If you double-click the app and see a security error (not "damaged"):
+If right-clicking doesn't work, try:
 
 1. Go to **System Settings** → **Privacy & Security**
-2. Scroll down to find a message about "Google Slides Opener" being blocked
-3. Click **"Open Anyway"** button
+2. Scroll down and look for "Google Slides Opener was blocked"
+3. Click **Open Anyway**
 
-## After First Launch
+## Why self-signed instead of notarized?
 
-Once you've opened the app the first time using either method above, macOS will remember your choice and you won't see the security warning again on subsequent launches.
-
-## Why This Happens
-
-This app uses ad-hoc code signing (self-signed) rather than Apple's notarization service. To use Apple's notarization:
-- Requires an Apple Developer account ($99/year)
-- Requires proper code signing certificates
-- Requires submitting the app to Apple for review
-
-For an open-source utility app, ad-hoc signing is a reasonable approach. The security warning is macOS's way of protecting users from potentially malicious software, but since this is an open-source app you can verify its safety by reviewing the code.
+Apple's notarization costs $99/year, requires developer certificates, and involves submitting the app for review. For an open-source utility, self-signing is reasonable. Since the code is public, you can review it yourself to verify it's safe.

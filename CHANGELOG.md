@@ -2,6 +2,43 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.2] - 2026-02-23
+
+### Added
+- **Share link + QR overlay** – Full flow for generating share links and showing a QR code on the presentation display:
+  - **Share Settings UI** (desktop) – Share Base URL, Share Register URL, Share API Key; load/save in Settings.
+  - **Share link helpers** in main process – `genShareCode()`, `registerShareCode()`, `getShareLink({ forceNew })` with caching (TTL buffer).
+  - **API endpoints** – `POST /api/share-link`, `POST /api/show-share-qr`, `POST /api/hide-share-qr` (IP allowlist, JSON).
+  - **QR overlay window** – Frameless, transparent window on presentation display; configurable auto-hide (default 20s); uses `qrcode` package.
+  - **Companion module actions** – `show_share_qr` (duration 5–300s, force new link) and `hide_share_qr` (27 actions total).
+- **Multi-platform builds** – CI and electron-builder now produce:
+  - macOS: arm64 (Apple Silicon) and x64 (Intel) .zip.
+  - Linux: AppImage (x64 and arm64), and .deb (x64/amd64).
+- **Documentation** – RELEASES.md (6 formats, 5 architectures), TESTING.md (all plans), _FINDINGS.md (plan completion), orchestration/token-tracking docs.
+
+### Changed
+- **Companion module** – Switched to Yarn (packageManager, .yarnrc.yml, yarn.lock); build uses `yarn install --immutable` and `yarn run package`.
+- **Build workflow** – Separate macOS (arm64 + x64) and Linux jobs; release job attaches all artifacts (mac arm64/x64 zips, Linux AppImages + .deb, Companion .tgz).
+
+### Technical
+- New npm script: `build:linux` runs all Linux targets from config (AppImage x64/arm64, deb x64).
+- macOS build produces both archs; each .app is ad-hoc signed and zipped separately for release.
+
+---
+
+## [1.9.1] - 2025-02-01
+
+### Added
+- **Crash reporting and resilience** – Improved error handling and crash reporting.
+- **Speaker notes encoding detection** – Detection and handling for speaker notes encoding issues.
+- **Apps Script cleanup tool** – Tooling for Apps Script cleanup (see docs/SPEAKER-NOTES-ENCODING.md).
+
+### Changed
+- **Web UI** – Styling improvements and preset list updates.
+- **Desktop app** – Preset reorder and related desktop UI improvements.
+
+---
+
 ## [1.9.0] - 2025-01-22
 
 ### Added
@@ -34,4 +71,4 @@ All notable changes to Google Slides Opener are documented here.
 
 ## [1.8.0] and earlier
 
-See git history and README for features and fixes prior to 1.9.0.
+See git history and README for features and fixes prior to 1.9.1.

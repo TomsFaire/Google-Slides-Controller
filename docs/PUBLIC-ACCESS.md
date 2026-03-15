@@ -1,47 +1,47 @@
-# Public access and HTTPS
+# Remote Access and HTTPS
 
-The Web UI is served on your local network (e.g. `http://192.168.x.x:80`). By default it is **HTTP only** and not reachable from the internet: firewalls and NAT block direct access, and HTTP is unencrypted.
+By default, the Web UI is HTTP-only and available on your local network only. To give remote users access or encrypt the connection, you have a few options.
 
-## Options for remote or secure access
+## Tunnel (easiest for sharing)
 
-### 1. Tunnel (recommended for a shareable public link)
+Get a public HTTPS URL without needing a domain or port forwarding.
 
-A tunnel gives you a public HTTPS URL that forwards to your Web UI. No port forwarding or domain required.
+**With Cloudflare Tunnel**
 
-**Cloudflare Tunnel**
-
-1. Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/).
-2. Run a quick tunnel to your Web UI port (default 80):
+1. Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/)
+2. Run:
    ```bash
    cloudflared tunnel --url http://localhost:80
    ```
-3. Use the printed URL (e.g. `https://xxx.trycloudflare.com`) and share it with users who need remote access.
+3. Share the generated URL (like `https://xxx.trycloudflare.com`) with remote users
 
-**ngrok**
+**With ngrok**
 
-1. Install [ngrok](https://ngrok.com/download).
+1. Install [ngrok](https://ngrok.com/download)
 2. Run:
    ```bash
    ngrok http 80
    ```
-   (Use your Web UI port if you changed it.)
-3. Use the generated `https://xxx.ngrok.io` URL and share it with users who need remote access.
+   (Replace 80 with your custom Web UI port if needed)
+3. Share the generated URL (like `https://xxx.ngrok.io`)
 
-### 2. Reverse proxy (if you have a domain and server)
+## Reverse proxy (for your own domain)
 
-Run nginx or Caddy on a machine with a public IP or domain. Terminate TLS (e.g. with Let’s Encrypt) and proxy to your presentation machine:
+If you have a domain and can run nginx or Caddy on a public server:
 
-- **Upstream:** `http://PRESENTATION_MACHINE_IP:WEB_UI_PORT`
-- **Public URL:** `https://your-domain.com`
+1. Point your domain to your server’s IP
+2. Configure nginx/Caddy to proxy traffic to `http://YOUR_PRESENTATION_PC_IP:80`
+3. Add TLS with Let’s Encrypt or another CA
+4. Users access your app at `https://your-domain.com`
 
-Point users to your domain. No change is required inside the app. See your proxy’s documentation for TLS and reverse-proxy setup.
+No changes needed in the app itself. Check your proxy’s documentation for TLS setup.
 
-### 3. In-app HTTPS (LAN only)
+## In-app HTTPS (local network only)
 
-The app can optionally serve the Web UI over HTTPS on your LAN:
+Want HTTPS on your LAN? Enable it in Settings → Network Ports → Serve Web UI over HTTPS.
 
-- **Settings → Network Ports → Serve Web UI over HTTPS**: enable, then either:
-  - **Custom certificate:** choose PEM certificate and private key files (e.g. from your CA or internal PKI), or
-  - **Self-signed:** leave cert/key empty; the app will generate a self-signed certificate in its user data directory and reuse it on restart.
+You can:
+- Provide a custom certificate and private key (PEM format) from your internal CA
+- Leave both empty and let the app generate a self-signed certificate
 
-Browsers will show a warning for self-signed certs; you can accept it for LAN use. For **public** or trusted HTTPS, a tunnel or reverse proxy usually provides a trusted certificate (e.g. Let’s Encrypt) and is the preferred approach.
+Browsers will warn you about self-signed certs, but that’s fine for local use. For public access, a tunnel or reverse proxy with a real certificate is better.

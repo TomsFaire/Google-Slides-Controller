@@ -4,9 +4,7 @@ release/
 *.log
 .DS_Store
 preferences.json
-package-lock.json
 companion-module-gslide-opener/node_modules/
-companion-module-gslide-opener/package-lock.json
 
 # Build artifacts
 *.exe
@@ -45,10 +43,31 @@ gslide-websocket-addon/
 gslide-chrome-addon/
 sidecar/
 
-# Plan and AI assistant files (local only)
+# Claude Code internal files (development only)
 plan.md
 plan*.md
-claud.md
-claude.md
-skill.md
-skills.md
+*claude*.md
+*skills*.md
+*FINDINGS*.md
+*ORCHESTRATION*.md
+*TOKEN_TRACKING*.md
+*LAUNCH_*.md
+*PLAN_INDEX*.md
+TESTING.md
+memory/
+.claude/
+
+# Private/sensitive directories
+Private\ &\ Shared/
+newclaude.md
+3-13skills.md
+
+# Keep user-facing documentation (whitelist)
+!README.md
+!CHANGELOG.md
+!RELEASES.md
+!INSTALLATION.md
+!README-SECURITY.md
+!docs/
+!companion-module-gslide-opener/README.md
+!companion-module-gslide-opener/companion/HELP.md

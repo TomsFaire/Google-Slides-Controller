@@ -37,13 +37,13 @@ echo ""
 
 # Step 5: Apply our signing process
 echo "Step 4: Applying signing process..."
-echo "  - Removing quarantine..."
-xattr -cr "$APP_PATH"
-echo "  - Signing nested frameworks and helpers..."
-find "$APP_PATH" -name "*.framework" -exec codesign --force --sign - {} \;
-find "$APP_PATH" -name "*Helper*.app" -exec codesign --force --sign - {} \;
-echo "  - Ad-hoc signing main app..."
-codesign --force --deep --sign - "$APP_PATH"
+echo "  - Removing quarantine (app root only)..."
+xattr -c "$APP_PATH" 2>/dev/null || true
+echo "  - Signing nested frameworks and helpers (hardened runtime)..."
+find "$APP_PATH" -name "*.framework" -exec codesign --force --sign - --options=runtime {} \;
+find "$APP_PATH" -name "*Helper*.app" -exec codesign --force --sign - --options=runtime {} \;
+echo "  - Ad-hoc signing main app (hardened runtime + entitlements)..."
+codesign --force --deep --sign - --entitlements entitlements.mac.plist --options=runtime "$APP_PATH"
 echo "  - Verifying signature..."
 codesign --verify --verbose "$APP_PATH"
 echo "✓ Signing complete"
@@ -91,7 +91,7 @@ if [ -d "$NEW_APP" ]; then
     echo "  - Added quarantine (simulating download)..."
     
     # Remove quarantine and verify
-    xattr -cr "$NEW_APP"
+    xattr -c "$NEW_APP" 2>/dev/null || true
     codesign --verify --verbose "$NEW_APP" && echo "  ✓ App in ZIP is properly signed!"
 fi
 
@@ -104,7 +104,7 @@ echo ""
 echo "To test if the app actually runs:"
 echo "  1. Extract the ZIP: unzip -q '$ZIP_PATH' -d /tmp/test-app"
 echo "  2. Try to open it: open '/tmp/test-app/Google Slides Opener.app'"
-echo "  3. If you see 'damaged' error, apply: xattr -cr '/tmp/test-app/Google Slides Opener.app'"
+echo "  3. If you see 'damaged' error, apply: xattr -c '/tmp/test-app/Google Slides Opener.app'"
 echo "  4. Then try opening again"
 echo ""
 echo "The signing process should prevent the 'damaged' error."

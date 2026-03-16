@@ -2,14 +2,14 @@
 
 All notable changes to Google Slides Opener are documented here.
 
-## [Unreleased]
+## [1.9.3] - 2026-03-15
 
 ### Added
 - **Backup controls toggle** – Enable/disable backup command forwarding at runtime without restart. New API endpoint: `POST /api/set-backup-controls` `{ "enabled": true|false }`. New Companion action, variable, and feedback.
+- **Reload slide position restoration** – Reload now restores slide position via both URL fragment and a post-load `navigateToSlide()` call (1500ms delay for Google Slides JS initialization). Belt-and-suspenders approach for reliability.
 
 ### Fixed
 - **Speaker notes preview column** – Column now locked to 28% max-width (previously expanded to ~50% on load). CSS injection prevents reflow as preview images stream in.
-- **Reload slide position** – Reload now restores slide position via both URL fragment and a post-load `navigateToSlide()` call (1500ms delay for Google Slides JS initialization). Belt-and-suspenders approach for reliability.
 
 ## [1.9.2] - 2026-02-23
 

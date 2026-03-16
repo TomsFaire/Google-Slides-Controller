@@ -301,6 +301,7 @@ let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
 let backupControlsEnabled = true; // Gate for forwarding commands to backup machines (runtime-only, Task 3)
+let reloadTargetSlide = null; // Slide to navigate to after reload (Task 4)
 
 // ----------------------------
 // Crash reporting and recovery
@@ -1269,6 +1270,18 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
       presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
     }
+
+    // Task 4: Restore slide position after load (belt-and-suspenders approach)
+    // Wait 1500ms for Google Slides JS to initialize, then navigate to savedSlide
+    if (savedSlide && savedSlide > 1) {
+      setTimeout(async () => {
+        try {
+          await navigateToSlide(savedSlide);
+        } catch (err) {
+          logError('[Reload] Error restoring slide position:', err);
+        }
+      }, 1500);
+    }
   });
   await new Promise(resolve => setTimeout(resolve, 2000));
   if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
@@ -1283,6 +1296,51 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
   }
   if (presentationWindow && !presentationWindow.isDestroyed()) {
     setTimeout(() => presentationWindow.focus(), 500);
+  }
+}
+
+// Navigate to a specific slide using arrow keys (Task 4)
+// Used by both /api/go-to-slide and reload slide restoration
+async function navigateToSlide(targetSlide) {
+  if (!presentationWindow || presentationWindow.isDestroyed()) {
+    logWarn('[Navigate] Presentation window not available');
+    return false;
+  }
+
+  if (!Number.isInteger(targetSlide) || targetSlide < 1) {
+    logWarn('[Navigate] Invalid target slide:', targetSlide);
+    return false;
+  }
+
+  const current = typeof currentSlide === 'number' ? currentSlide : 1;
+  const slidesToMove = targetSlide - current;
+
+  if (slidesToMove === 0) {
+    logDebug('[Navigate] Already on slide', targetSlide);
+    return true;
+  }
+
+  try {
+    presentationWindow.focus();
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const keyCode = slidesToMove > 0 ? 'Right' : 'Left';
+    const count = Math.abs(slidesToMove);
+
+    for (let i = 0; i < count; i++) {
+      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: keyCode });
+      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: keyCode });
+      if (i < count - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    currentSlide = targetSlide;
+    logInfo(`[Navigate] Successfully navigated to slide ${targetSlide}`);
+    return true;
+  } catch (err) {
+    logError('[Navigate] Error navigating to slide:', err);
+    return false;
   }
 }
 
@@ -3341,40 +3399,10 @@ function startHttpServer() {
             return;
           }
 
-          // Get current slide (from our tracking or default to 1)
+          // Navigate to the target slide using the helper function
           const current = typeof currentSlide === 'number' ? currentSlide : 1;
-          const slidesToMove = targetSlide - current;
+          const navigateSuccess = await navigateToSlide(targetSlide);
 
-          if (slidesToMove === 0) {
-            // Broadcast to backups even if already on target slide (for sync)
-            sendToBackups('/api/go-to-slide', { slide: targetSlide }).catch(err => {
-              console.error('[Backup] Error broadcasting go-to-slide:', err);
-            });
-            
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Already on slide ' + targetSlide }));
-            return;
-          }
-
-          presentationWindow.focus();
-          await new Promise(resolve => setTimeout(resolve, 50));
-
-          // Send arrow key presses to navigate
-          const keyCode = slidesToMove > 0 ? 'Right' : 'Left';
-          const count = Math.abs(slidesToMove);
-
-          for (let i = 0; i < count; i++) {
-            presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: keyCode });
-            presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: keyCode });
-            // Small delay between key presses to ensure they're processed
-            if (i < count - 1) {
-              await new Promise(resolve => setTimeout(resolve, 100));
-            }
-          }
-
-          // Update our tracking
-          currentSlide = targetSlide;
-          
           // Broadcast to backups (async, don't wait)
           sendToBackups('/api/go-to-slide', { slide: targetSlide }).catch(err => {
             console.error('[Backup] Error broadcasting go-to-slide:', err);

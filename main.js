@@ -300,6 +300,7 @@ let notesWindow = null;
 let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
+let backupControlsEnabled = true; // Gate for forwarding commands to backup machines (runtime-only, Task 3)
 
 // ----------------------------
 // Crash reporting and recovery
@@ -397,6 +398,41 @@ function getNotesWindowNormalizeScript() {
     var fixed = fixText(node.nodeValue);
     if (fixed !== node.nodeValue) node.nodeValue = fixed;
   }
+})();
+  `.trim();
+}
+
+function getNotesWindowCssScript() {
+  // Inject CSS to constrain the slide preview column to 28% max-width
+  // This prevents the preview from expanding to ~50% of the window
+  return `
+(function(){
+  var style = document.createElement('style');
+  style.textContent = \`
+    /* Constrain slide preview column to max 28% width (Task 2) */
+    [data-view-type="speaker_notes"] > div:first-child,
+    .slide-preview-container,
+    .preview-column,
+    [data-role="presentation"] > div:first-child {
+      max-width: 28% !important;
+      min-width: 20% !important;
+      flex: 0 0 28% !important;
+    }
+    /* Ensure preview images don't cause reflow */
+    .slide-preview-container img,
+    .preview-column img,
+    [data-view-type="speaker_notes"] img {
+      width: 100% !important;
+      height: auto !important;
+      display: block !important;
+    }
+    /* Prevent flexbox growth of preview column */
+    .slide-preview-container,
+    .preview-column {
+      flex-shrink: 0 !important;
+    }
+  \`;
+  document.head.appendChild(style);
 })();
   `.trim();
 }
@@ -983,11 +1019,15 @@ function getBackupIps() {
 
 // Send command to all backup machines (fire and forget)
 async function sendToBackups(endpoint, data = null) {
+  if (!backupControlsEnabled) {
+    return; // Backup controls disabled (Task 3)
+  }
+
   const prefs = loadPreferences();
   if (prefs.primaryBackupMode !== 'primary') {
     return; // Not in primary mode
   }
-  
+
   const backupIps = getBackupIps();
   if (backupIps.length === 0) {
     return; // No backups configured
@@ -1184,8 +1224,15 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
       });
       if (savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0) {
         setSpeakerNotesBoundsFromCache(window, savedNotesBounds);
+        // Inject CSS after restoring bounds
+        window.webContents.once('did-finish-load', () => {
+          window.webContents.executeJavaScript(getNotesWindowCssScript()).catch(() => {});
+        });
       } else {
-        window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window));
+        window.webContents.once('did-finish-load', () => {
+          setSpeakerNotesFullscreen(window);
+          window.webContents.executeJavaScript(getNotesWindowCssScript()).catch(() => {});
+        });
         window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window), 500));
       }
       app.removeListener('browser-window-created', windowCreatedListener);
@@ -2568,6 +2615,7 @@ function startHttpServer() {
           previousSlide: null,
           presentationTitle: null,
           timerElapsed: null,
+          backupControlsEnabled: backupControlsEnabled,
           loginState: loginState,
           loggedInUser: loggedInUser || null
         };
@@ -3416,6 +3464,30 @@ function startHttpServer() {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
       }
+      return;
+    }
+
+    // POST /api/set-backup-controls - Enable/disable backup command forwarding (Task 3)
+    if (req.method === 'POST' && req.url === '/api/set-backup-controls') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || '{}');
+          if (typeof data.enabled !== 'boolean') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'enabled field must be boolean' }));
+            return;
+          }
+          backupControlsEnabled = data.enabled;
+          logInfo(`[API] Backup controls ${backupControlsEnabled ? 'enabled' : 'disabled'}`);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, backupControlsEnabled: backupControlsEnabled }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
       return;
     }
 

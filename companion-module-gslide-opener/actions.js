@@ -343,6 +343,34 @@ module.exports = function (self) {
 				}
 			},
 		},
+
+	set_backup_controls: {
+		name: 'Set Backup Controls',
+		description: 'Enable or disable backup command forwarding',
+		options: [
+			{
+				id: 'enabled',
+				type: 'dropdown',
+				label: 'Enable/Disable',
+				default: 'enable',
+				choices: [
+					{ id: 'enable', label: 'Enable' },
+					{ id: 'disable', label: 'Disable' },
+				],
+			},
+		],
+		callback: async (event) => {
+			try {
+				const enabled = event.options.enabled === 'enable'
+				self.log('info', `Setting backup controls to ${enabled ? 'enabled' : 'disabled'}`)
+
+				const response = await self.apiRequest('POST', '/api/set-backup-controls', { enabled })
+				self.log('info', `Backup controls ${response.backupControlsEnabled ? 'enabled' : 'disabled'}`)
+			} catch (error) {
+				self.log('error', `Failed to set backup controls: ${error.message}`)
+			}
+		},
+	},
 	}
 
 	console.log('[gslide-opener] actions.js - Registering', Object.keys(actionDefinitions).length, 'actions')

@@ -24,8 +24,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			presentationDisplayId: null,
 			notesDisplayId: null,
 			loginState: false,
-			loggedInUser: null
-		}
+			loggedInUser: null,
+		backupControlsEnabled: true
+	}
 		
 		// Polling interval
 		this.pollInterval = null
@@ -294,9 +295,13 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			{
 				variableId: 'logged_in_user',
 				name: 'Logged In User (Email)'
+			},
+			{
+				variableId: 'backup_controls_enabled',
+				name: 'Backup Controls Enabled (Yes/No)'
 			}
 		]
-		
+
 		this.setVariableDefinitions(variables)
 		this.log('info', `Defined ${variables.length} variables`)
 	}
@@ -399,6 +404,21 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 					return this.state.loginState === true
 				},
 				showInvert: true
+,
+		backup_controls_enabled: {
+			type: 'boolean',
+			name: 'Backup Controls Enabled',
+			description: 'Indicates when backup command forwarding is enabled',
+			defaultStyle: {
+				color: combineRgb(255, 255, 255),
+				bgcolor: combineRgb(100, 200, 0)
+			},
+			options: [],
+			callback: (feedback) => {
+				return this.state.backupControlsEnabled === true
+			},
+			showInvert: true
+		}
 			}
 		}
 		
@@ -438,7 +458,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			presentationDisplayId: response.presentationDisplayId !== null && response.presentationDisplayId !== undefined ? response.presentationDisplayId : null,
 			notesDisplayId: response.notesDisplayId !== null && response.notesDisplayId !== undefined ? response.notesDisplayId : null,
 			loginState: response.loginState === true,
-			loggedInUser: response.loggedInUser || null
+			loggedInUser: response.loggedInUser || null,
+			backupControlsEnabled: response.backupControlsEnabled === true,
 		}
 		
 		// Check if state changed (compare all fields)
@@ -458,6 +479,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.state.presentationTitle !== newState.presentationTitle ||
 			this.state.timerElapsed !== newState.timerElapsed ||
 			this.state.presentationDisplayId !== newState.presentationDisplayId ||
+			this.state.backupControlsEnabled !== newState.backupControlsEnabled ||
 			this.state.notesDisplayId !== newState.notesDisplayId
 		
 		if (stateChanged) {
@@ -480,11 +502,12 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				presentation_display_id: this.state.presentationDisplayId !== null ? String(this.state.presentationDisplayId) : '',
 				notes_display_id: this.state.notesDisplayId !== null ? String(this.state.notesDisplayId) : '',
 				login_state: this.state.loginState ? 'Yes' : 'No',
-				logged_in_user: this.state.loggedInUser || ''
+				logged_in_user: this.state.loggedInUser || '',
+				backup_controls_enabled: this.state.backupControlsEnabled ? 'Yes' : 'No',
 			})
 			
 			// Trigger feedback updates
-			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state')
+			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state', 'backup_controls_enabled')
 			
 			this.log('debug', `State updated: presentation=${this.state.presentationOpen}, notes=${this.state.notesOpen}, slide=${this.state.currentSlide}/${this.state.totalSlides}, title=${this.state.presentationTitle || 'N/A'}`)
 		}

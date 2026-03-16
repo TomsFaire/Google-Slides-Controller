@@ -2,6 +2,14 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [Unreleased]
+
+### Added
+- **Backup controls toggle** – Enable/disable backup command forwarding at runtime without restart. New API endpoint: `POST /api/set-backup-controls` `{ "enabled": true|false }`. New Companion action, variable, and feedback.
+
+### Fixed
+- **Speaker notes preview column** – Column now locked to 28% max-width (previously expanded to ~50% on load). CSS injection prevents reflow as preview images stream in.
+
 ## [1.9.2] - 2026-02-23
 
 ### Added

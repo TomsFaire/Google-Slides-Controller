@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Backup controls toggle action** – New action "Set Backup Controls" to enable/disable backup command forwarding at runtime. Includes new variable `backup_controls_enabled` and feedback "Backup Controls Enabled".
+
 ### Verified
 - **Timer elapsed variable** — Confirmed `timer_elapsed` variable correctly maps from Electron app's `/api/status` endpoint. The app actively scrapes timer values from the presenter view DOM and makes them available to Companion in HH:MM:SS format.
 

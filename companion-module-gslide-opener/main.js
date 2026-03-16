@@ -228,6 +228,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 
 	// Set up variable definitions
 	setupVariables() {
+		// VERIFIED (Task 5): timer_elapsed variable correctly maps from API status.timerElapsed
+		// The Electron app scrapes timer value from presenter view DOM and returns it in /api/status
 		const variables = [
 			{
 				variableId: 'presentation_open',
@@ -301,6 +303,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 
 	// Set up feedback definitions
 	setupFeedbacks() {
+		/* STASHED FEEDBACK (Task 1): Image preview feedback removed for future implementation.
+		   The GET /api/get-slide-previews endpoint is still available in the Electron app.
+		   This feedback was not rendering slide preview images usefully. */
 		const feedbacks = {
 			presentation_open: {
 				type: 'boolean',

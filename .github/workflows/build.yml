@@ -150,52 +150,8 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  build-linux:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Clean up problematic Icon files
-        run: |
-          python3 - <<'PY'
-          import os, subprocess
-          out = subprocess.check_output(["git", "ls-files", "-z"])
-          paths = out.decode("utf-8", "surrogateescape").split("\0")
-          bad = [p for p in paths if p and ("\r" in p or os.path.basename(p) in ("Icon", "Icon\r")) and not p.startswith("build/icon.")]
-          for p in bad:
-            subprocess.run(["git", "rm", "--cached", p], check=False)
-          PY
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Linux (AppImage x64, AppImage arm64, deb x64)
-        run: npm run build:linux
-        env:
-          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: gslide-opener-linux
-          path: |
-            dist/*.AppImage
-            dist/*.deb
-          retention-days: 30
-
   release:
-    needs: [build-macos, build-linux]
+    needs: [build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -214,12 +170,6 @@ jobs:
           name: gslide-opener-macos-x64-zip
           path: artifacts/macos-x64
 
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: gslide-opener-linux
-          path: artifacts/linux
-
       - name: Download Companion Module artifact
         uses: actions/download-artifact@v4
         with:
@@ -232,7 +182,6 @@ jobs:
           files: |
             artifacts/macos-arm64/*.zip
             artifacts/macos-x64/*.zip
-            artifacts/linux/*
             artifacts/companion/*.tgz
           draft: false
           prerelease: false

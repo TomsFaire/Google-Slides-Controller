@@ -1,6 +1,6 @@
 # Companion Module Changelog
 
-## [Unreleased]
+## [1.4.6] - 2026-03-15
 
 ### Added
 - **Backup controls toggle action** – New action "Set Backup Controls" to enable/disable backup command forwarding at runtime. Includes new variable `backup_controls_enabled` and feedback "Backup Controls Enabled".
@@ -11,6 +11,6 @@
 ### Stashed for Future Implementation
 - **Image preview feedback** — The broken slide image preview feedback has been removed. The underlying `GET /api/get-slide-previews` endpoint remains available in the Electron app for future use.
 
-## [1.4.9] - Previous Release Notes
+## [1.4.5] - Previous Release Notes
 
 See git history for earlier versions.

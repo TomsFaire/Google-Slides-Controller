@@ -1224,6 +1224,25 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
       presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
       presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
     }
+    // Restore slide position: URL fragment is often ignored; after presentation mode is ready, navigate from slide 1 to savedSlide
+    const targetSlide = typeof savedSlide === 'number' && savedSlide > 1 ? savedSlide : 1;
+    if (targetSlide > 1) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      if (presentationWindow && !presentationWindow.isDestroyed()) {
+        presentationWindow.focus();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const count = targetSlide - 1;
+        for (let i = 0; i < count; i++) {
+          presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
+          presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+          if (i < count - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+        currentSlide = targetSlide;
+        console.log('[Reload] Restored slide position to', targetSlide);
+      }
+    }
   });
   await new Promise(resolve => setTimeout(resolve, 2000));
   if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {

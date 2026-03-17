@@ -22,5 +22,5 @@ Slide navigation, presentation control, speaker notes, presets, and more. See th
 
 ## Learn more
 
-- Main app: [github.com/nerif-tafu/gslide-opener](https://github.com/nerif-tafu/gslide-opener)
+- Main app: [github.com/TomsFaire/Google-Slides-Controller](https://github.com/TomsFaire/Google-Slides-Controller)
 - Bitfocus Companion: [bitfocus.io/companion](https://bitfocus.io/companion)

@@ -416,8 +416,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				options: [],
 				callback: (feedback) => {
 					const enabled = this.state.backupControlsEnabled === true
+					// Return actual state so Invert OFF = enabled (Disable Backup Controls), Invert ON = disabled (Enable Backup Controls)
 					return {
-						value: true,
+						value: enabled,
 						style: enabled
 							? { bgcolor: combineRgb(0, 180, 0), color: combineRgb(255, 255, 255), text: 'Backups On' }
 							: { bgcolor: combineRgb(80, 80, 80), color: combineRgb(220, 220, 220), text: 'Backups Off' }

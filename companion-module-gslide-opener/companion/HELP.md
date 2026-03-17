@@ -18,4 +18,4 @@ Control presentations and speaker notes from your Bitfocus Companion setup. Navi
 
 ## Learn more
 
-Visit the main project: [github.com/nerif-tafu/gslide-opener](https://github.com/nerif-tafu/gslide-opener)
+Visit the main project: [github.com/TomsFaire/Google-Slides-Controller](https://github.com/TomsFaire/Google-Slides-Controller)

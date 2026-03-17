@@ -2,7 +2,7 @@
 
 All notable changes to Google Slides Opener are documented here.
 
-## [1.9.4] - 2026-03-16
+## [1.9.5] - 2026-03-16
 
 ### Changed
 - **Removed share link / QR overlay feature** – Removed the external redirect + QR overlay system (`/api/share-link`, `/api/show-share-qr`, `/api/hide-share-qr`) that depended on an unavailable external service. Share Settings UI removed from desktop settings.

@@ -24,15 +24,6 @@ const stagetimerEnabledCheckbox = document.getElementById('stagetimer-enabled');
 const stagetimerVisibleCheckbox = document.getElementById('stagetimer-visible');
 const saveStagetimerBtn = document.getElementById('save-stagetimer-btn');
 const loadStagetimerBtn = document.getElementById('load-stagetimer-btn');
-const shareBaseUrlInput = document.getElementById('share-base-url');
-const shareRegisterUrlInput = document.getElementById('share-register-url');
-const shareApiKeyInput = document.getElementById('share-api-key');
-const shareTtlSecInput = document.getElementById('share-ttl-sec');
-const shareLastUrlDisplay = document.getElementById('share-last-url');
-const shareSaveSettingsBtn = document.getElementById('share-save-settings-btn');
-const shareGenerateLinkBtn = document.getElementById('share-generate-link-btn');
-const shareShowQrBtn = document.getElementById('share-show-qr-btn');
-const shareHideQrBtn = document.getElementById('share-hide-qr-btn');
 const verboseLoggingCheckbox = document.getElementById('verbose-logging');
 const webUiDebugConsoleEnabledCheckbox = document.getElementById('web-ui-debug-console-enabled');
 const webUiThemeSelect = document.getElementById('web-ui-theme');
@@ -556,23 +547,6 @@ async function initDisplays() {
     // Set up event handlers for stagetimer
     saveStagetimerBtn.addEventListener('click', saveStagetimerSettings);
     loadStagetimerBtn.addEventListener('click', loadStagetimerSettings);
-
-    // Load share settings on init
-    await loadShareSettings();
-
-    // Set up event handlers for share settings
-    if (shareSaveSettingsBtn) {
-      shareSaveSettingsBtn.addEventListener('click', saveShareSettings);
-    }
-    if (shareGenerateLinkBtn) {
-      shareGenerateLinkBtn.addEventListener('click', generateShareLink);
-    }
-    if (shareShowQrBtn) {
-      shareShowQrBtn.addEventListener('click', showQrOnPresentation);
-    }
-    if (shareHideQrBtn) {
-      shareHideQrBtn.addEventListener('click', hideQrOnPresentation);
-    }
 
     // Speaker notes capture (clean text via IPC - no fetch/port needed)
     async function refreshSpeakerNotesCapture() {
@@ -1149,103 +1123,6 @@ async function saveStagetimerSettings() {
   } catch (error) {
     console.error('Failed to save stagetimer settings:', error);
     showStatus('Failed to save stagetimer settings: ' + error.message, 'error');
-  }
-}
-
-// Share Settings Functions
-async function loadShareSettings() {
-  try {
-    const preferences = await window.electronAPI.getPreferences();
-    shareBaseUrlInput.value = preferences.shareBaseUrl || '';
-    shareRegisterUrlInput.value = preferences.shareRegisterUrl || '';
-    shareApiKeyInput.value = preferences.shareApiKey || '';
-    shareTtlSecInput.value = preferences.shareTtlSec || '86400';
-    shareLastUrlDisplay.textContent = preferences.shareLastUrl || '—';
-  } catch (error) {
-    console.error('Failed to load share settings:', error);
-    showStatus('Failed to load share settings', 'error');
-  }
-}
-
-async function saveShareSettings() {
-  try {
-    const baseUrl = shareBaseUrlInput.value.trim();
-    const registerUrl = shareRegisterUrlInput.value.trim();
-    const apiKey = shareApiKeyInput.value.trim();
-    const ttl = parseInt(shareTtlSecInput.value, 10) || 86400;
-
-    // Validate URLs
-    if (baseUrl && !isValidUrl(baseUrl)) {
-      showStatus('Invalid Base URL', 'error');
-      return;
-    }
-    if (registerUrl && !isValidUrl(registerUrl)) {
-      showStatus('Invalid Register URL', 'error');
-      return;
-    }
-
-    await window.electronAPI.savePreferences({
-      shareBaseUrl: baseUrl || null,
-      shareRegisterUrl: registerUrl || null,
-      shareApiKey: apiKey || null,
-      shareTtlSec: ttl
-    });
-    showStatus('Share settings saved', 'info');
-  } catch (error) {
-    console.error('Failed to save share settings:', error);
-    showStatus('Failed to save share settings', 'error');
-  }
-}
-
-function isValidUrl(string) {
-  try {
-    new URL(string);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
-async function generateShareLink() {
-  try {
-    const response = await window.electronAPI.generateShareLink();
-    if (response && response.success && response.url) {
-      shareLastUrlDisplay.textContent = response.url;
-      showStatus('Share link generated successfully', 'info');
-    } else {
-      showStatus(response?.error || 'Failed to generate share link', 'error');
-    }
-  } catch (error) {
-    console.error('Failed to generate share link:', error);
-    showStatus('Failed to generate share link: ' + error.message, 'error');
-  }
-}
-
-async function showQrOnPresentation() {
-  try {
-    const response = await window.electronAPI.showQrOnPresentation();
-    if (response && response.success) {
-      showStatus('QR code displayed on presentation', 'info');
-    } else {
-      showStatus(response?.error || 'Failed to show QR code', 'error');
-    }
-  } catch (error) {
-    console.error('Failed to show QR code:', error);
-    showStatus('Failed to show QR code: ' + error.message, 'error');
-  }
-}
-
-async function hideQrOnPresentation() {
-  try {
-    const response = await window.electronAPI.hideQrOnPresentation();
-    if (response && response.success) {
-      showStatus('QR code hidden', 'info');
-    } else {
-      showStatus(response?.error || 'Failed to hide QR code', 'error');
-    }
-  } catch (error) {
-    console.error('Failed to hide QR code:', error);
-    showStatus('Failed to hide QR code: ' + error.message, 'error');
   }
 }
 

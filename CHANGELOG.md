@@ -2,6 +2,13 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.4] - 2026-03-16
+
+### Changed
+- **Removed share link / QR overlay feature** – Removed the external redirect + QR overlay system (`/api/share-link`, `/api/show-share-qr`, `/api/hide-share-qr`) that depended on an unavailable external service. Share Settings UI removed from desktop settings.
+- **Code cleanup** – Removed task-scaffolding code from Phase 2 development: `backupControlsEnabled` runtime gate, `/api/set-backup-controls` endpoint, CSS injection for speaker notes preview column, and `navigateToSlide()` helper (logic inlined into `/api/go-to-slide`).
+- **Repo cleanup** – Removed internal planning docs, test scripts, and draft notes from public repository. Fixed broken `git fetch` caused by macOS `Icon\r` files tracked in git.
+
 ## [1.9.3] - 2026-03-15
 
 ### Added

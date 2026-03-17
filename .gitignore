@@ -37,6 +37,7 @@ verify-app.sh
 
 # Duplicate/old folders
 github/
+companion-module-google-slidescontroller/
 
 # Untested add-ons (do not commit until ready)
 gslide-websocket-addon/
@@ -49,10 +50,13 @@ plan*.md
 *claude*.md
 *skills*.md
 *FINDINGS*.md
+_FINDINGS*.md
 *ORCHESTRATION*.md
 *TOKEN_TRACKING*.md
 *LAUNCH_*.md
 *PLAN_INDEX*.md
+PROJECT_STATUS*.md
+PHASE_*.md
 TESTING.md
 memory/
 .claude/

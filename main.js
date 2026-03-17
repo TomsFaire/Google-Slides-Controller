@@ -986,7 +986,10 @@ async function sendToBackups(endpoint, data = null) {
   if (prefs.primaryBackupMode !== 'primary') {
     return; // Not in primary mode
   }
-  
+  if (prefs.backupControlsEnabled === false) {
+    return; // Backup forwarding disabled (decoupled mode)
+  }
+
   const backupIps = getBackupIps();
   if (backupIps.length === 0) {
     return; // No backups configured
@@ -2363,11 +2366,12 @@ function startHttpServer() {
           }
         }
         
-        // Get preferences for display IDs
+        // Get preferences for display IDs and backup controls
         const prefs = loadPreferences();
         state.presentationDisplayId = prefs.presentationDisplayId || null;
         state.notesDisplayId = prefs.notesDisplayId || null;
         state.notesEncodingIssue = lastNotesEncodingIssue;
+        state.backupControlsEnabled = prefs.backupControlsEnabled !== false;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
       })().catch(err => {
@@ -2379,6 +2383,32 @@ function startHttpServer() {
       return;
     }
     
+    // POST /api/set-backup-controls - Enable or disable backup command forwarding (primary only)
+    if (req.method === 'POST' && req.url === '/api/set-backup-controls') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const prefs = loadPreferences();
+          if (prefs.primaryBackupMode !== 'primary') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ backupControlsEnabled: prefs.backupControlsEnabled !== false, message: 'Not in primary mode' }));
+            return;
+          }
+          const enabled = data.enabled !== false;
+          prefs.backupControlsEnabled = enabled;
+          savePreferences(prefs);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ backupControlsEnabled: prefs.backupControlsEnabled, message: enabled ? 'Backup forwarding enabled' : 'Backup forwarding disabled' }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Invalid request' }));
+        }
+      });
+      return;
+    }
+
     // GET /api/backup-status - Get connection status of backup machines (primary mode only)
     if (req.method === 'GET' && req.url === '/api/backup-status') {
       (async () => {

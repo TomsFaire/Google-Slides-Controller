@@ -404,21 +404,25 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 					return this.state.loginState === true
 				},
 				showInvert: true
-,
-		backup_controls_enabled: {
-			type: 'boolean',
-			name: 'Backup Controls Enabled',
-			description: 'Indicates when backup command forwarding is enabled',
-			defaultStyle: {
-				color: combineRgb(255, 255, 255),
-				bgcolor: combineRgb(100, 200, 0)
 			},
-			options: [],
-			callback: (feedback) => {
-				return this.state.backupControlsEnabled === true
-			},
-			showInvert: true
-		}
+			backup_controls_enabled: {
+				type: 'boolean',
+				name: 'Backup Controls Enabled',
+				description: 'Style and text change based on whether backup forwarding is on or off',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(100, 200, 0)
+				},
+				options: [],
+				callback: (feedback) => {
+					const enabled = this.state.backupControlsEnabled === true
+					return {
+						value: true,
+						style: enabled
+							? { bgcolor: combineRgb(0, 180, 0), color: combineRgb(255, 255, 255), text: 'Backups On' }
+							: { bgcolor: combineRgb(80, 80, 80), color: combineRgb(220, 220, 220), text: 'Backups Off' }
+					}
+				}
 			}
 		}
 		

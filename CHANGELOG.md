@@ -2,6 +2,11 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.6] - 2026-03-17
+
+### Fixed
+- **Backup controls toggle** – Restored app support for decoupling primary/backup via Companion. The Electron app again implements `POST /api/set-backup-controls` and includes `backupControlsEnabled` in `GET /api/status`; primary only forwards commands to backups when enabled. Companion variable and Set Backup Controls action now work; feedback shows "Backups On" / "Backups Off" with distinct styling.
+
 ## [1.9.5] - 2026-03-16
 
 ### Changed

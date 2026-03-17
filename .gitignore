@@ -33,6 +33,7 @@ Icon
 # Test files
 test-*.js
 test-*.ps1
+test-*.sh
 verify-app.sh
 
 # Duplicate/old folders
@@ -58,6 +59,7 @@ _FINDINGS*.md
 PROJECT_STATUS*.md
 PHASE_*.md
 TESTING.md
+docs/EDITS-*.md
 memory/
 .claude/
 

@@ -417,22 +417,127 @@ function stopNotesWindowNormalizationInterval() {
   }
 }
 
+// CSS to hide the slide preview side panel in Google Slides presenter view,
+// giving full width to the speaker notes text.
+const PRESENTER_VIEW_HIDE_SIDE_PANEL_CSS = `
+  /* Hide the slide preview panel and dragger */
+  td.punch-viewer-speakernotes-side-panel {
+    display: none !important;
+  }
+  div.punch-viewer-speakernotes-dragger {
+    display: none !important;
+  }
+
+  /* Notes text takes full width */
+  div.punch-viewer-speakernotes-text-body-scrollable {
+    left: 0 !important;
+  }
+  div.punch-viewer-speakernotes-text-header-container {
+    left: 0 !important;
+  }
+  div.punch-viewer-speaker-qanda-content {
+    left: 0 !important;
+  }
+`;
+
+// CSS to force narrow side panel (20%) — used when side panel is shown but narrowed.
+const PRESENTER_VIEW_NARROW_SIDE_PANEL_CSS = `
+  table.punch-viewer-speakernotes {
+    table-layout: fixed !important;
+  }
+  td.punch-viewer-speakernotes-side-panel {
+    width: 20% !important;
+    max-width: 20% !important;
+    overflow: hidden !important;
+  }
+  div.punch-viewer-speakernotes-dragger {
+    left: 20% !important;
+  }
+  div.punch-viewer-speakernotes-text-body-scrollable {
+    left: 20% !important;
+  }
+  div.punch-viewer-speakernotes-text-header-container {
+    left: 20% !important;
+  }
+  div.punch-viewer-speaker-qanda-content {
+    left: 20% !important;
+  }
+`;
+
 function onNotesWindowCreated(win) {
   startNotesWindowNormalizationInterval();
   win.once('closed', stopNotesWindowNormalizationInterval);
+
+  // Fix presenter view layout based on preference:
+  // - 'hide' (default): hide side panel entirely, notes get full width
+  // - 'narrow': show side panel at 20% width
+  // - 'default': leave Google's layout as-is (50/50)
+  win.webContents.on('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    const prefs = loadPreferences();
+    const mode = prefs.notesLayout || 'hide';
+
+    if (mode === 'hide') {
+      win.webContents.insertCSS(PRESENTER_VIEW_HIDE_SIDE_PANEL_CSS).then(() => {
+        logInfo('[Notes] Presenter layout: side panel hidden');
+      }).catch(() => {});
+    } else if (mode === 'narrow') {
+      win.webContents.insertCSS(PRESENTER_VIEW_NARROW_SIDE_PANEL_CSS).then(() => {
+        logInfo('[Notes] Presenter layout: side panel narrowed to 20%');
+      }).catch(() => {});
+    } else {
+      logInfo('[Notes] Presenter layout: using Google default');
+    }
+  });
+
+  // Persist notes window bounds to preferences on resize/move so they survive app restarts.
+  let notesBoundsSaveTimer = null;
+  const saveNotesBounds = () => {
+    if (win.isDestroyed()) return;
+    clearTimeout(notesBoundsSaveTimer);
+    notesBoundsSaveTimer = setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        const bounds = win.getBounds();
+        if (bounds.width > 100 && bounds.height > 100) {
+          const prefs = loadPreferences();
+          prefs.notesBounds = bounds;
+          savePreferences(prefs);
+          logDebug('[Notes] Saved notes window bounds to preferences:', bounds);
+        }
+      } catch (e) {
+        logError('[Notes] Error saving notes bounds:', e);
+      }
+    }, 500);
+  };
+  win.on('resize', saveNotesBounds);
+  win.on('move', saveNotesBounds);
+  win.once('closed', () => clearTimeout(notesBoundsSaveTimer));
+}
+
+// Load saved notes window bounds from preferences (returns bounds object or null).
+function loadSavedNotesBounds() {
+  try {
+    const prefs = loadPreferences();
+    const b = prefs.notesBounds;
+    if (b && b.width > 100 && b.height > 100) return b;
+  } catch (e) {}
+  return null;
 }
 
 // Function to set speaker notes window to fullscreen
 function setSpeakerNotesFullscreen(window) {
   if (!window || window.isDestroyed()) return;
-  
-  // Hide the window initially to prevent seeing the resize
-  window.hide();
-  
+  // Make the window invisible (but NOT hidden) to prevent seeing the resize.
+  // Using setOpacity(0) instead of hide() so the window keeps its full viewport dimensions.
+  // Google Slides presenter view picks narrow-preview vs 50/50 layout based on viewport width
+  // at render time; hide() collapses the viewport to 0x0, causing the wrong layout.
+  window.setOpacity(0);
+
   // Wait for page to fully load before showing
   const showFullscreen = () => {
     if (window.isDestroyed()) return;
-    
+
     try {
       // Get display - use primary display if window bounds are invalid (e.g., on Windows when hidden)
       let display;
@@ -448,19 +553,32 @@ function setSpeakerNotesFullscreen(window) {
         // Fallback to primary display if getDisplayMatching fails
         display = screen.getPrimaryDisplay();
       }
-      
+
       window.setBounds(display.bounds);
       if (process.platform === 'darwin') {
         // Use setSimpleFullScreen instead of setFullScreen to avoid creating a new Space
         // This prevents window management conflicts when "Displays have separate Spaces" is enabled
         window.setSimpleFullScreen(true);
       }
+      window.setOpacity(1);
       window.show();
       logInfo('[Notes] Set speaker notes window to fullscreen (simple fullscreen to avoid Spaces conflicts)');
+      // Fire resize events so Slides recalculates layout for the actual viewport width.
+      const triggerResize = () => {
+        if (window.isDestroyed()) return;
+        window.webContents.executeJavaScript(`
+          window.dispatchEvent(new Event('resize'));
+          window.dispatchEvent(new UIEvent('resize'));
+        `).catch(() => {});
+      };
+      setTimeout(triggerResize, 300);
+      setTimeout(triggerResize, 800);
+      setTimeout(triggerResize, 1500);
     } catch (error) {
       logError('[Notes] Error setting fullscreen:', error);
       // Fallback: just show the window
       if (!window.isDestroyed()) {
+        window.setOpacity(1);
         window.show();
       }
     }
@@ -482,16 +600,28 @@ function setSpeakerNotesFullscreen(window) {
 // Apply cached bounds to speaker notes window (e.g. after reload so user's size is preserved)
 function setSpeakerNotesBoundsFromCache(window, bounds) {
   if (!window || window.isDestroyed() || !bounds) return;
-  window.hide();
+  window.setOpacity(0);
   const apply = () => {
     if (window.isDestroyed()) return;
     try {
       window.setBounds(bounds);
+      window.setOpacity(1);
       window.show();
       logInfo('[Notes] Restored speaker notes window to cached size/position');
+      // Trigger resize so Google Slides recalculates presenter view layout for actual viewport
+      const triggerResize = () => {
+        if (window.isDestroyed()) return;
+        window.webContents.executeJavaScript(`
+          window.dispatchEvent(new Event('resize'));
+          window.dispatchEvent(new UIEvent('resize'));
+        `).catch(() => {});
+      };
+      setTimeout(triggerResize, 300);
+      setTimeout(triggerResize, 800);
+      setTimeout(triggerResize, 1500);
     } catch (e) {
       logError('[Notes] Error restoring notes bounds:', e);
-      if (!window.isDestroyed()) window.show();
+      if (!window.isDestroyed()) { window.setOpacity(1); window.show(); }
     }
   };
   window.webContents.once('did-finish-load', () => setTimeout(apply, 300));
@@ -1184,8 +1314,11 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
           if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
         }
       });
-      if (savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0) {
-        setSpeakerNotesBoundsFromCache(window, savedNotesBounds);
+      const boundsToUse = (savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0)
+        ? savedNotesBounds
+        : loadSavedNotesBounds();
+      if (boundsToUse) {
+        setSpeakerNotesBoundsFromCache(window, boundsToUse);
       } else {
         window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window));
         window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window), 500));
@@ -1969,18 +2102,21 @@ ipcMain.handle('open-test-presentation', async () => {
           }
         });
         
-        // Set speaker notes window to fullscreen when it loads
-        window.webContents.once('did-finish-load', () => {
-          setSpeakerNotesFullscreen(window);
-        });
-        
-        // Also try when DOM is ready (in case did-finish-load fires too early)
-        window.webContents.once('dom-ready', () => {
-          setTimeout(() => {
+        // Restore saved bounds from preferences, or fall back to fullscreen
+        const savedBounds = loadSavedNotesBounds();
+        if (savedBounds) {
+          setSpeakerNotesBoundsFromCache(window, savedBounds);
+        } else {
+          window.webContents.once('did-finish-load', () => {
             setSpeakerNotesFullscreen(window);
-          }, 500);
-        });
-        
+          });
+          window.webContents.once('dom-ready', () => {
+            setTimeout(() => {
+              setSpeakerNotesFullscreen(window);
+            }, 500);
+          });
+        }
+
         app.removeListener('browser-window-created', testWindowCreatedListener);
       }
     };
@@ -2606,24 +2742,27 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
-              
-              // Set speaker notes window to fullscreen when it loads
-              window.webContents.once('did-finish-load', () => {
-                setSpeakerNotesFullscreen(window);
-              });
-              
-              // Also try when DOM is ready (in case did-finish-load fires too early)
-              window.webContents.once('dom-ready', () => {
-                setTimeout(() => {
+
+              // Restore saved bounds from preferences, or fall back to fullscreen
+              const savedBounds = loadSavedNotesBounds();
+              if (savedBounds) {
+                setSpeakerNotesBoundsFromCache(window, savedBounds);
+              } else {
+                window.webContents.once('did-finish-load', () => {
                   setSpeakerNotesFullscreen(window);
-                }, 500);
-              });
-              
+                });
+                window.webContents.once('dom-ready', () => {
+                  setTimeout(() => {
+                    setSpeakerNotesFullscreen(window);
+                  }, 500);
+                });
+              }
+
               app.removeListener('browser-window-created', windowCreatedListener);
             }
           };
           app.on('browser-window-created', windowCreatedListener);
-          
+
           // Navigation listener (no auto-launch of notes - user must manually start notes)
           const navigationListener = async (event, navUrl) => {
             console.log('[API] Navigated to:', navUrl);
@@ -2780,23 +2919,26 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
-              // Set speaker notes window to fullscreen when it loads
-              window.webContents.once('did-finish-load', () => {
-                setSpeakerNotesFullscreen(window);
-              });
-              
-              // Also try when DOM is ready (in case did-finish-load fires too early)
-              window.webContents.once('dom-ready', () => {
-                setTimeout(() => {
+              // Restore saved bounds from preferences, or fall back to fullscreen
+              const savedBounds = loadSavedNotesBounds();
+              if (savedBounds) {
+                setSpeakerNotesBoundsFromCache(window, savedBounds);
+              } else {
+                window.webContents.once('did-finish-load', () => {
                   setSpeakerNotesFullscreen(window);
-                }, 500);
-              });
-              
+                });
+                window.webContents.once('dom-ready', () => {
+                  setTimeout(() => {
+                    setSpeakerNotesFullscreen(window);
+                  }, 500);
+                });
+              }
+
               app.removeListener('browser-window-created', windowCreatedListener);
             }
           };
           app.on('browser-window-created', windowCreatedListener);
-          
+
           // Auto-launch speaker notes reliably (some decks load fast and can miss a single 's' press).
           // We'll retry a few times until the notes window is created.
           let notesAttempts = 0;
@@ -4253,22 +4395,26 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
-              // Set speaker notes window to fullscreen when it loads
-              window.webContents.once('did-finish-load', () => {
-                setSpeakerNotesFullscreen(window);
-              });
-              // Also try when DOM is ready (in case did-finish-load fires too early)
-              window.webContents.once('dom-ready', () => {
-                setTimeout(() => {
+              // Restore saved bounds from preferences, or fall back to fullscreen
+              const savedBounds = loadSavedNotesBounds();
+              if (savedBounds) {
+                setSpeakerNotesBoundsFromCache(window, savedBounds);
+              } else {
+                window.webContents.once('did-finish-load', () => {
                   setSpeakerNotesFullscreen(window);
-                }, 500);
-              });
-              
+                });
+                window.webContents.once('dom-ready', () => {
+                  setTimeout(() => {
+                    setSpeakerNotesFullscreen(window);
+                  }, 500);
+                });
+              }
+
               app.removeListener('browser-window-created', windowCreatedListener);
             }
           };
           app.on('browser-window-created', windowCreatedListener);
-          
+
           let sKeyPressed = false;
           const navigationListener = async (event, navUrl) => {
             const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
@@ -5568,6 +5714,13 @@ function startWebUiServer() {
           <label for="web-notes-display">Notes Monitor</label>
           <select id="web-notes-display" class="input-field" style="width: 100%; padding: 8px;">
             <option value="">Loading displays...</option>
+          </select>
+        </div>
+        <div class="preset-group" style="margin-top: 10px;">
+          <label for="web-notes-layout">Notes Layout</label>
+          <select id="web-notes-layout" class="input-field" style="width: 100%; padding: 8px;">
+            <option value="hide">Notes only (hide slide previews)</option>
+            <option value="default">Google default (50/50 split)</option>
           </select>
         </div>
         <button type="button" class="btn" id="btn-save-displays" style="margin-top: 10px;">Save Monitor Settings</button>
@@ -7276,6 +7429,12 @@ function startWebUiServer() {
           notesSelect.value = prefs.notesDisplayId;
         }
         
+        // Set notes layout preference
+        const notesLayoutSelect = document.getElementById('web-notes-layout');
+        if (notesLayoutSelect && prefs.notesLayout) {
+          notesLayoutSelect.value = prefs.notesLayout;
+        }
+
         // Set machine name
         document.getElementById('web-machine-name').value = prefs.machineName || '';
         
@@ -7342,7 +7501,8 @@ function startWebUiServer() {
       try {
         const prefs = {
           presentationDisplayId: parseInt(document.getElementById('web-presentation-display').value),
-          notesDisplayId: parseInt(document.getElementById('web-notes-display').value)
+          notesDisplayId: parseInt(document.getElementById('web-notes-display').value),
+          notesLayout: document.getElementById('web-notes-layout').value
         };
         
         const res = await fetch(API_BASE + '/api/preferences', {

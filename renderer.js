@@ -279,6 +279,12 @@ async function initDisplays() {
       notesDisplay.selectedIndex = 1;
     }
     
+    // Restore notes layout preference
+    const notesLayoutSelect = document.getElementById('notes-layout');
+    if (notesLayoutSelect && preferences.notesLayout) {
+      notesLayoutSelect.value = preferences.notesLayout;
+    }
+
     // Restore machine name
     if (preferences.machineName) {
       machineNameInput.value = preferences.machineName;
@@ -357,6 +363,8 @@ async function initDisplays() {
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
     notesDisplay.addEventListener('change', saveMonitorPreferences);
+    const notesLayoutEl = document.getElementById('notes-layout');
+    if (notesLayoutEl) notesLayoutEl.addEventListener('change', saveMonitorPreferences);
     machineNameInput.addEventListener('change', saveMachineName);
     apiPortInput.addEventListener('change', savePortPreferences);
     webUiPortInput.addEventListener('change', savePortPreferences);
@@ -779,9 +787,11 @@ async function updateNetworkInfo() {
 // Save monitor preferences
 async function saveMonitorPreferences() {
   try {
+    const notesLayoutSelect = document.getElementById('notes-layout');
     await window.electronAPI.savePreferences({
       presentationDisplayId: presentationDisplay.value,
-      notesDisplayId: notesDisplay.value
+      notesDisplayId: notesDisplay.value,
+      notesLayout: notesLayoutSelect ? notesLayoutSelect.value : 'hide'
     });
   } catch (error) {
     console.error('Failed to save preferences:', error);

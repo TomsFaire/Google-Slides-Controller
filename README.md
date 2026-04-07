@@ -69,13 +69,49 @@ Run multiple instances across several computers for failover. The primary machin
 
 ## Public access and HTTPS
 
-By default, the Web UI is HTTP-only and available on your local network only. To expose it securely to remote users:
+By default, the Web UI is HTTP-only and available on your local network only.
 
-- **Tunnel**: Use [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) or [ngrok](https://ngrok.com/) to get a public HTTPS URL that forwards to your Web UI port.
-- **Reverse proxy**: Run nginx or Caddy with TLS (Let’s Encrypt works great) to proxy traffic to your presentation machine.
-- **In-app HTTPS**: In Settings, enable HTTPS with a custom or self-signed certificate. Note: browsers will warn you about self-signed certs. For public access, a tunnel or reverse proxy is better.
+### Deploying WAN access (Cloudflare Quick Tunnel)
 
-See [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md) for detailed setup steps.
+The app can start a **Cloudflare Quick Tunnel** from the desktop: **Settings → WAN Access**. That gives you an `https://….trycloudflare.com` URL you can share for remote control without opening your router.
+
+**1. Put the `cloudflared` binary next to the app**
+
+The tunnel needs the `cloudflared` executable. It is **not** downloaded at runtime.
+
+| How you run the app | What to do |
+|---------------------|------------|
+| **Built release (.zip / installed .app)** | Before building, from the repo: `yarn download:cloudflared`. Electron-builder packs `resources/cloudflared/` into the app (`extraResources`). Rebuild after downloading so the binary is inside the release. |
+| **Development (`yarn start`)** | Run once: `yarn download:cloudflared` (populates `resources/cloudflared/` for your OS/arch). |
+
+The download script is `scripts/download-cloudflared.sh` (macOS uses the official `.tgz` archives).
+
+**2. Enable the tunnel**
+
+1. Start the app and open **Settings → WAN Access**.
+2. Turn **Quick Tunnel** on. When the Web UI server is listening, the app spawns `cloudflared` and shows the public URL (logs also list it).
+3. Treat that URL like a **password**: anyone with it can use the **Remote** and **Controls** Web UI until you turn the tunnel off or quit the app.
+
+**3. HTTPS Web UI on the presentation machine**
+
+If the Web UI is served with **HTTPS** (including the app’s **self-signed** certificate), the tunnel uses **`--no-tls-verify`** toward your machine so the origin connection succeeds. Traffic between users and Cloudflare’s edge stays encrypted.
+
+**4. Where the full Web UI (Settings tab) appears**
+
+When Quick Tunnel is enabled, the in-browser **Settings** tab is **hidden** for requests that hit the Web UI through the tunnel (traffic arrives from `localhost` via `cloudflared`). **Remote** and **Controls** stay available.
+
+- Use **`http://YOUR_LAN_IP`** (or your machine’s hostname on the network) for the **full** Web UI, including **Settings** and in-browser preset editing.
+- Opening the Web UI at **`http://127.0.0.1`** on the same Mac while the tunnel is on is also treated as the restricted view (same localhost rule). Prefer the LAN URL for local admin.
+
+The Web UI server also **blocks** proxying selected API calls from that restricted context (for example saving preferences or presets), so sensitive setup is not exposed only through the shared link. Direct access to the **API port** (9595) from the network is still governed by your **controller IP allowlist**—see [README-SECURITY.md](README-SECURITY.md).
+
+### Other ways to expose the Web UI
+
+- **Manual tunnel**: Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/) or [ngrok](https://ngrok.com/) and point it at your Web UI port (default **80**).
+- **Reverse proxy**: nginx or Caddy with TLS (e.g. Let’s Encrypt) in front of the presentation machine.
+- **In-app HTTPS** (LAN): Settings → serve Web UI over HTTPS (custom or self-signed PEM). Browsers may warn on self-signed certs; tunnels/proxies with real certs are better for the public internet.
+
+See [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md) for more detail, including manual Cloudflare/ngrok commands and security notes.
 
 ## Bitfocus Companion module
 

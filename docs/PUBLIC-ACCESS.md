@@ -14,6 +14,18 @@ If the Web UI uses **HTTPS** (including the app’s self-signed certificate), th
 
 **Important:** Anyone with the tunnel link can use the web remote until you disable the tunnel or restart the app. Treat the URL like a password. The **controller IP allowlist** does not limit remote users on this link, because traffic reaches your Web UI from `localhost` via the local `cloudflared` process.
 
+### Restricted Web UI on the shared link
+
+To reduce exposure when you share the Quick Tunnel URL:
+
+- The in-browser **Settings** tab is **not shown** for tunnel users (connections seen as **localhost** from `cloudflared`).
+- **Remote** and **Controls** tabs remain available.
+- The Web UI’s **API proxy** refuses certain routes in that mode (for example `GET/POST /api/preferences`, `GET /api/displays`, `POST /api/presets`, `POST /api/stagetimer-settings`, and `GET /api/debug/preferences`), so those operations are not available through the shared link alone.
+
+For **full** Web UI (Settings, saving presets from the browser, etc.), open the app using your machine’s **LAN URL**, not the `trycloudflare.com` link. Note: with Quick Tunnel enabled, opening the Web UI at **`127.0.0.1`** on the same computer also gets the restricted UI; use the LAN IP for local admin.
+
+Direct calls to the **HTTP API** on port **9595** are unchanged and still follow your **controller IP allowlist** (see project security docs).
+
 ### Manual Cloudflare Tunnel (CLI)
 
 1. Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/)

@@ -2,6 +2,15 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.7] - 2026-04-06
+
+### Added
+- **Cloudflare Quick Tunnel (WAN access)** – Optional Quick Tunnel from desktop Settings; bundles `cloudflared` via `yarn download:cloudflared` and `extraResources`. Uses `--no-tls-verify` when the Web UI origin is HTTPS with a self-signed certificate so the tunnel does not return 502.
+- **Safer shared Web UI** – When Quick Tunnel is on, browser sessions that hit the Web UI through the tunnel (localhost via `cloudflared`) see only **Remote** and **Controls**; the **Settings** tab is hidden and selected API routes are blocked at the Web UI proxy. Use the LAN URL for full in-browser settings.
+
+### Fixed
+- **cloudflared download on macOS** – Fetch official `.tgz` archives (bare binary URLs 404).
+
 ## [1.9.6] - 2026-03-17
 
 ### Fixed

@@ -17,13 +17,15 @@ companion-module-gslide-opener/node_modules/
 test-package-temp/
 pkg/
 
-# macOS resource forks and OS artifacts
+# macOS resource forks and OS artifacts (Icon + CR breaks git refs if committed)
 Icon
 **/Icon
 **/Icon?
 **/Icon\r
 **/Icon*
 **/.Icon
+__MACOSX/
+.AppleDouble
 # Windows short-name / temp files (e.g. I7CIPB~N), editor backups
 *~*
 # macOS AppleDouble resource forks
@@ -35,6 +37,10 @@ test-*.js
 test-*.ps1
 test-*.sh
 verify-app.sh
+
+# Cloudflare tunnel binaries (~30MB each; download via yarn download:cloudflared)
+resources/cloudflared/*
+!resources/cloudflared/.gitkeep
 
 # Duplicate/old folders
 github/
@@ -77,3 +83,7 @@ newclaude.md
 !docs/
 !companion-module-gslide-opener/README.md
 !companion-module-gslide-opener/companion/HELP.md
+
+# macOS custom folder icon file (name is Icon + ASCII 13); bracket form per GitHub Global/macOS.gitignore
+Icon[
+]

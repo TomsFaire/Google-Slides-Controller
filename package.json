@@ -11,7 +11,8 @@
     "build:win": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable",
     "build:linux": "electron-builder --linux",
     "build:mac": "electron-builder --mac",
-    "build:icon:win": "node scripts/build-windows-icon.js"
+    "build:icon:win": "node scripts/build-windows-icon.js",
+    "download:cloudflared": "bash scripts/download-cloudflared.sh"
   },
   "keywords": [
     "electron",
@@ -101,7 +102,14 @@
       ]
     },
     "extraResources": [
-      "BUILD-INFO.txt"
+      "BUILD-INFO.txt",
+      {
+        "from": "resources/cloudflared",
+        "to": "cloudflared",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "afterPack": "./scripts/after-pack-mac.js"
   },

@@ -1621,6 +1621,27 @@ ipcMain.handle('get-network-info', async () => {
   return ipAddresses;
 });
 
+// Cloudflare Quick Tunnel (desktop Settings only)
+ipcMain.handle('get-tunnel-status', () => ({
+  enabled: !!loadPreferences().cloudflaredEnabled,
+  url: tunnelUrl,
+  running: !!cloudflaredProcess
+}));
+
+ipcMain.handle('set-tunnel-enabled', async (_event, enabled) => {
+  const prefs = loadPreferences();
+  prefs.cloudflaredEnabled = !!enabled;
+  savePreferences(prefs);
+  if (enabled) {
+    if (!cloudflaredProcess) {
+      startCloudflaredTunnel();
+    }
+  } else {
+    stopCloudflaredTunnel();
+  }
+  return { success: true };
+});
+
 // Save preferences
 ipcMain.handle('save-preferences', async (event, prefs) => {
   const currentPrefs = loadPreferences();
@@ -2324,6 +2345,11 @@ let httpServer;
 let webUiServer;
 let currentWebUiPort = null; // Set when Web UI server starts
 
+// Cloudflare Quick Tunnel (WAN access) — child process + parsed trycloudflare.com URL
+let cloudflaredProcess = null;
+let tunnelUrl = null;
+let cloudflaredKillTimer = null;
+
 function startHttpServer() {
   httpServer = http.createServer(async (req, res) => {
     // Helpful request logging for diagnosing duplicate/looping calls
@@ -2610,6 +2636,8 @@ function startHttpServer() {
             delete data.controllerIps;
             // Also desktop-only: web UI debug console gating
             delete data.webUiDebugConsoleEnabled;
+            // WAN tunnel toggle is desktop-only (IPC); do not allow enabling via HTTP API
+            delete data.cloudflaredEnabled;
           }
           
           // Merge new preferences with existing ones
@@ -4598,6 +4626,133 @@ function getWebUiHttpsCredentials() {
     console.error('[Web UI] Could not generate self-signed certificate (openssl not available?):', e.message);
     return null;
   }
+}
+
+function getWebUiLocalOriginForTunnel() {
+  const creds = getWebUiHttpsCredentials();
+  const prefs = loadPreferences();
+  let webUiPort = prefs.webUiPort || DEFAULT_WEB_UI_PORT;
+  if (creds && webUiPort === 80) {
+    webUiPort = DEFAULT_WEB_UI_HTTPS_PORT;
+  }
+  const protocol = creds ? 'https' : 'http';
+  return `${protocol}://127.0.0.1:${webUiPort}`;
+}
+
+function getCloudflaredBinaryPath() {
+  const base = app.isPackaged
+    ? process.resourcesPath
+    : path.join(__dirname, 'resources');
+  if (process.platform === 'win32') {
+    return path.join(base, 'cloudflared', 'cloudflared-windows-amd64.exe');
+  }
+  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+  if (process.platform === 'darwin') {
+    return path.join(base, 'cloudflared', `cloudflared-darwin-${arch}`);
+  }
+  return path.join(base, 'cloudflared', `cloudflared-linux-${arch}`);
+}
+
+function extractTrycloudflareUrl(chunk) {
+  const text = chunk.toString();
+  const strict = /https:\/\/[a-z0-9-]+\.trycloudflare\.com\b/;
+  const loose = /https:\/\/[^\s"'<>]+\.trycloudflare\.com\b/i;
+  let m = text.match(strict);
+  if (m) return m[0];
+  m = text.match(loose);
+  return m ? m[0] : null;
+}
+
+function broadcastTunnelUrl(url) {
+  try {
+    BrowserWindow.getAllWindows().forEach((w) => {
+      if (!w.isDestroyed()) {
+        w.webContents.send('tunnel-url-changed', url);
+      }
+    });
+  } catch (e) {
+    logDebug('[Tunnel] broadcastTunnelUrl:', e);
+  }
+}
+
+function stopCloudflaredTunnel() {
+  if (cloudflaredKillTimer) {
+    clearTimeout(cloudflaredKillTimer);
+    cloudflaredKillTimer = null;
+  }
+  tunnelUrl = null;
+  if (!cloudflaredProcess) {
+    broadcastTunnelUrl(null);
+    return;
+  }
+  const proc = cloudflaredProcess;
+  cloudflaredProcess = null;
+  try {
+    proc.kill('SIGTERM');
+  } catch (e) {
+    // ignore
+  }
+  cloudflaredKillTimer = setTimeout(() => {
+    cloudflaredKillTimer = null;
+    try {
+      if (proc && !proc.killed) {
+        proc.kill('SIGKILL');
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, 5000);
+  broadcastTunnelUrl(null);
+}
+
+function startCloudflaredTunnel() {
+  const prefs = loadPreferences();
+  if (!prefs.cloudflaredEnabled) return;
+
+  const bin = getCloudflaredBinaryPath();
+  if (!fs.existsSync(bin)) {
+    logError('[Tunnel] cloudflared binary missing:', bin, '(run: yarn download:cloudflared)');
+    broadcastTunnelUrl(null);
+    return;
+  }
+
+  if (cloudflaredProcess) return;
+
+  const origin = getWebUiLocalOriginForTunnel();
+
+  try {
+    cloudflaredProcess = spawn(bin, ['tunnel', '--url', origin], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+  } catch (err) {
+    logError('[Tunnel] Failed to spawn cloudflared:', err.message);
+    cloudflaredProcess = null;
+    return;
+  }
+
+  const onData = (data) => {
+    const found = extractTrycloudflareUrl(data);
+    if (found && !tunnelUrl) {
+      tunnelUrl = found;
+      logInfo('[Tunnel] URL:', tunnelUrl);
+      broadcastTunnelUrl(tunnelUrl);
+    }
+    logDebug('[Tunnel]', data.toString().slice(0, 240));
+  };
+
+  cloudflaredProcess.stdout.on('data', onData);
+  cloudflaredProcess.stderr.on('data', onData);
+
+  cloudflaredProcess.on('exit', (code) => {
+    logInfo('[Tunnel] cloudflared exited, code:', code);
+    if (cloudflaredKillTimer) {
+      clearTimeout(cloudflaredKillTimer);
+      cloudflaredKillTimer = null;
+    }
+    cloudflaredProcess = null;
+    tunnelUrl = null;
+    broadcastTunnelUrl(null);
+  });
 }
 
 // Start web UI server for preset management
@@ -7828,6 +7983,7 @@ function startWebUiServer() {
   currentWebUiPort = webUiPort;
   webUiServer.listen(webUiPort, '0.0.0.0', () => {
     console.log(`[Web UI] Server listening on ${protocol}://0.0.0.0:${webUiPort}`);
+    startCloudflaredTunnel();
   }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[Web UI] Port ${webUiPort} is already in use`);
@@ -7851,7 +8007,8 @@ app.whenReady().then(() => {
   createWindow();
   startHttpServer();
   startWebUiServer();
-  
+  // Quick Tunnel starts from Web UI listen callback when cloudflaredEnabled is set
+
   // Start backup status polling if in primary mode
   startBackupStatusPolling();
 
@@ -7869,6 +8026,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  stopCloudflaredTunnel();
   if (httpServer) {
     console.log('[API] Shutting down HTTP server');
     httpServer.close();

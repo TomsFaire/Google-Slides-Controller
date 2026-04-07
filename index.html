@@ -171,6 +171,31 @@
         </div>
       </section>
 
+      <section class="card">
+        <h2>WAN Access</h2>
+        <p class="card-description">
+          Share the web remote with viewers outside your local network using a free Cloudflare Quick Tunnel (no account required).
+        </p>
+        <p class="field-hint" style="margin-bottom: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 10px 12px;">
+          <strong>Security:</strong> Anyone with the tunnel link can use the web remote until you turn this off or restart the app. Treat the link like a password. Your controller IP allowlist does not apply to traffic through this tunnel (connections arrive from localhost).
+        </p>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="wan-enabled" style="width: auto;" />
+            <span>Enable WAN access (Cloudflare Quick Tunnel)</span>
+          </label>
+          <small class="field-hint">Points the tunnel at your Web UI port. Run <code>yarn download:cloudflared</code> once before testing or building.</small>
+        </div>
+        <div id="wan-status-row" class="form-group" style="display: none;">
+          <label>Tunnel URL</label>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="wan-url-display" class="input-field" readonly placeholder="Connecting…" style="flex: 1; min-width: 180px;" />
+            <button type="button" id="wan-copy-btn" class="btn btn-secondary">Copy</button>
+          </div>
+          <small class="field-hint">The URL changes each time the app starts. Requires internet access.</small>
+        </div>
+      </section>
+
       <!-- Monitor Selection Section -->
       <section class="card">
         <h2>Monitor Setup</h2>

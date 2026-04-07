@@ -6,7 +6,13 @@ By default, the Web UI is HTTP-only and available on your local network only. To
 
 Get a public HTTPS URL without needing a domain or port forwarding.
 
-**With Cloudflare Tunnel**
+### Built-in WAN access (Cloudflare Quick Tunnel)
+
+The desktop app can start a **Quick Tunnel** from **Settings → WAN Access** (after you run `yarn download:cloudflared` once to fetch bundled binaries).
+
+**Important:** Anyone with the tunnel link can use the web remote until you disable the tunnel or restart the app. Treat the URL like a password. The **controller IP allowlist** does not limit remote users on this link, because traffic reaches your Web UI from `localhost` via the local `cloudflared` process.
+
+### Manual Cloudflare Tunnel (CLI)
 
 1. Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/)
 2. Run:

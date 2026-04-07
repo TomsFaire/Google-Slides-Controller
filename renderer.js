@@ -56,6 +56,10 @@ const crashReportsDirEl = document.getElementById('crash-reports-dir');
 const crashDumpsDirEl = document.getElementById('crash-dumps-dir');
 const lastCrashTimeEl = document.getElementById('last-crash-time');
 const openCrashReportsFolderBtn = document.getElementById('open-crash-reports-folder-btn');
+const wanEnabledCheckbox = document.getElementById('wan-enabled');
+const wanStatusRow = document.getElementById('wan-status-row');
+const wanUrlDisplay = document.getElementById('wan-url-display');
+const wanCopyBtn = document.getElementById('wan-copy-btn');
 
 let isSignedIn = false;
 
@@ -529,7 +533,41 @@ async function initDisplays() {
     
     // Load and display network info
     await updateNetworkInfo();
-    
+
+    // WAN Access (Cloudflare Quick Tunnel)
+    await loadTunnelStatus();
+    if (wanEnabledCheckbox && window.electronAPI.setTunnelEnabled) {
+      wanEnabledCheckbox.addEventListener('change', async () => {
+        const enabled = wanEnabledCheckbox.checked;
+        if (wanStatusRow) wanStatusRow.style.display = enabled ? '' : 'none';
+        if (wanUrlDisplay) wanUrlDisplay.value = enabled ? 'Connecting…' : '';
+        try {
+          await window.electronAPI.setTunnelEnabled(enabled);
+        } catch (e) {
+          console.error('setTunnelEnabled failed:', e);
+          showStatus('Could not update WAN tunnel setting', 'error');
+        }
+      });
+    }
+    if (wanCopyBtn && wanUrlDisplay) {
+      wanCopyBtn.addEventListener('click', () => {
+        const url = wanUrlDisplay.value;
+        if (!url || url === 'Connecting…') {
+          showStatus('Tunnel URL not ready yet', 'error');
+          return;
+        }
+        navigator.clipboard.writeText(url)
+          .then(() => showStatus('Tunnel URL copied', 'info'))
+          .catch(() => showStatus('Copy failed', 'error'));
+      });
+    }
+    if (window.electronAPI.onTunnelUrlChanged) {
+      window.electronAPI.onTunnelUrlChanged((url) => {
+        if (wanUrlDisplay) wanUrlDisplay.value = url || '';
+        if (url) showStatus('WAN tunnel connected', 'info');
+      });
+    }
+
     // Start polling backup status if in primary mode
     if (mode === 'primary') {
       startBackupStatusPolling();
@@ -729,6 +767,22 @@ function renderBackupIpList(ips = []) {
     return;
   }
   normalized.forEach((ip) => addBackupIpRow(ip));
+}
+
+async function loadTunnelStatus() {
+  if (!wanEnabledCheckbox || !window.electronAPI.getTunnelStatus) return;
+  try {
+    const status = await window.electronAPI.getTunnelStatus();
+    wanEnabledCheckbox.checked = !!status.enabled;
+    if (wanStatusRow) {
+      wanStatusRow.style.display = status.enabled ? '' : 'none';
+    }
+    if (wanUrlDisplay) {
+      wanUrlDisplay.value = status.url || (status.running ? 'Connecting…' : '');
+    }
+  } catch (err) {
+    console.error('Failed to load tunnel status:', err);
+  }
 }
 
 // Update network information display

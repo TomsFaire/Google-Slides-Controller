@@ -17,6 +17,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadCssTemplate: () => ipcRenderer.invoke('download-css-template'),
   getNetworkInfo: () => ipcRenderer.invoke('get-network-info'),
   getBuildInfo: () => ipcRenderer.invoke('get-build-info'),
+  getTunnelStatus: () => ipcRenderer.invoke('get-tunnel-status'),
+  setTunnelEnabled: (enabled) => ipcRenderer.invoke('set-tunnel-enabled', enabled),
+  onTunnelUrlChanged: (callback) => {
+    if (typeof callback !== 'function') return;
+    ipcRenderer.on('tunnel-url-changed', (_event, url) => callback(url));
+  },
 
   // Debug logs (desktop UI)
   getLogBuffer: () => ipcRenderer.invoke('get-log-buffer'),

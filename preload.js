@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportLogBuffer: () => ipcRenderer.invoke('export-log-buffer'),
   getCrashInfo: () => ipcRenderer.invoke('get-crash-info'),
   openCrashReportsFolder: () => ipcRenderer.invoke('open-crash-reports-folder'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
   onLogLine: (callback) => {
     if (typeof callback !== 'function') return;
     ipcRenderer.on('app-log-line', (_event, line) => callback(line));

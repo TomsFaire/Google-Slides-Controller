@@ -806,9 +806,14 @@ async function updateNetworkInfo() {
       networkInfo.forEach(ip => {
         const urlItem = document.createElement('div');
         urlItem.className = 'url-item' + (ip.internal ? ' internal' : '');
-        urlItem.textContent = `http://${ip.address}:${apiPort}`;
+        const url = `http://${ip.address}:${apiPort}`;
+        urlItem.textContent = url;
         if (ip.internal) {
           urlItem.title = 'Localhost/internal interface';
+        } else {
+          urlItem.style.cursor = 'pointer';
+          urlItem.title = 'Click to open';
+          urlItem.addEventListener('click', () => window.electronAPI.openExternal(url));
         }
         apiUrlsDiv.appendChild(urlItem);
       });
@@ -824,9 +829,14 @@ async function updateNetworkInfo() {
       networkInfo.forEach(ip => {
         const urlItem = document.createElement('div');
         urlItem.className = 'url-item' + (ip.internal ? ' internal' : '');
-        urlItem.textContent = `${webUiProtocol}://${ip.address}:${webUiPort}`;
+        const url = `${webUiProtocol}://${ip.address}:${webUiPort}`;
+        urlItem.textContent = url;
         if (ip.internal) {
           urlItem.title = 'Localhost/internal interface';
+        } else {
+          urlItem.style.cursor = 'pointer';
+          urlItem.title = 'Click to open';
+          urlItem.addEventListener('click', () => window.electronAPI.openExternal(url));
         }
         webUiUrlsDiv.appendChild(urlItem);
       });

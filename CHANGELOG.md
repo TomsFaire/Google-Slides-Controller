@@ -7,6 +7,10 @@ All notable changes to Google Slides Opener are documented here.
 ### Added
 - **Cloudflare Quick Tunnel (WAN access)** – Optional Quick Tunnel from desktop Settings; bundles `cloudflared` via `yarn download:cloudflared` and `extraResources`. Uses `--no-tls-verify` when the Web UI origin is HTTPS with a self-signed certificate so the tunnel does not return 502.
 - **Safer shared Web UI** – When Quick Tunnel is on, browser sessions that hit the Web UI through the tunnel (localhost via `cloudflared`) see only **Remote** and **Controls**; the **Settings** tab is hidden and selected API routes are blocked at the Web UI proxy. Use the LAN URL for full in-browser settings.
+- **Companion tunnel controls** – Four new Companion actions: Enable WAN Tunnel, Disable WAN Tunnel, Show Tunnel QR Code (configurable duration 5–300s), Hide Tunnel QR Code. Two new variables: `tunnel_enabled` (Yes/No) and `tunnel_url` (live URL). New feedback: Tunnel Enabled (blue when active). All tunnel state polled from `/api/status`.
+- **Tunnel QR overlay on notes display** – `POST /api/show-tunnel-qr` displays a small 320×360 frameless QR code window in the bottom-right corner of the presenter's notes monitor. Auto-hides after the configured duration; dismissed immediately by `POST /api/hide-tunnel-qr` or when the tunnel stops. Requires `qrcode` package (added).
+- **Show QR from web UI Settings** – WAN Access section added to the browser-based Settings tab showing live tunnel status and Show/Hide QR buttons for LAN operators who don't use Companion.
+- **Clickable network addresses** – Non-localhost IP addresses in the Electron app's Network Access section now open in the default browser on click.
 
 ### Fixed
 - **cloudflared download on macOS** – Fetch official `.tgz` archives (bare binary URLs 404).

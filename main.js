@@ -23,6 +23,7 @@ try {
 }
 const os = require('os');
 const util = require('util');
+const QRCode = require('qrcode');
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -1653,6 +1654,12 @@ ipcMain.handle('set-tunnel-enabled', async (_event, enabled) => {
   return { success: true };
 });
 
+ipcMain.handle('open-external', async (_event, url) => {
+  if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
+    await shell.openExternal(url);
+  }
+});
+
 // Save preferences
 ipcMain.handle('save-preferences', async (event, prefs) => {
   const currentPrefs = loadPreferences();
@@ -2360,6 +2367,8 @@ let currentWebUiPort = null; // Set when Web UI server starts
 let cloudflaredProcess = null;
 let tunnelUrl = null;
 let cloudflaredKillTimer = null;
+let tunnelQrWindow = null;
+let tunnelQrHideTimer = null;
 
 function startHttpServer() {
   httpServer = http.createServer(async (req, res) => {
@@ -2564,6 +2573,9 @@ function startHttpServer() {
         state.notesDisplayId = prefs.notesDisplayId || null;
         state.notesEncodingIssue = lastNotesEncodingIssue;
         state.backupControlsEnabled = prefs.backupControlsEnabled !== false;
+        state.tunnelEnabled = !!prefs.cloudflaredEnabled;
+        state.tunnelUrl = tunnelUrl || null;
+        state.tunnelQrVisible = !!(tunnelQrWindow && !tunnelQrWindow.isDestroyed());
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
       })().catch(err => {
@@ -2598,6 +2610,82 @@ function startHttpServer() {
           res.end(JSON.stringify({ error: error.message || 'Invalid request' }));
         }
       });
+      return;
+    }
+
+    // POST /api/tunnel-enable - Start the Cloudflare Quick Tunnel
+    if (req.method === 'POST' && req.url === '/api/tunnel-enable') {
+      if (!isControllerAllowedRequest(req, prefs)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      const p = loadPreferences();
+      p.cloudflaredEnabled = true;
+      savePreferences(p);
+      if (!cloudflaredProcess) startCloudflaredTunnel();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Tunnel enabled' }));
+      return;
+    }
+
+    // POST /api/tunnel-disable - Stop the Cloudflare Quick Tunnel
+    if (req.method === 'POST' && req.url === '/api/tunnel-disable') {
+      if (!isControllerAllowedRequest(req, prefs)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      const p = loadPreferences();
+      p.cloudflaredEnabled = false;
+      savePreferences(p);
+      stopCloudflaredTunnel();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Tunnel disabled' }));
+      return;
+    }
+
+    // POST /api/show-tunnel-qr - Show QR overlay on notes display
+    if (req.method === 'POST' && req.url === '/api/show-tunnel-qr') {
+      if (!isControllerAllowedRequest(req, prefs)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      if (!tunnelUrl) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Tunnel not connected' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        (async () => {
+          try {
+            const data = body ? JSON.parse(body) : {};
+            const duration = Math.min(Math.max(parseInt(data.duration) || 20, 5), 300);
+            await showTunnelQrOverlay(tunnelUrl, duration * 1000);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'QR shown' }));
+          } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        })();
+      });
+      return;
+    }
+
+    // POST /api/hide-tunnel-qr - Dismiss QR overlay
+    if (req.method === 'POST' && req.url === '/api/hide-tunnel-qr') {
+      if (!isControllerAllowedRequest(req, prefs)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      hideTunnelQrOverlay();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'QR hidden' }));
       return;
     }
 
@@ -4686,7 +4774,50 @@ function broadcastTunnelUrl(url) {
   }
 }
 
+async function showTunnelQrOverlay(url, durationMs) {
+  hideTunnelQrOverlay();
+
+  const prefs = loadPreferences();
+  const displays = screen.getAllDisplays();
+  const notesDisplay = displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
+  const b = notesDisplay.bounds;
+
+  const W = 320, H = 360, MARGIN = 20;
+  const x = b.x + b.width - W - MARGIN;
+  const y = b.y + b.height - H - MARGIN;
+
+  tunnelQrWindow = new BrowserWindow({
+    x, y, width: W, height: H,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    focusable: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
+  });
+
+  const qrDataUrl = await QRCode.toDataURL(url, { width: 280, margin: 1 });
+
+  const html = `<!DOCTYPE html><html><body style="margin:0;background:rgba(0,0,0,0.82);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#fff;">
+    <img src="${qrDataUrl}" style="width:280px;height:280px;border-radius:8px;" />
+    <p style="font-size:11px;opacity:0.7;margin:8px 0 0;word-break:break-all;text-align:center;padding:0 12px;">${url}</p>
+  </body></html>`;
+
+  tunnelQrWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  tunnelQrWindow.on('closed', () => { tunnelQrWindow = null; });
+
+  tunnelQrHideTimer = setTimeout(hideTunnelQrOverlay, durationMs);
+}
+
+function hideTunnelQrOverlay() {
+  if (tunnelQrHideTimer) { clearTimeout(tunnelQrHideTimer); tunnelQrHideTimer = null; }
+  if (tunnelQrWindow && !tunnelQrWindow.isDestroyed()) { tunnelQrWindow.close(); }
+  tunnelQrWindow = null;
+}
+
 function stopCloudflaredTunnel() {
+  hideTunnelQrOverlay();
   if (cloudflaredKillTimer) {
     clearTimeout(cloudflaredKillTimer);
     cloudflaredKillTimer = null;
@@ -6017,7 +6148,23 @@ function startWebUiServer() {
         <button type="button" class="btn" id="btn-save-stagetimer" style="margin-top: 12px;">Save Stagetimer Settings</button>
         <button type="button" class="btn btn-secondary" id="btn-load-stagetimer" style="margin-top: 8px;">Load Current Settings</button>
       </div>
-      
+
+      <!-- WAN Tunnel Section -->
+      <div class="controls-section" style="margin-top: 40px;">
+        <h3>WAN Access (Cloudflare Tunnel)</h3>
+        <div id="web-tunnel-status" class="info" style="margin-bottom: 12px;">Checking tunnel status…</div>
+        <div id="web-tunnel-qr-row" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+          <input type="number" id="web-tunnel-qr-duration" value="20" min="5" max="300"
+            style="width: 70px; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px;" />
+          <label style="margin: 0; font-weight: normal; font-size: 13px;">sec</label>
+          <button type="button" class="btn" id="btn-show-tunnel-qr" style="margin: 0;">Show QR on Notes Display</button>
+          <button type="button" class="btn btn-secondary" id="btn-hide-tunnel-qr" style="margin: 0;">Hide QR</button>
+        </div>
+        <small style="display: block; margin-top: 8px; color: #888; font-size: 12px;">
+          Shows a scannable QR code on the presenter's notes monitor. Enable the tunnel from the desktop app Settings.
+        </small>
+      </div>
+
       <!-- Logging Section -->
       <div class="controls-section" style="margin-top: 40px;">
         <h3>Logging</h3>
@@ -7410,10 +7557,59 @@ function startWebUiServer() {
     // Load stagetimer settings on page load
     loadStagetimerSettings();
     
+    // WAN tunnel status + QR controls
+    async function loadWebTunnelStatus() {
+      try {
+        const res = await fetch(API_BASE + '/api/status');
+        const data = await res.json();
+        const statusEl = document.getElementById('web-tunnel-status');
+        const qrRow = document.getElementById('web-tunnel-qr-row');
+        if (data.tunnelEnabled && data.tunnelUrl) {
+          statusEl.innerHTML = 'Tunnel active: <strong style="word-break:break-all;">' + data.tunnelUrl + '</strong>';
+          statusEl.style.background = 'rgba(0,120,200,0.1)';
+          statusEl.style.border = '1px solid rgba(0,120,200,0.3)';
+          statusEl.style.borderRadius = '6px';
+          statusEl.style.padding = '8px 10px';
+          qrRow.style.display = 'flex';
+        } else if (data.tunnelEnabled) {
+          statusEl.textContent = 'Tunnel enabled — connecting…';
+          qrRow.style.display = 'none';
+        } else {
+          statusEl.textContent = 'Tunnel is off. Enable it from the desktop app Settings → WAN Access.';
+          statusEl.style.background = '';
+          statusEl.style.border = '';
+          statusEl.style.padding = '';
+          qrRow.style.display = 'none';
+        }
+      } catch (e) {
+        document.getElementById('web-tunnel-status').textContent = 'Could not load tunnel status.';
+      }
+    }
+    loadWebTunnelStatus();
+
     if (!window.__GSO_WEB_UI_RESTRICTED__) {
     // Save stagetimer settings button
     document.getElementById('btn-save-stagetimer').addEventListener('click', saveStagetimerSettings);
     document.getElementById('btn-load-stagetimer').addEventListener('click', loadStagetimerSettings);
+
+    document.getElementById('btn-show-tunnel-qr').addEventListener('click', async () => {
+      const duration = parseInt(document.getElementById('web-tunnel-qr-duration').value) || 20;
+      try {
+        const res = await fetch(API_BASE + '/api/show-tunnel-qr', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ duration })
+        });
+        const data = await res.json();
+        showStatus(data.message || (data.error ? 'Error: ' + data.error : 'Done'), !!data.error);
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    document.getElementById('btn-hide-tunnel-qr').addEventListener('click', async () => {
+      try {
+        await fetch(API_BASE + '/api/hide-tunnel-qr', { method: 'POST' });
+        showStatus('QR hidden');
+      } catch (e) { showStatus('Request failed', true); }
+    });
     
     // Load all settings when Settings tab is opened
     let settingsLoaded = false;

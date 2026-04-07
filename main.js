@@ -1089,6 +1089,17 @@ function isControllerAllowedRequest(req, prefs) {
   return allowlist.some((entry) => isAllowedByControllerEntry(entry, remote));
 }
 
+/**
+ * Web UI served to Cloudflare tunnel clients: cloudflared connects from 127.0.0.1, so we treat
+ * localhost + tunnel enabled as "public share" and hide in-browser Settings + block sensitive API proxy routes.
+ * LAN clients use real source IPs and get the full UI.
+ */
+function isWebUiRestrictedTunnelClient(req, prefs) {
+  if (!prefs || prefs.cloudflaredEnabled !== true) return false;
+  const remote = normalizeRemoteAddress(req?.socket?.remoteAddress);
+  return isLocalhostAddress(remote);
+}
+
 function getBackupIpsFromPrefs(prefs) {
   // New format: prefs.backupIps: string[]
   // Legacy format: prefs.backupIp1/2/3
@@ -4860,6 +4871,7 @@ function startWebUiServer() {
       const webUiCustomCssPath = prefs.webUiCustomCssPath || '';
       const webUiLogoPath = prefs.webUiLogoPath || '';
       const showLogo = webUiTheme !== 'max' && webUiLogoPath && fs.existsSync(webUiLogoPath);
+      const webUiRestrictedTunnelClient = isWebUiRestrictedTunnelClient(req, prefs);
       
       // Get version and build number
       const versionString = `v${appBuildInfo.version}.${appBuildInfo.buildNumber}`;
@@ -5694,8 +5706,9 @@ function startWebUiServer() {
     <div class="tabs">
       <button class="tab-btn active" data-tab="remote">Remote</button>
       <button class="tab-btn" data-tab="controls">Controls</button>
-      <button class="tab-btn" data-tab="settings">Settings</button>
+      ${!webUiRestrictedTunnelClient ? '<button class="tab-btn" data-tab="settings">Settings</button>' : ''}
     </div>
+    ${webUiRestrictedTunnelClient ? '<div class="info" style="margin: 10px 0 14px; padding: 10px 12px; background: rgba(255,193,7,0.2); border: 1px solid rgba(255,193,7,0.35); border-radius: 8px; font-size: 13px; line-height: 1.45;">Shared link: Remote and Controls only. Open the Web UI from your local network for full Settings.</div>' : ''}
     
     <!-- Remote Tab (Default) -->
     <div id="tab-remote" class="tab-content active">
@@ -5856,7 +5869,7 @@ function startWebUiServer() {
       </div>
     </div>
     
-    <!-- Settings Tab (Hidden by default) -->
+    ${!webUiRestrictedTunnelClient ? `<!-- Settings Tab (Hidden by default) -->
     <div id="tab-settings" class="tab-content">
       <!-- Monitor Setup Section -->
       <div class="controls-section">
@@ -6035,6 +6048,7 @@ function startWebUiServer() {
       </div>
       ` : ``}
     </div>
+` : ''}
     
     <div id="status" class="status"></div>
     <div class="build-number">${versionString}</div>
@@ -6048,6 +6062,7 @@ function startWebUiServer() {
     // The Web UI server will proxy these requests to the API server (port 9595)
     // This allows the Web UI to work even when only port 80 is accessible from the network
     const API_BASE = '';
+    window.__GSO_WEB_UI_RESTRICTED__ = ${webUiRestrictedTunnelClient ? 'true' : 'false'};
     
     // Debug: Log the API base URL for troubleshooting
     console.log('[Web UI] Using relative API URLs (proxied through Web UI server on port 80)');
@@ -6088,6 +6103,9 @@ function startWebUiServer() {
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const tabName = btn.getAttribute('data-tab');
+        if (window.__GSO_WEB_UI_RESTRICTED__ && tabName === 'settings') return;
+        const tabPanel = document.getElementById('tab-' + tabName);
+        if (!tabPanel) return;
         
         // Update buttons
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -6095,7 +6113,7 @@ function startWebUiServer() {
         
         // Update content
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.getElementById('tab-' + tabName).classList.add('active');
+        tabPanel.classList.add('active');
       });
     });
 
@@ -6789,8 +6807,11 @@ function startWebUiServer() {
       }
     });
     
-    document.getElementById('web-add-preset').addEventListener('click', () => { webAddPresetRow(''); });
-    loadBtn.addEventListener('click', () => {
+    const webAddPresetBtn = document.getElementById('web-add-preset');
+    if (webAddPresetBtn) {
+      webAddPresetBtn.addEventListener('click', () => { webAddPresetRow(''); });
+    }
+    if (loadBtn) loadBtn.addEventListener('click', () => {
       fetch(API_BASE + '/api/presets')
         .then(res => {
           if (!res.ok) throw new Error('HTTP error! status: ' + res.status);
@@ -6815,23 +6836,31 @@ function startWebUiServer() {
     let stagetimerState = null; // Store timer state for local calculation
     let stagetimerMessages = []; // Store messages separately
     let stagetimerCurrentTimer = null; // Current timer info (name, speaker, etc.)
+    let stagetimerRoomIdCached = '';
+    let stagetimerApiKeyCached = '';
     
     function loadStagetimerSettings() {
       fetch(API_BASE + '/api/stagetimer-settings')
         .then(res => res.json())
         .then(data => {
-          document.getElementById('stagetimer-room-id').value = data.roomId || '';
-          document.getElementById('stagetimer-api-key').value = data.apiKey || '';
-          document.getElementById('stagetimer-enabled').checked = data.enabled !== false;
-          document.getElementById('stagetimer-visible').checked = data.visible !== false;
+          stagetimerRoomIdCached = String(data.roomId || '').trim();
+          stagetimerApiKeyCached = String(data.apiKey || '').trim();
+          const roomEl = document.getElementById('stagetimer-room-id');
+          const keyEl = document.getElementById('stagetimer-api-key');
+          const enabledEl = document.getElementById('stagetimer-enabled');
+          const visibleEl = document.getElementById('stagetimer-visible');
+          if (roomEl) roomEl.value = stagetimerRoomIdCached;
+          if (keyEl) keyEl.value = stagetimerApiKeyCached;
+          if (enabledEl) enabledEl.checked = data.enabled !== false;
+          if (visibleEl) visibleEl.checked = data.visible !== false;
           stagetimerEnabled = data.enabled !== false;
           stagetimerVisible = data.visible !== false;
           
           // Update display based on visibility and configuration
           updateStagetimerVisibility();
           
-          if (stagetimerEnabled && data.roomId && data.apiKey) {
-            connectStagetimerSocket(data.roomId, data.apiKey);
+          if (stagetimerEnabled && stagetimerRoomIdCached && stagetimerApiKeyCached) {
+            connectStagetimerSocket(stagetimerRoomIdCached, stagetimerApiKeyCached);
           } else {
             disconnectStagetimerSocket();
             updateStagetimerDisplay(null, 'Not configured');
@@ -6844,8 +6873,11 @@ function startWebUiServer() {
     
     function updateStagetimerVisibility() {
       const container = document.getElementById('stagetimer-container');
-      const hasApiKey = document.getElementById('stagetimer-api-key').value.trim().length > 0;
-      const hasRoomId = document.getElementById('stagetimer-room-id').value.trim().length > 0;
+      if (!container) return;
+      const keyEl = document.getElementById('stagetimer-api-key');
+      const roomEl = document.getElementById('stagetimer-room-id');
+      const hasApiKey = keyEl ? keyEl.value.trim().length > 0 : stagetimerApiKeyCached.length > 0;
+      const hasRoomId = roomEl ? roomEl.value.trim().length > 0 : stagetimerRoomIdCached.length > 0;
       
       // Hide if: not visible OR not enabled OR missing API key/room ID
       if (!stagetimerVisible || !stagetimerEnabled || !hasApiKey || !hasRoomId) {
@@ -7378,6 +7410,7 @@ function startWebUiServer() {
     // Load stagetimer settings on page load
     loadStagetimerSettings();
     
+    if (!window.__GSO_WEB_UI_RESTRICTED__) {
     // Save stagetimer settings button
     document.getElementById('btn-save-stagetimer').addEventListener('click', saveStagetimerSettings);
     document.getElementById('btn-load-stagetimer').addEventListener('click', loadStagetimerSettings);
@@ -7917,6 +7950,7 @@ function startWebUiServer() {
           showStatus(errorMsg, true);
         });
     });
+    }
   </script>
 </body>
 </html>`;
@@ -7930,6 +7964,30 @@ function startWebUiServer() {
     if (req.url.startsWith('/api/')) {
       const prefs = loadPreferences();
       const apiPort = prefs.apiPort || DEFAULT_API_PORT;
+      const apiReqPath = req.url.split('?')[0];
+      const apiMethod = String(req.method || 'GET').toUpperCase();
+
+      if (isWebUiRestrictedTunnelClient(req, prefs)) {
+        const proxyForbidden =
+          apiReqPath === '/api/preferences' ||
+          apiReqPath === '/api/displays' ||
+          apiReqPath === '/api/debug/preferences' ||
+          (apiReqPath === '/api/stagetimer-settings' && apiMethod === 'POST') ||
+          (apiReqPath === '/api/presets' && apiMethod === 'POST');
+        if (proxyForbidden) {
+          res.writeHead(403, {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+          });
+          res.end(JSON.stringify({
+            success: false,
+            error: 'This action is not available on the shared link. Open the Web UI on the local network for Settings.'
+          }));
+          return;
+        }
+      }
       
       // Forward the request to the API server
       const apiReq = http.request({

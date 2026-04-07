@@ -4719,9 +4719,14 @@ function startCloudflaredTunnel() {
   if (cloudflaredProcess) return;
 
   const origin = getWebUiLocalOriginForTunnel();
+  // Web UI often uses a self-signed cert; cloudflared rejects it without this → edge returns 502
+  const tunnelArgs = ['tunnel', '--url', origin];
+  if (origin.startsWith('https://')) {
+    tunnelArgs.push('--no-tls-verify');
+  }
 
   try {
-    cloudflaredProcess = spawn(bin, ['tunnel', '--url', origin], {
+    cloudflaredProcess = spawn(bin, tunnelArgs, {
       stdio: ['ignore', 'pipe', 'pipe']
     });
   } catch (err) {

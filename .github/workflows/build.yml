@@ -61,6 +61,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Download cloudflared (bundled for Quick Tunnel)
+        run: npm run download:cloudflared
+
       - name: Set version
         id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT

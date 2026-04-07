@@ -2,7 +2,7 @@
 
 All notable changes to Google Slides Opener are documented here.
 
-## [1.9.7] - 2026-04-06
+## [1.9.8] - 2026-04-06
 
 ### Added
 - **Cloudflare Quick Tunnel (WAN access)** – Optional Quick Tunnel from desktop Settings; bundles `cloudflared` via `yarn download:cloudflared` and `extraResources`. Uses `--no-tls-verify` when the Web UI origin is HTTPS with a self-signed certificate so the tunnel does not return 502.
@@ -10,6 +10,15 @@ All notable changes to Google Slides Opener are documented here.
 
 ### Fixed
 - **cloudflared download on macOS** – Fetch official `.tgz` archives (bare binary URLs 404).
+
+### Documentation
+- README: Quick Tunnel deployment, packaging, and security model; expanded [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md).
+
+## [1.9.7] - 2026-03-18
+
+### Added
+- **Speaker notes layout** – Notes Layout setting (Electron + Web UI): hide or narrow the presenter view side panel via CSS injection.
+- **Persist speaker notes window bounds** – Notes window size/position saved across app restarts; use `setOpacity(0)` instead of `hide()` to preserve viewport dimensions.
 
 ## [1.9.6] - 2026-03-17
 

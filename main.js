@@ -526,8 +526,10 @@ function loadSavedNotesBounds() {
   return null;
 }
 
-// Function to set speaker notes window to fullscreen
-function setSpeakerNotesFullscreen(window) {
+// Function to set speaker notes window to fullscreen on a specific display (preferred).
+// Without targetDisplay, uses getDisplayMatching(window.getBounds()) which can follow the
+// presentation window if the popup opened on the wrong monitor.
+function setSpeakerNotesFullscreen(window, targetDisplay) {
   if (!window || window.isDestroyed()) return;
   // Make the window invisible (but NOT hidden) to prevent seeing the resize.
   // Using setOpacity(0) instead of hide() so the window keeps its full viewport dimensions.
@@ -540,19 +542,20 @@ function setSpeakerNotesFullscreen(window) {
     if (window.isDestroyed()) return;
 
     try {
-      // Get display - use primary display if window bounds are invalid (e.g., on Windows when hidden)
       let display;
-      try {
-        const bounds = window.getBounds();
-        if (bounds.width > 0 && bounds.height > 0) {
-          display = screen.getDisplayMatching(bounds);
-        } else {
-          // Window bounds invalid, use primary display
+      if (targetDisplay && targetDisplay.bounds) {
+        display = targetDisplay;
+      } else {
+        try {
+          const bounds = window.getBounds();
+          if (bounds.width > 0 && bounds.height > 0) {
+            display = screen.getDisplayMatching(bounds);
+          } else {
+            display = screen.getPrimaryDisplay();
+          }
+        } catch (e) {
           display = screen.getPrimaryDisplay();
         }
-      } catch (e) {
-        // Fallback to primary display if getDisplayMatching fails
-        display = screen.getPrimaryDisplay();
       }
 
       window.setBounds(display.bounds);
@@ -630,6 +633,43 @@ function setSpeakerNotesBoundsFromCache(window, bounds) {
     setTimeout(apply, 300);
   } else {
     window.webContents.once('dom-ready', () => setTimeout(apply, 300));
+  }
+}
+
+/** Display to use for speaker notes when prefs/API resolved a notes monitor (fallback: primary). */
+function resolveNotesTargetDisplay(notesDisplay) {
+  if (notesDisplay && notesDisplay.bounds) return notesDisplay;
+  return screen.getPrimaryDisplay();
+}
+
+function boundsCenterIntersectsDisplay(bounds, display) {
+  if (!bounds || !display || !display.bounds) return false;
+  const cx = bounds.x + Math.floor(bounds.width / 2);
+  const cy = bounds.y + Math.floor(bounds.height / 2);
+  const b = display.bounds;
+  return cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height;
+}
+
+/**
+ * Restore saved notes size/position only if it lies on the selected notes display; otherwise
+ * fullscreen the notes window on that display (avoids stale notesBounds pinning notes to the projector).
+ */
+function applySpeakerNotesInitialGeometry(window, notesDisplay, overrideBounds) {
+  const target = resolveNotesTargetDisplay(notesDisplay);
+  const b =
+    overrideBounds && overrideBounds.width > 0 && overrideBounds.height > 0
+      ? overrideBounds
+      : loadSavedNotesBounds();
+  if (b && b.width > 100 && b.height > 100 && boundsCenterIntersectsDisplay(b, target)) {
+    setSpeakerNotesBoundsFromCache(window, b);
+  } else {
+    if (b && b.width > 100 && b.height > 100 && !boundsCenterIntersectsDisplay(b, target)) {
+      logDebug(
+        '[Notes] Cached notes bounds are not on the selected notes display; fullscreening on notes monitor instead'
+      );
+    }
+    window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window, target));
+    window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window, target), 500));
   }
 }
 
@@ -1326,15 +1366,11 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
           if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
         }
       });
-      const boundsToUse = (savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0)
-        ? savedNotesBounds
-        : loadSavedNotesBounds();
-      if (boundsToUse) {
-        setSpeakerNotesBoundsFromCache(window, boundsToUse);
-      } else {
-        window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window));
-        window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window), 500));
-      }
+      const fromReload =
+        savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0
+          ? savedNotesBounds
+          : null;
+      applySpeakerNotesInitialGeometry(window, notesDisplay, fromReload);
       app.removeListener('browser-window-created', windowCreatedListener);
     }
   };
@@ -2141,20 +2177,7 @@ ipcMain.handle('open-test-presentation', async () => {
           }
         });
         
-        // Restore saved bounds from preferences, or fall back to fullscreen
-        const savedBounds = loadSavedNotesBounds();
-        if (savedBounds) {
-          setSpeakerNotesBoundsFromCache(window, savedBounds);
-        } else {
-          window.webContents.once('did-finish-load', () => {
-            setSpeakerNotesFullscreen(window);
-          });
-          window.webContents.once('dom-ready', () => {
-            setTimeout(() => {
-              setSpeakerNotesFullscreen(window);
-            }, 500);
-          });
-        }
+        applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
         app.removeListener('browser-window-created', testWindowCreatedListener);
       }
@@ -2201,7 +2224,8 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   const notesDisplayIdNum = Number(notesDisplayId);
   
   const presentationDisplay = displays.find(d => d.id === presentationDisplayIdNum);
-  const notesDisplay = displays.find(d => d.id === notesDisplayIdNum);
+  // Match reopen/API paths: stale or missing notes ID should still map to a real display, not only primary.
+  const notesDisplay = displays.find(d => d.id === notesDisplayIdNum) || displays[0];
 
   logDebug('[Multi-Monitor] Selected presentation display ID:', presentationDisplayId, '(converted to:', presentationDisplayIdNum, ')');
   logDebug('[Multi-Monitor] Resolved presentation display:', presentationDisplay ? presentationDisplay.id : 'NOT FOUND', 'Bounds:', presentationDisplay ? presentationDisplay.bounds : 'N/A');
@@ -2271,18 +2295,8 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
         }
       });
       
-      // Set speaker notes window to fullscreen when it loads
-      window.webContents.once('did-finish-load', () => {
-        setSpeakerNotesFullscreen(window);
-      });
-      
-      // Also try when DOM is ready (in case did-finish-load fires too early)
-      window.webContents.once('dom-ready', () => {
-        setTimeout(() => {
-          setSpeakerNotesFullscreen(window);
-        }, 500);
-      });
-      
+      applySpeakerNotesInitialGeometry(window, notesDisplay, null);
+
       // Remove listener after notes window is created
       app.removeListener('browser-window-created', windowCreatedListener);
     }
@@ -2870,20 +2884,7 @@ function startHttpServer() {
                 }
               });
 
-              // Restore saved bounds from preferences, or fall back to fullscreen
-              const savedBounds = loadSavedNotesBounds();
-              if (savedBounds) {
-                setSpeakerNotesBoundsFromCache(window, savedBounds);
-              } else {
-                window.webContents.once('did-finish-load', () => {
-                  setSpeakerNotesFullscreen(window);
-                });
-                window.webContents.once('dom-ready', () => {
-                  setTimeout(() => {
-                    setSpeakerNotesFullscreen(window);
-                  }, 500);
-                });
-              }
+              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
               app.removeListener('browser-window-created', windowCreatedListener);
             }
@@ -3046,20 +3047,7 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
-              // Restore saved bounds from preferences, or fall back to fullscreen
-              const savedBounds = loadSavedNotesBounds();
-              if (savedBounds) {
-                setSpeakerNotesBoundsFromCache(window, savedBounds);
-              } else {
-                window.webContents.once('did-finish-load', () => {
-                  setSpeakerNotesFullscreen(window);
-                });
-                window.webContents.once('dom-ready', () => {
-                  setTimeout(() => {
-                    setSpeakerNotesFullscreen(window);
-                  }, 500);
-                });
-              }
+              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
               app.removeListener('browser-window-created', windowCreatedListener);
             }
@@ -4522,20 +4510,7 @@ function startHttpServer() {
                   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
                 }
               });
-              // Restore saved bounds from preferences, or fall back to fullscreen
-              const savedBounds = loadSavedNotesBounds();
-              if (savedBounds) {
-                setSpeakerNotesBoundsFromCache(window, savedBounds);
-              } else {
-                window.webContents.once('did-finish-load', () => {
-                  setSpeakerNotesFullscreen(window);
-                });
-                window.webContents.once('dom-ready', () => {
-                  setTimeout(() => {
-                    setSpeakerNotesFullscreen(window);
-                  }, 500);
-                });
-              }
+              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
               app.removeListener('browser-window-created', windowCreatedListener);
             }
@@ -4782,9 +4757,12 @@ async function showTunnelQrOverlay(url, durationMs) {
   const notesDisplay = displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
   const b = notesDisplay.bounds;
 
-  const W = 320, H = 360, MARGIN = 20;
-  const x = b.x + b.width - W - MARGIN;
-  const y = b.y + b.height - H - MARGIN;
+  const QR_PX = 280;
+  const PAD = 20;
+  const W = QR_PX + PAD * 2;
+  const H = QR_PX + PAD * 2;
+  const x = b.x + Math.floor((b.width - W) / 2);
+  const y = b.y + Math.floor((b.height - H) / 2);
 
   tunnelQrWindow = new BrowserWindow({
     x, y, width: W, height: H,
@@ -4797,11 +4775,10 @@ async function showTunnelQrOverlay(url, durationMs) {
     webPreferences: { nodeIntegration: false, contextIsolation: true }
   });
 
-  const qrDataUrl = await QRCode.toDataURL(url, { width: 280, margin: 1 });
+  const qrDataUrl = await QRCode.toDataURL(url, { width: QR_PX, margin: 1 });
 
-  const html = `<!DOCTYPE html><html><body style="margin:0;background:rgba(0,0,0,0.82);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;color:#fff;">
-    <img src="${qrDataUrl}" style="width:280px;height:280px;border-radius:8px;" />
-    <p style="font-size:11px;opacity:0.7;margin:8px 0 0;word-break:break-all;text-align:center;padding:0 12px;">${url}</p>
+  const html = `<!DOCTYPE html><html><body style="margin:0;background:rgba(0,0,0,0.82);border-radius:12px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:100%;height:100vh;">
+    <img src="${qrDataUrl}" alt="" style="width:${QR_PX}px;height:${QR_PX}px;border-radius:8px;display:block;" />
   </body></html>`;
 
   tunnelQrWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
@@ -5839,7 +5816,6 @@ function startWebUiServer() {
       <button class="tab-btn" data-tab="controls">Controls</button>
       ${!webUiRestrictedTunnelClient ? '<button class="tab-btn" data-tab="settings">Settings</button>' : ''}
     </div>
-    ${webUiRestrictedTunnelClient ? '<div class="info" style="margin: 10px 0 14px; padding: 10px 12px; background: rgba(255,193,7,0.2); border: 1px solid rgba(255,193,7,0.35); border-radius: 8px; font-size: 13px; line-height: 1.45;">Shared link: Remote and Controls only. Open the Web UI from your local network for full Settings.</div>' : ''}
     
     <!-- Remote Tab (Default) -->
     <div id="tab-remote" class="tab-content active">

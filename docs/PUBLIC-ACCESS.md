@@ -22,6 +22,8 @@ To reduce exposure when you share the Quick Tunnel URL:
 - **Remote** and **Controls** tabs remain available.
 - The Web UI’s **API proxy** refuses certain routes in that mode (for example `GET/POST /api/preferences`, `GET /api/displays`, `POST /api/presets`, `POST /api/stagetimer-settings`, and `GET /api/debug/preferences`), so those operations are not available through the shared link alone.
 
+**Administrators:** There is **no** yellow warning banner or similar notice in the Web UI for people using the shared link—they see Remote and Controls only, without being told that Settings exist elsewhere. Rely on this document (and the main [README.md](../README.md) WAN section) when planning access: you need the machine’s **LAN URL** (or equivalent) for full setup.
+
 For **full** Web UI (Settings, saving presets from the browser, etc.), open the app using your machine’s **LAN URL**, not the `trycloudflare.com` link. Note: with Quick Tunnel enabled, opening the Web UI at **`127.0.0.1`** on the same computer also gets the restricted UI; use the LAN IP for local admin.
 
 Direct calls to the **HTTP API** on port **9595** are unchanged and still follow your **controller IP allowlist** (see project security docs).

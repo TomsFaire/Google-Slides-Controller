@@ -271,14 +271,16 @@ async function initDisplays() {
       notesDisplay.appendChild(option2);
     });
     
-    // Restore saved preferences or use defaults
-    if (preferences.presentationDisplayId) {
-      presentationDisplay.value = preferences.presentationDisplayId;
+    // Restore saved preferences or use defaults (coerce to string so <select> matches option values)
+    const presId = preferences.presentationDisplayId;
+    if (presId !== undefined && presId !== null && presId !== '') {
+      presentationDisplay.value = String(presId);
     }
-    
-    if (preferences.notesDisplayId) {
-      notesDisplay.value = preferences.notesDisplayId;
-    } else if (displays.length > 1 && !preferences.notesDisplayId) {
+
+    const notesId = preferences.notesDisplayId;
+    if (notesId !== undefined && notesId !== null && notesId !== '') {
+      notesDisplay.value = String(notesId);
+    } else if (displays.length > 1) {
       // Select different displays by default if available and no preference saved
       notesDisplay.selectedIndex = 1;
     }
@@ -853,8 +855,8 @@ async function saveMonitorPreferences() {
   try {
     const notesLayoutSelect = document.getElementById('notes-layout');
     await window.electronAPI.savePreferences({
-      presentationDisplayId: presentationDisplay.value,
-      notesDisplayId: notesDisplay.value,
+      presentationDisplayId: parseInt(presentationDisplay.value, 10),
+      notesDisplayId: parseInt(notesDisplay.value, 10),
       notesLayout: notesLayoutSelect ? notesLayoutSelect.value : 'hide'
     });
   } catch (error) {

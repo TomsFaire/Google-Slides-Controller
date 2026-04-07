@@ -2,6 +2,18 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.9] - 2026-04-07
+
+### Fixed
+- **Multi-monitor display selection** – Speaker notes now follow the **Speaker notes display** setting. Fullscreen placement uses that display’s bounds instead of inferring from `getDisplayMatching(window.getBounds())` (which could lock notes onto the projector). Saved `notesBounds` are restored only when the window center lies on the selected notes monitor; otherwise notes fullscreen on the correct monitor. `open-presentation` resolves a missing/stale notes display ID with `|| displays[0]` like other code paths. Desktop Settings: persist display IDs as numbers and restore `<select>` values with explicit string coercion.
+
+### Changed
+- **Tunnel QR overlay (notes monitor)** – Shows **only** the QR code (no URL caption); **centered** on the notes display; compact window size without the text row.
+- **Restricted Web UI (shared / tunnel URL)** – Removed the yellow in-page banner for remote users. The **Settings** tab stays hidden and API proxy restrictions are unchanged. Administrators: see [README.md](README.md) (WAN section), [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md), and [README-SECURITY.md](README-SECURITY.md).
+
+### Build
+- **macOS packaging** – `electron-builder` **mac** target now produces **DMG** installers in addition to **ZIP** (arm64 and x64).
+
 ## [1.9.8] - 2026-04-06
 
 ### Added

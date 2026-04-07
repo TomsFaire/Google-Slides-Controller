@@ -98,7 +98,7 @@ If the Web UI is served with **HTTPS** (including the app’s **self-signed** ce
 
 **4. Where the full Web UI (Settings tab) appears**
 
-When Quick Tunnel is enabled, the in-browser **Settings** tab is **hidden** for requests that hit the Web UI through the tunnel (traffic arrives from `localhost` via `cloudflared`). **Remote** and **Controls** stay available.
+When Quick Tunnel is enabled, the in-browser **Settings** tab is **hidden** for requests that hit the Web UI through the tunnel (traffic arrives from `localhost` via `cloudflared`). **Remote** and **Controls** stay available. Remote users are **not** shown an in-page banner about this; it is documented here and in [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md) for administrators.
 
 - Use **`http://YOUR_LAN_IP`** (or your machine’s hostname on the network) for the **full** Web UI, including **Settings** and in-browser preset editing.
 - Opening the Web UI at **`http://127.0.0.1`** on the same Mac while the tunnel is on is also treated as the restricted view (same localhost rule). Prefer the LAN URL for local admin.

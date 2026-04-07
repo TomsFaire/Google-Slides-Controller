@@ -33,3 +33,8 @@ If right-clicking doesn't work, try:
 ## Why self-signed instead of notarized?
 
 Apple's notarization costs $99/year, requires developer certificates, and involves submitting the app for review. For an open-source utility, self-signing is reasonable. Since the code is public, you can review it yourself to verify it's safe.
+
+## See also (operators and admins)
+
+- **[docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)** — Quick Tunnel / shared Web UI links, **restricted vs full** Web UI (Settings hidden on the tunnel URL), and which API routes are blocked for remote viewers. Remote users are not shown an in-app notice about that restriction; configuration details are in that doc and the main [README.md](README.md).
+- **Controller IP allowlist** and API exposure — covered from the main README and security-related sections there.

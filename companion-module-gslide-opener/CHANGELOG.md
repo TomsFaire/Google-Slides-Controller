@@ -1,5 +1,10 @@
 # Companion Module Changelog
 
+## [1.4.7] - 2026-04-07
+
+### Changed
+- **Version bump** – Aligns packaged module metadata with `package.json`; `companion/manifest.json` version synced to match.
+
 ## [1.4.6] - 2026-03-15
 
 ### Added

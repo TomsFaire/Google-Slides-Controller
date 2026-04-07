@@ -3,7 +3,7 @@
 	"name": "Google Slides Opener",
 	"shortname": "gslide-opener",
 	"description": "Control Google Slides presentations with automatic presentation mode and multi-monitor support",
-	"version": "1.2.4",
+	"version": "1.4.7",
 	"license": "MIT",
 	"repository": "git+https://github.com/TomsFaire/Google-Slides-Controller.git",
 	"bugs": "https://github.com/TomsFaire/Google-Slides-Controller/issues",

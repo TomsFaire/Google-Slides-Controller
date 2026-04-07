@@ -5,6 +5,7 @@ All notable changes to Google Slides Opener are documented here.
 ## [1.9.9] - 2026-04-07
 
 ### Fixed
+- **Primary → backup connectivity** – Health checks and command forwarding now resolve the backup HTTP port with **`backupPort` falling back to `apiPort`** (the port the API actually listens on). Saving the API port in **Primary** mode also updates **backup port** (desktop Settings + Web UI) so primaries do not keep probing a stale port. **Verbose logs** record health-check failures (`ECONNREFUSED`, timeouts, non-200). **`GET /api/status`** matches path without query string.
 - **Multi-monitor display selection** – Speaker notes now follow the **Speaker notes display** setting. Fullscreen placement uses that display’s bounds instead of inferring from `getDisplayMatching(window.getBounds())` (which could lock notes onto the projector). Saved `notesBounds` are restored only when the window center lies on the selected notes monitor; otherwise notes fullscreen on the correct monitor. `open-presentation` resolves a missing/stale notes display ID with `|| displays[0]` like other code paths. Desktop Settings: persist display IDs as numbers and restore `<select>` values with explicit string coercion.
 
 ### Changed

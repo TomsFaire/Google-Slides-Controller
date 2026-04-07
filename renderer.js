@@ -920,11 +920,19 @@ async function savePortPreferences() {
       return;
     }
     
-    await window.electronAPI.savePreferences({
+    const prefsToSave = {
       apiPort: apiPort,
       webUiPort: webUiPort
-    });
-    
+    };
+    // Keep backup target port aligned with API port on primaries (health checks + sendToBackups use both).
+    if (modePrimary.checked) {
+      prefsToSave.backupPort = apiPort;
+    }
+    await window.electronAPI.savePreferences(prefsToSave);
+    if (modePrimary.checked) {
+      backupPortInput.value = String(apiPort);
+    }
+
     // Update network info display with new ports
     await updateNetworkInfo();
     

@@ -1162,6 +1162,19 @@ function getBackupIps() {
   return getBackupIpsFromPrefs(prefs);
 }
 
+/**
+ * TCP port on backup machines where the HTTP API is listening.
+ * Prefer backupPort; if missing/invalid, use apiPort so primary stays aligned when only API port was changed.
+ */
+function getOutboundBackupHttpPort(prefs) {
+  const p = prefs || loadPreferences();
+  const bp = Number(p.backupPort);
+  if (Number.isFinite(bp) && bp >= 1 && bp <= 65535) return bp;
+  const ap = Number(p.apiPort);
+  if (Number.isFinite(ap) && ap >= 1 && ap <= 65535) return ap;
+  return DEFAULT_API_PORT;
+}
+
 // Send command to all backup machines (fire and forget)
 async function sendToBackups(endpoint, data = null) {
   const prefs = loadPreferences();
@@ -1177,7 +1190,7 @@ async function sendToBackups(endpoint, data = null) {
     return; // No backups configured
   }
   
-  const port = prefs.backupPort || DEFAULT_API_PORT;
+  const port = getOutboundBackupHttpPort(prefs);
   
   logDebug(`[Backup] Broadcasting ${endpoint} to ${backupIps.length} backup(s)`);
   
@@ -1228,7 +1241,7 @@ async function checkBackupStatus() {
     return { backups: [] };
   }
   
-  const port = prefs.backupPort || DEFAULT_API_PORT;
+  const port = getOutboundBackupHttpPort(prefs);
   const backups = backupIps.map(ip => ({ ip, status: 'checking' }));
   
   // Check each backup in parallel
@@ -1252,19 +1265,24 @@ async function checkBackupStatus() {
             backups[index] = { ip, status: 'connected' };
             resolve();
           } else {
+            logDebug(`[Backup] Health check ${ip}:${port} HTTP ${res.statusCode} (expected 200)`);
             backups[index] = { ip, status: 'disconnected' };
             resolve();
           }
         });
       });
       
-      req.on('error', () => {
+      req.on('error', (err) => {
+        const code = err && err.code ? err.code : 'unknown';
+        const msg = err && err.message ? err.message : String(err);
+        logDebug(`[Backup] Health check ${ip}:${port} error: ${code} ${msg}`);
         backups[index] = { ip, status: 'disconnected' };
         resolve();
       });
       
       req.on('timeout', () => {
         req.destroy();
+        logDebug(`[Backup] Health check ${ip}:${port} timed out`);
         backups[index] = { ip, status: 'disconnected' };
         resolve();
       });
@@ -2426,7 +2444,7 @@ function startHttpServer() {
     const apiReqPath = String(req.url || '').split('?')[0];
     
     // GET /api/status - Check if app is running and expose state for Companion variables/feedbacks
-    if (req.method === 'GET' && req.url === '/api/status') {
+    if (req.method === 'GET' && apiReqPath === '/api/status') {
       (async () => {
         // Get login state and user info
         let loginState = false;
@@ -7981,7 +7999,12 @@ function startWebUiServer() {
           apiPort: apiPort,
           webUiPort: webUiPort
         };
-        
+        if (document.getElementById('web-mode-primary').checked) {
+          prefs.backupPort = apiPort;
+          const wbp = document.getElementById('web-backup-port');
+          if (wbp) wbp.value = String(apiPort);
+        }
+
         const res = await fetch(API_BASE + '/api/preferences', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

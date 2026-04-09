@@ -186,8 +186,10 @@ jobs:
           path: artifacts/companion
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2.6.1
         with:
+          # v1 did not replace same-named assets; retagging/rebuilding hits GitHub 422 already_exists.
+          overwrite_files: true
           files: |
             artifacts/macos-arm64/*.zip
             artifacts/macos-x64/*.zip

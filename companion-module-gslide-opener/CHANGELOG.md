@@ -1,5 +1,10 @@
 # Companion Module Changelog
 
+## [1.4.8] - 2026-04-07
+
+### Fixed
+- **Tunnel QR actions** – Replaced removed endpoints `/api/show-share-qr` and `/api/hide-share-qr` with **`/api/show-tunnel-qr`** and **`/api/hide-tunnel-qr`**. Request body uses **`duration`** (seconds) as required by the app. Resolves Companion error `Failed to show QR: Not found` (HTTP 404). Action IDs `show_share_qr` / `hide_share_qr` are unchanged so existing buttons keep working; labels now say **Tunnel QR**. Removed obsolete "Generate New Share Link" option.
+
 ## [1.4.7] - 2026-04-07
 
 ### Changed

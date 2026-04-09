@@ -2647,7 +2647,7 @@ function startHttpServer() {
 
     // POST /api/tunnel-enable - Start the Cloudflare Quick Tunnel
     if (req.method === 'POST' && req.url === '/api/tunnel-enable') {
-      if (!isControllerAllowedRequest(req, prefs)) {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Forbidden' }));
         return;
@@ -2663,7 +2663,7 @@ function startHttpServer() {
 
     // POST /api/tunnel-disable - Stop the Cloudflare Quick Tunnel
     if (req.method === 'POST' && req.url === '/api/tunnel-disable') {
-      if (!isControllerAllowedRequest(req, prefs)) {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Forbidden' }));
         return;
@@ -2679,7 +2679,7 @@ function startHttpServer() {
 
     // POST /api/show-tunnel-qr - Show QR overlay on notes display
     if (req.method === 'POST' && req.url === '/api/show-tunnel-qr') {
-      if (!isControllerAllowedRequest(req, prefs)) {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Forbidden' }));
         return;
@@ -2710,7 +2710,7 @@ function startHttpServer() {
 
     // POST /api/hide-tunnel-qr - Dismiss QR overlay
     if (req.method === 'POST' && req.url === '/api/hide-tunnel-qr') {
-      if (!isControllerAllowedRequest(req, prefs)) {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Forbidden' }));
         return;

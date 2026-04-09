@@ -287,9 +287,11 @@ module.exports = function (self) {
 			},
 		},
 
+		// Action ids kept as show_share_qr / hide_share_qr so existing Companion buttons keep working.
 		show_share_qr: {
-			name: 'Show Share QR',
-			description: 'Display a QR code overlay on the presentation with the share link',
+			name: 'Show Tunnel QR',
+			description:
+				'Show QR code on the speaker-notes display for the Cloudflare Quick Tunnel URL (enable tunnel in desktop Settings first)',
 			options: [
 				{
 					id: 'durationSec',
@@ -300,12 +302,6 @@ module.exports = function (self) {
 					max: 300,
 					required: true,
 					useVariables: true,
-				},
-				{
-					id: 'forceNew',
-					type: 'checkbox',
-					label: 'Generate New Share Link',
-					default: false,
 				},
 			],
 			callback: async (event) => {
@@ -318,10 +314,13 @@ module.exports = function (self) {
 						return
 					}
 
-					const forceNew = event.options.forceNew || false
-
-					self.log('info', `Showing QR code for ${durationSec} seconds (forceNew: ${forceNew})`)
-					const response = await self.apiRequest('POST', '/api/show-share-qr', { durationSec, forceNew })
+					self.log('info', `Showing tunnel QR for ${durationSec} seconds`)
+					// App expects JSON field "duration" (seconds); old share-link API was removed in app v1.9.5+.
+					const response = await self.apiRequest('POST', '/api/show-tunnel-qr', { duration: durationSec })
+					if (response && response.success === false) {
+						self.log('error', response.error || 'Tunnel QR could not be shown')
+						return
+					}
 					self.log('info', response.message || `QR shown for ${durationSec} seconds`)
 				} catch (error) {
 					self.log('error', `Failed to show QR: ${error.message}`)
@@ -330,13 +329,13 @@ module.exports = function (self) {
 		},
 
 		hide_share_qr: {
-			name: 'Hide Share QR',
-			description: 'Hide the QR code overlay immediately',
+			name: 'Hide Tunnel QR',
+			description: 'Hide the tunnel QR overlay on the speaker-notes display',
 			options: [],
 			callback: async () => {
 				try {
-					self.log('info', 'Hiding QR code overlay')
-					const response = await self.apiRequest('POST', '/api/hide-share-qr', {})
+					self.log('info', 'Hiding tunnel QR overlay')
+					const response = await self.apiRequest('POST', '/api/hide-tunnel-qr', {})
 					self.log('info', response.message || 'QR hidden')
 				} catch (error) {
 					self.log('error', `Failed to hide QR: ${error.message}`)

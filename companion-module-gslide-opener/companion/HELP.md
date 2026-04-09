@@ -15,6 +15,7 @@ Control presentations and speaker notes from your Bitfocus Companion setup. Navi
 - Open and close speaker notes, scroll, and zoom
 - Save and recall preset presentations
 - Monitor presentation state (open/closed, current slide, etc.)
+- **Tunnel QR** – If the Electron app has **Cloudflare Quick Tunnel** enabled (desktop Settings), use **Show Tunnel QR** / **Hide Tunnel QR** to display the tunnel URL as a QR code on the speaker-notes display
 
 ## Learn more
 

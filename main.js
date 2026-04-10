@@ -301,6 +301,122 @@ let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
 
+// Google Slides speaker notes zoom: discrete steps from native baseline (Zoom in / Zoom out toolbar; see /api/zoom-in-notes).
+const NOTES_ZOOM_MIN_STEPS = -10;
+const NOTES_ZOOM_MAX_STEPS = 40;
+/** Tracked offset from Slides baseline; updated on API zoom and reload restore. */
+let notesZoomStepsFromDefault = 0;
+
+function clampNotesZoomSteps(n) {
+  const x = Math.round(Number(n));
+  if (Number.isNaN(x)) return 0;
+  return Math.min(NOTES_ZOOM_MAX_STEPS, Math.max(NOTES_ZOOM_MIN_STEPS, x));
+}
+
+function getDefaultNotesZoomStepsFromPrefs() {
+  const prefs = loadPreferences();
+  const v = prefs.defaultNotesZoomSteps;
+  if (v === undefined || v === null) return 0;
+  return clampNotesZoomSteps(v);
+}
+
+function resetNotesZoomForNewPresentation() {
+  notesZoomStepsFromDefault = getDefaultNotesZoomStepsFromPrefs();
+}
+
+const NOTES_ZOOM_CLICK_IN_JS = `
+(function() {
+  const zoomInButton = document.querySelector('[title="Zoom in"]');
+  if (!zoomInButton) return { success: false, error: 'Button not found' };
+  const mousedownEvent = new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, button: 0 });
+  const mouseupEvent = new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, button: 0 });
+  const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window, button: 0 });
+  zoomInButton.dispatchEvent(mousedownEvent);
+  zoomInButton.dispatchEvent(mouseupEvent);
+  zoomInButton.dispatchEvent(clickEvent);
+  return { success: true };
+})()
+`.trim();
+
+const NOTES_ZOOM_CLICK_OUT_JS = `
+(function() {
+  const zoomOutButton = document.querySelector('[title="Zoom out"]');
+  if (!zoomOutButton) return { success: false, error: 'Button not found' };
+  const mousedownEvent = new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window, button: 0 });
+  const mouseupEvent = new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window, button: 0 });
+  const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window, button: 0 });
+  zoomOutButton.dispatchEvent(mousedownEvent);
+  zoomOutButton.dispatchEvent(mouseupEvent);
+  zoomOutButton.dispatchEvent(clickEvent);
+  return { success: true };
+})()
+`.trim();
+
+async function executeNotesZoomClickIn(notesWin) {
+  if (!notesWin || notesWin.isDestroyed()) return { success: false, error: 'No notes window' };
+  return notesWin.webContents.executeJavaScript(NOTES_ZOOM_CLICK_IN_JS);
+}
+
+async function executeNotesZoomClickOut(notesWin) {
+  if (!notesWin || notesWin.isDestroyed()) return { success: false, error: 'No notes window' };
+  return notesWin.webContents.executeJavaScript(NOTES_ZOOM_CLICK_OUT_JS);
+}
+
+async function applyNotesZoomSteps(notesWin, steps) {
+  const n = clampNotesZoomSteps(steps);
+  if (n === 0 || !notesWin || notesWin.isDestroyed()) return;
+  const count = Math.abs(n);
+  const inward = n > 0;
+  for (let i = 0; i < count; i++) {
+    if (notesWin.isDestroyed()) return;
+    const r = inward ? await executeNotesZoomClickIn(notesWin) : await executeNotesZoomClickOut(notesWin);
+    if (!r || !r.success) {
+      logWarn('[Notes] Zoom replay stopped early at step', i + 1, '/', count);
+      break;
+    }
+    if (i < count - 1) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+}
+
+async function applyTrackedNotesZoomWhenReady(win) {
+  if (!win || win.isDestroyed()) return;
+  const steps = notesZoomStepsFromDefault;
+  if (steps === 0) return;
+  for (let t = 0; t < 40; t++) {
+    if (win.isDestroyed()) return;
+    const ready = await win.webContents
+      .executeJavaScript(`(function(){ return !!document.querySelector('[title="Zoom in"]'); })()`)
+      .catch(() => false);
+    if (ready) {
+      await applyNotesZoomSteps(win, steps);
+      logInfo('[Notes] Applied speaker notes zoom steps:', steps);
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 150));
+  }
+  logWarn('[Notes] Zoom controls not ready; could not apply steps:', steps);
+}
+
+/** Optional: log native notes body font size before reload (DOM-only zoom cannot be mapped to steps reliably). */
+async function logNotesZoomFontProbeBeforeReload(notesWin, label) {
+  if (!notesWin || notesWin.isDestroyed()) return;
+  try {
+    const px = await notesWin.webContents.executeJavaScript(`
+      (function() {
+        var el = document.querySelector('div.punch-viewer-speakernotes-text-body-scrollable');
+        if (!el) return null;
+        var v = parseFloat(window.getComputedStyle(el).fontSize);
+        return isNaN(v) ? null : v;
+      })()
+    `);
+    if (px != null) logDebug('[Notes] Pre-reload zoom font probe' + (label ? ' ' + label : '') + ':', px, 'px (informational)');
+  } catch (e) {
+    logDebug('[Notes] Font probe skipped:', e.message);
+  }
+}
+
 // ----------------------------
 // Crash reporting and recovery
 // ----------------------------
@@ -488,6 +604,13 @@ function onNotesWindowCreated(win) {
       }).catch(() => {});
     } else {
       logInfo('[Notes] Presenter layout: using Google default');
+    }
+
+    if (!win._gslideNotesZoomApplied) {
+      win._gslideNotesZoomApplied = true;
+      setTimeout(() => {
+        applyTrackedNotesZoomWhenReady(win).catch(() => {});
+      }, 450);
     }
   });
 
@@ -970,6 +1093,9 @@ function savePreferences(prefs) {
     // Normalize/migrate before writing
     prefs.backupIps = getBackupIpsFromPrefs(prefs);
     prefs.controllerIps = getControllerIpsFromPrefs(prefs);
+    if (prefs.defaultNotesZoomSteps !== undefined && prefs.defaultNotesZoomSteps !== null) {
+      prefs.defaultNotesZoomSteps = clampNotesZoomSteps(prefs.defaultNotesZoomSteps);
+    }
     logDebug('[Preferences] Saving to:', prefsPath);
     logDebug('[Preferences] Data to save (sanitized):', safeStringify(prefs, 2));
     
@@ -1329,7 +1455,12 @@ function stopBackupStatusPolling() {
   }
 }
 
-async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds) {
+async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps) {
+  notesZoomStepsFromDefault =
+    typeof savedNotesZoomSteps === 'number'
+      ? clampNotesZoomSteps(savedNotesZoomSteps)
+      : getDefaultNotesZoomStepsFromPrefs();
+
   if (notesWindow && !notesWindow.isDestroyed()) {
     notesWindow.removeAllListeners('closed');
     notesWindow.close();
@@ -1481,6 +1612,7 @@ function attachCrashHandlers(win, label) {
       const slide = typeof currentSlide === 'number' ? currentSlide : 1;
       let notesWereOpen = false;
       let savedNotesBounds = null;
+      const savedNotesZoomSteps = notesZoomStepsFromDefault;
       if (notesWindow && !notesWindow.isDestroyed()) {
         notesWereOpen = true;
         try { savedNotesBounds = notesWindow.getBounds(); } catch (e) {}
@@ -1500,7 +1632,7 @@ function attachCrashHandlers(win, label) {
           defaultId: 0,
           cancelId: 1
         }).then(({ response }) => {
-          if (response === 0) reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds);
+          if (response === 0) reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
         }).catch(() => {});
       }
     } else if (label === 'notes') {
@@ -2205,6 +2337,7 @@ ipcMain.handle('open-test-presentation', async () => {
 
   lastPresentationUrl = testUrl; // Store for reload
   currentSlide = 1;
+  resetNotesZoomForNewPresentation();
   presentationWindow.loadURL(testUrl);
   presentationWindow.show();
   
@@ -2324,6 +2457,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Load presentation URL
   lastPresentationUrl = url; // Store for reload
   currentSlide = 1;
+  resetNotesZoomForNewPresentation();
   presentationWindow.loadURL(url);
 
   logDebug('[Multi-Monitor] Window opened, loading URL...');
@@ -2496,7 +2630,9 @@ function startHttpServer() {
           presentationTitle: null,
           timerElapsed: null,
           loginState: loginState,
-          loggedInUser: loggedInUser || null
+          loggedInUser: loggedInUser || null,
+          notesZoomSteps: notesZoomStepsFromDefault,
+          notesZoomDefault: getDefaultNotesZoomStepsFromPrefs()
         };
         
         // Get slide info and other data from notes window DOM
@@ -2947,6 +3083,7 @@ function startHttpServer() {
           console.log('[API] Loading PRESENT URL:', presentUrl);
           lastPresentationUrl = url; // Store original URL (not /present URL) for reload
           currentSlide = 1;
+          resetNotesZoomForNewPresentation();
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
           
@@ -3169,6 +3306,7 @@ function startHttpServer() {
           console.log('[API] Loading PRESENT URL:', presentUrl);
           lastPresentationUrl = url; // Store original URL (not /present URL) for reload
           currentSlide = 1;
+          resetNotesZoomForNewPresentation();
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
           
@@ -3393,10 +3531,12 @@ function startHttpServer() {
             } catch (e) {
               console.warn('[API] Reload: Could not cache notes bounds:', e.message);
             }
+            await logNotesZoomFontProbeBeforeReload(notesWindow, 'reload');
           }
+          const savedNotesZoomSteps = notesWereOpen ? notesZoomStepsFromDefault : getDefaultNotesZoomStepsFromPrefs();
           const urlToReload = lastPresentationUrl;
-          console.log('[API] Reload: Saving state - slide:', savedSlide, 'notes open:', notesWereOpen, 'URL:', urlToReload);
-          await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds);
+          console.log('[API] Reload: Saving state - slide:', savedSlide, 'notes open:', notesWereOpen, 'notesZoomSteps:', savedNotesZoomSteps, 'URL:', urlToReload);
+          await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
           console.log('[API] Reload: Complete');
         } catch (error) {
           console.error('[API] Error during reload:', error);
@@ -3622,40 +3762,9 @@ function startHttpServer() {
       }
       
       try {
-        notesWindow.webContents.executeJavaScript(`
-          (function() {
-            const zoomInButton = document.querySelector('[title="Zoom in"]');
-            if (zoomInButton) {
-              // Dispatch real mouse events
-              const mousedownEvent = new MouseEvent('mousedown', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                button: 0
-              });
-              const mouseupEvent = new MouseEvent('mouseup', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                button: 0
-              });
-              const clickEvent = new MouseEvent('click', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                button: 0
-              });
-              
-              zoomInButton.dispatchEvent(mousedownEvent);
-              zoomInButton.dispatchEvent(mouseupEvent);
-              zoomInButton.dispatchEvent(clickEvent);
-              
-              return { success: true };
-            }
-            return { success: false, error: 'Button not found' };
-          })()
-        `).then(result => {
+        executeNotesZoomClickIn(notesWindow).then(result => {
           if (result.success) {
+            notesZoomStepsFromDefault = clampNotesZoomSteps(notesZoomStepsFromDefault + 1);
             console.log('[API] ✓ Dispatched mouse events to zoom in button');
             
             // Broadcast to backups (async, don't wait)
@@ -3695,40 +3804,9 @@ function startHttpServer() {
       }
       
       try {
-        notesWindow.webContents.executeJavaScript(`
-          (function() {
-            const zoomOutButton = document.querySelector('[title="Zoom out"]');
-            if (zoomOutButton) {
-              // Dispatch real mouse events
-              const mousedownEvent = new MouseEvent('mousedown', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                button: 0
-              });
-              const mouseupEvent = new MouseEvent('mouseup', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                button: 0
-              });
-              const clickEvent = new MouseEvent('click', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                button: 0
-              });
-              
-              zoomOutButton.dispatchEvent(mousedownEvent);
-              zoomOutButton.dispatchEvent(mouseupEvent);
-              zoomOutButton.dispatchEvent(clickEvent);
-              
-              return { success: true };
-            }
-            return { success: false, error: 'Button not found' };
-          })()
-        `).then(result => {
+        executeNotesZoomClickOut(notesWindow).then(result => {
           if (result.success) {
+            notesZoomStepsFromDefault = clampNotesZoomSteps(notesZoomStepsFromDefault - 1);
             console.log('[API] ✓ Dispatched mouse events to zoom out button');
             
             // Broadcast to backups (async, don't wait)
@@ -4595,6 +4673,7 @@ function startHttpServer() {
           console.log('[API] Loading PRESENT URL:', presentUrl);
           lastPresentationUrl = url;
           currentSlide = 1;
+          resetNotesZoomForNewPresentation();
           presentationWindow.loadURL(presentUrl);
           presentationWindow.show();
           
@@ -6020,6 +6099,11 @@ function startWebUiServer() {
             <option value="hide">Notes only (hide slide previews)</option>
             <option value="default">Google default (50/50 split)</option>
           </select>
+        </div>
+        <div class="preset-group" style="margin-top: 10px;">
+          <label for="web-default-notes-zoom-steps">Default speaker notes zoom (steps)</label>
+          <input type="number" id="web-default-notes-zoom-steps" class="input-field" style="width: 100%; padding: 8px;" min="-10" max="40" value="0" step="1" />
+          <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Extra Zoom in clicks when notes open (0 = Slides default). Applies on next presentation or when notes reopen.</small>
         </div>
         <button type="button" class="btn" id="btn-save-displays" style="margin-top: 10px;">Save Monitor Settings</button>
       </div>
@@ -7817,6 +7901,11 @@ function startWebUiServer() {
         if (notesLayoutSelect && prefs.notesLayout) {
           notesLayoutSelect.value = prefs.notesLayout;
         }
+        const webDefaultNotesZoom = document.getElementById('web-default-notes-zoom-steps');
+        if (webDefaultNotesZoom) {
+          const dz = prefs.defaultNotesZoomSteps;
+          webDefaultNotesZoom.value = dz !== undefined && dz !== null ? String(dz) : '0';
+        }
 
         // Set machine name
         document.getElementById('web-machine-name').value = prefs.machineName || '';
@@ -7882,10 +7971,17 @@ function startWebUiServer() {
     // Save monitor settings
     document.getElementById('btn-save-displays').addEventListener('click', async () => {
       try {
+        const webZoomEl = document.getElementById('web-default-notes-zoom-steps');
+        let defaultNotesZoomSteps = 0;
+        if (webZoomEl) {
+          const pz = parseInt(webZoomEl.value, 10);
+          defaultNotesZoomSteps = Number.isNaN(pz) ? 0 : pz;
+        }
         const prefs = {
           presentationDisplayId: parseInt(document.getElementById('web-presentation-display').value),
           notesDisplayId: parseInt(document.getElementById('web-notes-display').value),
-          notesLayout: document.getElementById('web-notes-layout').value
+          notesLayout: document.getElementById('web-notes-layout').value,
+          defaultNotesZoomSteps
         };
         
         const res = await fetch(API_BASE + '/api/preferences', {

@@ -25,7 +25,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			notesDisplayId: null,
 			loginState: false,
 			loggedInUser: null,
-		backupControlsEnabled: true
+		backupControlsEnabled: true,
+			notesZoomSteps: null,
+			notesZoomDefault: null
 	}
 		
 		// Polling interval
@@ -299,6 +301,14 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			{
 				variableId: 'backup_controls_enabled',
 				name: 'Backup Controls Enabled (Yes/No)'
+			},
+			{
+				variableId: 'notes_zoom_steps',
+				name: 'Speaker Notes Zoom Steps (from Slides baseline)'
+			},
+			{
+				variableId: 'notes_zoom_default',
+				name: 'Default Speaker Notes Zoom Steps (preference)'
 			}
 		]
 
@@ -465,6 +475,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			loginState: response.loginState === true,
 			loggedInUser: response.loggedInUser || null,
 			backupControlsEnabled: response.backupControlsEnabled === true,
+			notesZoomSteps: response.notesZoomSteps !== null && response.notesZoomSteps !== undefined ? response.notesZoomSteps : null,
+			notesZoomDefault: response.notesZoomDefault !== null && response.notesZoomDefault !== undefined ? response.notesZoomDefault : null
 		}
 		
 		// Check if state changed (compare all fields)
@@ -485,7 +497,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.state.timerElapsed !== newState.timerElapsed ||
 			this.state.presentationDisplayId !== newState.presentationDisplayId ||
 			this.state.backupControlsEnabled !== newState.backupControlsEnabled ||
-			this.state.notesDisplayId !== newState.notesDisplayId
+			this.state.notesDisplayId !== newState.notesDisplayId ||
+			this.state.notesZoomSteps !== newState.notesZoomSteps ||
+			this.state.notesZoomDefault !== newState.notesZoomDefault
 		
 		if (stateChanged) {
 			this.state = newState
@@ -509,6 +523,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				login_state: this.state.loginState ? 'Yes' : 'No',
 				logged_in_user: this.state.loggedInUser || '',
 				backup_controls_enabled: this.state.backupControlsEnabled ? 'Yes' : 'No',
+				notes_zoom_steps: this.state.notesZoomSteps !== null && this.state.notesZoomSteps !== undefined ? String(this.state.notesZoomSteps) : '',
+				notes_zoom_default: this.state.notesZoomDefault !== null && this.state.notesZoomDefault !== undefined ? String(this.state.notesZoomDefault) : ''
 			})
 			
 			// Trigger feedback updates

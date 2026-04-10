@@ -1,11 +1,12 @@
 {
   "name": "companion-module-gslide-opener",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "description": "Bitfocus Companion module for Google Slides Opener",
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "package": "companion-module-build"
+    "package": "companion-module-build",
+    "pack:import": "bash scripts/pack-import-tgz.sh"
   },
   "keywords": [
     "companion",

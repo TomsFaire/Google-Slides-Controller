@@ -291,6 +291,12 @@ async function initDisplays() {
       notesLayoutSelect.value = preferences.notesLayout;
     }
 
+    const defaultNotesZoomInput = document.getElementById('default-notes-zoom-steps');
+    if (defaultNotesZoomInput) {
+      const dz = preferences.defaultNotesZoomSteps;
+      defaultNotesZoomInput.value = dz !== undefined && dz !== null ? String(dz) : '0';
+    }
+
     // Restore machine name
     if (preferences.machineName) {
       machineNameInput.value = preferences.machineName;
@@ -371,6 +377,8 @@ async function initDisplays() {
     notesDisplay.addEventListener('change', saveMonitorPreferences);
     const notesLayoutEl = document.getElementById('notes-layout');
     if (notesLayoutEl) notesLayoutEl.addEventListener('change', saveMonitorPreferences);
+    const defaultNotesZoomEl = document.getElementById('default-notes-zoom-steps');
+    if (defaultNotesZoomEl) defaultNotesZoomEl.addEventListener('change', saveMonitorPreferences);
     machineNameInput.addEventListener('change', saveMachineName);
     apiPortInput.addEventListener('change', savePortPreferences);
     webUiPortInput.addEventListener('change', savePortPreferences);
@@ -854,10 +862,17 @@ async function updateNetworkInfo() {
 async function saveMonitorPreferences() {
   try {
     const notesLayoutSelect = document.getElementById('notes-layout');
+    const defaultNotesZoomEl = document.getElementById('default-notes-zoom-steps');
+    let defaultNotesZoomSteps = 0;
+    if (defaultNotesZoomEl) {
+      const parsed = parseInt(defaultNotesZoomEl.value, 10);
+      defaultNotesZoomSteps = Number.isNaN(parsed) ? 0 : parsed;
+    }
     await window.electronAPI.savePreferences({
       presentationDisplayId: parseInt(presentationDisplay.value, 10),
       notesDisplayId: parseInt(notesDisplay.value, 10),
-      notesLayout: notesLayoutSelect ? notesLayoutSelect.value : 'hide'
+      notesLayout: notesLayoutSelect ? notesLayoutSelect.value : 'hide',
+      defaultNotesZoomSteps
     });
   } catch (error) {
     console.error('Failed to save preferences:', error);

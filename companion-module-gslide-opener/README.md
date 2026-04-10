@@ -8,8 +8,18 @@ This module connects Bitfocus Companion to Google Slides Opener, giving you full
 
 ## Installation
 
+Build the importable `.tgz` locally (do **not** use `npm pack`—it wraps files in a `package/` folder and Companion will report **missing manifest**):
+
+```bash
+yarn pack:import
+```
+
+This writes `companion-module-gslide-opener-<version>.tgz` with `companion/manifest.json` at the **root** of the archive.
+
+Alternatively, run **`yarn package`** to produce a webpack-bundled release as `gslide-opener-<version>.tgz` (contents under `pkg/`; Companion accepts this layout).
+
 1. In Bitfocus Companion, go to **Modules** → **Import module package**
-2. Select `companion-module-gslide-opener.tgz` from this folder
+2. Select `companion-module-gslide-opener-1.4.9.tgz` (or the version produced above)
 3. Add a new connection and configure:
    - **Host**: the IP or hostname of your presentation computer
    - **Port**: the Google Slides Opener API port (default 9595)

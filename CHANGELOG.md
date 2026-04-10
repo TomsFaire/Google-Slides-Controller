@@ -2,6 +2,15 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.10] - 2026-04-10
+
+### Added
+- **Speaker notes zoom** – Track native Google Slides notes zoom as discrete steps; restore after **Reload presentation** (same pattern as slide index). Preference **Default speaker notes zoom (steps)** (desktop Settings + Web UI) applies when notes open. **`GET /api/status`**: `notesZoomSteps`, `notesZoomDefault`.
+- **Companion module** – Variables `notes_zoom_steps` and `notes_zoom_default`; flat **`yarn pack:import`** tarball for Companion import (avoids `npm pack`’s `package/` layout).
+
+### Changed
+- **Version 1.9.10**, **build 65**.
+
 ## [1.9.9] - 2026-04-07
 
 ### Fixed

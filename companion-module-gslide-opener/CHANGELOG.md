@@ -1,5 +1,10 @@
 # Companion Module Changelog
 
+## [1.4.9] - 2026-04-10
+
+### Added
+- **Speaker notes zoom variables** – `notes_zoom_steps` (live offset from Slides baseline) and `notes_zoom_default` (saved preference default), mapped from Electron app `GET /api/status` (`notesZoomSteps`, `notesZoomDefault`). See companion HELP.
+
 ## [1.4.8] - 2026-04-07
 
 ### Fixed

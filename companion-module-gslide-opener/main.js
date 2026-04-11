@@ -25,10 +25,11 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			notesDisplayId: null,
 			loginState: false,
 			loggedInUser: null,
-		backupControlsEnabled: true,
+			backupControlsEnabled: true,
 			notesZoomSteps: null,
-			notesZoomDefault: null
-	}
+			notesZoomDefault: null,
+			notesLayout: 'hide'
+		}
 		
 		// Polling interval
 		this.pollInterval = null
@@ -309,6 +310,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			{
 				variableId: 'notes_zoom_default',
 				name: 'Default Speaker Notes Zoom Steps (preference)'
+			},
+			{
+				variableId: 'notes_layout',
+				name: 'Notes Layout (hide / narrow / default)'
 			}
 		]
 
@@ -434,9 +439,35 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 							: { bgcolor: combineRgb(80, 80, 80), color: combineRgb(220, 220, 220), text: 'Backups Off' }
 					}
 				}
-			}
+			},
+			notes_layout_is: {
+				type: 'boolean',
+				name: 'Notes Layout Is',
+				description: 'Active when the notes layout matches the selected mode',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(0, 150, 255)
+				},
+				options: [
+					{
+						id: 'layout',
+						type: 'dropdown',
+						label: 'Layout',
+						default: 'hide',
+						choices: [
+							{ id: 'hide', label: 'Full Notes' },
+							{ id: 'narrow', label: 'Narrow Panel' },
+							{ id: 'default', label: 'Google Default' },
+						],
+					},
+				],
+				callback: (feedback) => {
+					return this.state.notesLayout === feedback.options.layout
+				},
+				showInvert: false
+			},
 		}
-		
+
 		this.setFeedbackDefinitions(feedbacks)
 		this.log('info', `Defined ${Object.keys(feedbacks).length} feedbacks`)
 	}
@@ -476,7 +507,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			loggedInUser: response.loggedInUser || null,
 			backupControlsEnabled: response.backupControlsEnabled === true,
 			notesZoomSteps: response.notesZoomSteps !== null && response.notesZoomSteps !== undefined ? response.notesZoomSteps : null,
-			notesZoomDefault: response.notesZoomDefault !== null && response.notesZoomDefault !== undefined ? response.notesZoomDefault : null
+			notesZoomDefault: response.notesZoomDefault !== null && response.notesZoomDefault !== undefined ? response.notesZoomDefault : null,
+			notesLayout: response.notesLayout || 'hide'
 		}
 		
 		// Check if state changed (compare all fields)
@@ -499,7 +531,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.state.backupControlsEnabled !== newState.backupControlsEnabled ||
 			this.state.notesDisplayId !== newState.notesDisplayId ||
 			this.state.notesZoomSteps !== newState.notesZoomSteps ||
-			this.state.notesZoomDefault !== newState.notesZoomDefault
+			this.state.notesZoomDefault !== newState.notesZoomDefault ||
+			this.state.notesLayout !== newState.notesLayout
 		
 		if (stateChanged) {
 			this.state = newState
@@ -524,11 +557,12 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				logged_in_user: this.state.loggedInUser || '',
 				backup_controls_enabled: this.state.backupControlsEnabled ? 'Yes' : 'No',
 				notes_zoom_steps: this.state.notesZoomSteps !== null && this.state.notesZoomSteps !== undefined ? String(this.state.notesZoomSteps) : '',
-				notes_zoom_default: this.state.notesZoomDefault !== null && this.state.notesZoomDefault !== undefined ? String(this.state.notesZoomDefault) : ''
+				notes_zoom_default: this.state.notesZoomDefault !== null && this.state.notesZoomDefault !== undefined ? String(this.state.notesZoomDefault) : '',
+				notes_layout: this.state.notesLayout || 'hide'
 			})
 			
 			// Trigger feedback updates
-			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state', 'backup_controls_enabled')
+			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state', 'backup_controls_enabled', 'notes_layout_is')
 			
 			this.log('debug', `State updated: presentation=${this.state.presentationOpen}, notes=${this.state.notesOpen}, slide=${this.state.currentSlide}/${this.state.totalSlides}, title=${this.state.presentationTitle || 'N/A'}`)
 		}

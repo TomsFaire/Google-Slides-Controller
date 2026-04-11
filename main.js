@@ -2613,6 +2613,7 @@ function startHttpServer() {
           console.error('[API] Error checking login state:', error);
         }
         
+        const statusPrefs = loadPreferences();
         const state = {
           status: 'ok',
           version: appBuildInfo.version,
@@ -2632,7 +2633,8 @@ function startHttpServer() {
           loginState: loginState,
           loggedInUser: loggedInUser || null,
           notesZoomSteps: notesZoomStepsFromDefault,
-          notesZoomDefault: getDefaultNotesZoomStepsFromPrefs()
+          notesZoomDefault: (statusPrefs.defaultNotesZoomSteps !== undefined && statusPrefs.defaultNotesZoomSteps !== null) ? clampNotesZoomSteps(statusPrefs.defaultNotesZoomSteps) : 0,
+          notesLayout: statusPrefs.notesLayout || 'hide'
         };
         
         // Get slide info and other data from notes window DOM
@@ -3623,6 +3625,45 @@ function startHttpServer() {
         
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Speaker notes closed' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
+    // POST /api/relaunch-speaker-notes - Close and reopen notes window to apply layout changes
+    if (req.method === 'POST' && req.url === '/api/relaunch-speaker-notes') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+
+      try {
+        console.log('[API] Relaunching speaker notes');
+        // Close notes if open
+        if (notesWindow && !notesWindow.isDestroyed()) {
+          notesWindow.close();
+          notesWindow = null;
+          // Brief pause so the window actually closes before reopening
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        // Reopen via the S key (same as open-speaker-notes)
+        presentationWindow.focus();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+
+        // Broadcast to backups (async, don't wait)
+        sendToBackups('/api/relaunch-speaker-notes', {}).catch(err => {
+          console.error('[Backup] Error broadcasting relaunch-speaker-notes:', err);
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Speaker notes relaunched' }));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
@@ -5517,6 +5558,11 @@ function startWebUiServer() {
       width: 18px;
       height: 18px;
     }
+        .preview-toggle-btn:disabled,
+        .preview-toggle-btn.btn-disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
     .remote-controls {
       display: flex;
       flex-direction: row;
@@ -6104,9 +6150,14 @@ function startWebUiServer() {
         <div class="preset-group" style="margin-top: 10px;">
           <label for="web-notes-layout">Notes Layout</label>
           <select id="web-notes-layout" class="input-field" style="width: 100%; padding: 8px;">
-            <option value="hide">Notes only (hide slide previews)</option>
-            <option value="default">Google default (50/50 split)</option>
+            <option value="hide">Full Notes (slide previews hidden)</option>
+            <option value="narrow">Narrow Panel (previews available)</option>
+            <option value="default">Google Default (50/50 split)</option>
           </select>
+          <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Applies on next notes launch. Use Relaunch Notes to apply immediately.</small>
+        </div>
+        <div class="preset-group" style="margin-top: 6px;">
+          <button type="button" class="btn" id="btn-relaunch-notes" style="width: 100%;">Relaunch Notes</button>
         </div>
         <div class="preset-group" style="margin-top: 10px;">
           <label for="web-default-notes-zoom-steps">Default speaker notes zoom (steps)</label>
@@ -6800,6 +6851,20 @@ function startWebUiServer() {
               nextBtnControls.innerHTML = nextIconSmall + ' Next Slide (' + data.nextSlide + ')';
             } else {
               nextBtnControls.innerHTML = nextIconSmall + ' Next Slide';
+            }
+          }
+
+          // Gate preview button on notes layout
+          const previewBtn = document.getElementById('previews-toggle-btn');
+          if (previewBtn) {
+            const previewsBlocked = (data.notesLayout || 'hide') === 'hide';
+            previewBtn.disabled = previewsBlocked;
+            if (previewsBlocked) {
+              previewBtn.title = 'Change layout to Narrow Panel or Google Default to use previews';
+              previewBtn.classList.add('btn-disabled');
+            } else {
+              previewBtn.title = 'Toggle slide previews';
+              previewBtn.classList.remove('btn-disabled');
             }
           }
         })
@@ -7976,6 +8041,51 @@ function startWebUiServer() {
       }
     }
     
+    // Live-save notes layout preference when dropdown changes
+    document.getElementById('web-notes-layout').addEventListener('change', async (e) => {
+      try {
+        const res = await fetch(API_BASE + '/api/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notesLayout: e.target.value })
+        });
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Notes layout saved. Use Relaunch Notes to apply.', false);
+        } else {
+          showStatus('Failed to save layout: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Failed to save layout: ' + error.message, true);
+      }
+    });
+
+    // Relaunch Notes button — close + reopen notes window to apply layout change
+    document.getElementById('btn-relaunch-notes').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-relaunch-notes');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Relaunching...';
+      try {
+        const res = await fetch(API_BASE + '/api/relaunch-speaker-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Notes relaunched with new layout', false);
+        } else {
+          showStatus('Relaunch failed: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Relaunch failed: ' + error.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+
     // Save monitor settings
     document.getElementById('btn-save-displays').addEventListener('click', async () => {
       try {

@@ -6145,9 +6145,14 @@ function startWebUiServer() {
         <div class="preset-group" style="margin-top: 10px;">
           <label for="web-notes-layout">Notes Layout</label>
           <select id="web-notes-layout" class="input-field" style="width: 100%; padding: 8px;">
-            <option value="hide">Notes only (hide slide previews)</option>
-            <option value="default">Google default (50/50 split)</option>
+            <option value="hide">Full Notes (slide previews hidden)</option>
+            <option value="narrow">Narrow Panel (previews available)</option>
+            <option value="default">Google Default (50/50 split)</option>
           </select>
+          <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Applies on next notes launch. Use Relaunch Notes to apply immediately.</small>
+        </div>
+        <div class="preset-group" style="margin-top: 6px;">
+          <button type="button" class="btn" id="btn-relaunch-notes" style="width: 100%;">Relaunch Notes</button>
         </div>
         <div class="preset-group" style="margin-top: 10px;">
           <label for="web-default-notes-zoom-steps">Default speaker notes zoom (steps)</label>

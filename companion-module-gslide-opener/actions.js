@@ -370,6 +370,49 @@ module.exports = function (self) {
 			}
 		},
 	},
+
+	set_notes_layout: {
+		name: 'Set Notes Layout',
+		description: 'Set the speaker notes panel layout (takes effect on next notes launch or when Relaunch Notes is used)',
+		options: [
+			{
+				id: 'layout',
+				type: 'dropdown',
+				label: 'Layout',
+				default: 'hide',
+				choices: [
+					{ id: 'hide', label: 'Full Notes (slide previews hidden)' },
+					{ id: 'narrow', label: 'Narrow Panel (previews available)' },
+					{ id: 'default', label: 'Google Default (50/50 split)' },
+				],
+			},
+		],
+		callback: async (event) => {
+			try {
+				const layout = event.options.layout
+				self.log('info', `Setting notes layout to: ${layout}`)
+				const response = await self.apiRequest('POST', '/api/preferences', { notesLayout: layout })
+				self.log('info', response.message || 'Notes layout saved')
+			} catch (error) {
+				self.log('error', `Failed to set notes layout: ${error.message}`)
+			}
+		},
+	},
+
+	relaunch_speaker_notes: {
+		name: 'Relaunch Speaker Notes',
+		description: 'Close and reopen the speaker notes window to apply a layout change',
+		options: [],
+		callback: async (event) => {
+			try {
+				self.log('info', 'Relaunching speaker notes')
+				const response = await self.apiRequest('POST', '/api/relaunch-speaker-notes', {})
+				self.log('info', response.message || 'Speaker notes relaunched')
+			} catch (error) {
+				self.log('error', `Failed to relaunch speaker notes: ${error.message}`)
+			}
+		},
+	},
 	}
 
 	console.log('[gslide-opener] actions.js - Registering', Object.keys(actionDefinitions).length, 'actions')

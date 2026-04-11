@@ -4927,7 +4927,15 @@ function startCloudflaredTunnel() {
 
   const bin = getCloudflaredBinaryPath();
   if (!fs.existsSync(bin)) {
-    logError('[Tunnel] cloudflared binary missing:', bin, '(run: yarn download:cloudflared)');
+    if (app.isPackaged) {
+      logError(
+        '[Tunnel] cloudflared binary missing:',
+        bin,
+        '— The app was built without bundled cloudflared. Fix: (1) On a machine with the source repo, run `yarn download:cloudflared` then rebuild the .app; or (2) Download the matching cloudflared release for your Mac CPU, then place the binary at this path inside the .app (see docs). `yarn download:cloudflared` only works in the project root (where package.json is), not from Applications.'
+      );
+    } else {
+      logError('[Tunnel] cloudflared binary missing:', bin, '(from repo root run: yarn download:cloudflared)');
+    }
     broadcastTunnelUrl(null);
     return;
   }

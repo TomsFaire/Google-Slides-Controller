@@ -2,6 +2,31 @@
 
 Control Google Slides presentations across multiple monitors with a web-based remote and API integration. Built for presenters, AV technicians, and control systems.
 
+---
+
+## macOS: quarantine, Gatekeeper, and first launch (read this first)
+
+Downloads from **GitHub Releases** (ZIP → unzip → `.app`) or copies from another Mac often carry Apple’s **`com.apple.quarantine`** flag. Until you clear it or approve the app once, macOS may block launch with messages like **“can’t be opened because the developer cannot be verified”** or **“is damaged and can’t be opened.”** That is normal for an **unsigned / not notarized** build.
+
+**Do this first (recommended):**
+
+1. In **Finder**, **Control-click (right-click)** `Google Slides Opener.app` → **Open** → click **Open** again in the dialog. After the first successful launch, double-click usually works.
+2. If you still see a block: **System Settings → Privacy & Security** → scroll down → under **Security**, choose **Open Anyway** for *Google Slides Opener* (appears after a failed open attempt).
+
+**If the app still won’t start** (common when the ZIP was opened by Safari / extracted by Archive Utility):
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Google Slides Opener.app"
+```
+
+Change the path if the app is not in `/Applications`. This removes **quarantine** recursively on the bundle and its contents. Then **right-click → Open** once more.
+
+**Avoid:** running broad `xattr -cr` over the whole machine, or stripping attributes on unrelated paths. **Do not** recursively `xattr` through every symlink inside the `.app` from a script unless you know what you’re doing; the one-liner above targets the app bundle only.
+
+More context: **[README-SECURITY.md](README-SECURITY.md)** (why the warning exists, self-signing vs notarization).
+
+---
+
 See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
 ![Web UI Remote](docs/images/web-ui-remote.png)
@@ -15,13 +40,13 @@ Run the app on your presentation computer. It opens Google Slides full-screen on
 
 ## Setup
 
-1. Download the latest release to your presentation computer.
-2. On macOS, you'll see a security warning on first launch (expected for non-notarized apps). Right-click the app and select **Open**. See [README-SECURITY.md](README-SECURITY.md) for details.
+1. Download the latest **[GitHub Release](https://github.com/TomsFaire/Google-Slides-Controller/releases)** to your presentation computer. Assets typically include **macOS ZIPs** (arm64 and x64) and **`companion-module-gslide-opener.tgz`** for Bitfocus Companion (see [Bitfocus Companion module](#bitfocus-companion-module) below).
+2. On **macOS**, follow **[macOS: quarantine, Gatekeeper, and first launch](#macos-quarantine-gatekeeper-and-first-launch-read-this-first)** above before first open.
 3. Configure the app:
    - Choose which monitors show the presentation and speaker notes
    - Set network ports for Web UI and API (defaults: 80 and 9595)
    - Optionally add preset presentations, stagetimer integration, and primary/backup setup
-4. Using Bitfocus Companion? Download and import `companion-module-gslide-opener.tgz` in Companion.
+4. Using Bitfocus Companion? Import **`companion-module-gslide-opener.tgz`** from the same release (or build it locally—see [Bitfocus Companion module](#bitfocus-companion-module)).
 
 ## Credits
 
@@ -73,18 +98,19 @@ By default, the Web UI is HTTP-only and available on your local network only.
 
 ### Deploying WAN access (Cloudflare Quick Tunnel)
 
-The app can start a **Cloudflare Quick Tunnel** from the desktop: **Settings → WAN Access**. That gives you an `https://….trycloudflare.com` URL you can share for remote control without opening your router.
+The app can start a **Cloudflare Quick Tunnel** from the desktop: **Settings → WAN Access**. That gives you an `https://….trycloudflare.com` URL you can share for remote control without opening your router on your LAN.
 
-**1. Put the `cloudflared` binary next to the app**
+**Who bundles `cloudflared`?**
 
-The tunnel needs the `cloudflared` executable. It is **not** downloaded at runtime.
+| Source of the `.app` / ZIP | `cloudflared` included? |
+|----------------------------|-------------------------|
+| **GitHub Actions** builds on this repo ([`.github/workflows/build.yml`](.github/workflows/build.yml)) | **Yes** — the workflow runs `yarn download:cloudflared` before `yarn build:mac`, so release ZIPs should contain `Google Slides Opener.app/Contents/Resources/cloudflared/…`. |
+| **Local build** (`yarn build:mac` on your machine) | **Only if** you ran `yarn download:cloudflared` once **from the repository root** (where `package.json` lives) *before* building. Running that command from `~/Applications` or next to the `.app` will **not** work—there is no `package.json` there. |
+| **Development** (`yarn start`) | Run once from repo root: `yarn download:cloudflared` (fills `resources/cloudflared/`). |
 
-| How you run the app | What to do |
-|---------------------|------------|
-| **Built release (.zip / installed .app)** | Before building, from the repo: `yarn download:cloudflared`. Electron-builder packs `resources/cloudflared/` into the app (`extraResources`). Rebuild after downloading so the binary is inside the release. |
-| **Development (`yarn start`)** | Run once: `yarn download:cloudflared` (populates `resources/cloudflared/` for your OS/arch). |
+The download script is [`scripts/download-cloudflared.sh`](scripts/download-cloudflared.sh) (macOS pulls official `.tgz` archives from Cloudflare’s releases).
 
-The download script is `scripts/download-cloudflared.sh` (macOS uses the official `.tgz` archives).
+**If Quick Tunnel says the binary is missing** on a packaged app, either reinstall from a **GitHub-built** release, or copy the correct `cloudflared-darwin-arm64` / `cloudflared-darwin-amd64` file into `…/Google Slides Opener.app/Contents/Resources/cloudflared/` (match your Mac’s CPU) and `chmod +x` it—see [README-SECURITY.md](README-SECURITY.md) / logs for the exact path.
 
 **2. Enable the tunnel**
 
@@ -115,15 +141,23 @@ See [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md) for more detail, including ma
 
 ## Bitfocus Companion module
 
-Integrate with Bitfocus Companion using the HTTP API on port 9595 (or your custom port).
+Integrate with Bitfocus Companion using the HTTP API on port **9595** (or your custom port).
+
+### What to import
+
+| Package | Where it comes from | Use case |
+|---------|---------------------|----------|
+| **`companion-module-gslide-opener.tgz`** | Attached to **[GitHub Releases](https://github.com/TomsFaire/Google-Slides-Controller/releases)** of this app (built in CI from the [Bitfocus companion module](https://github.com/bitfocus/companion-module-google-slidescontroller) source) | **Recommended** for most users—matches the release you installed. |
+| **Flat `.tgz` from this repo** | In a checkout of this project, `cd companion-module-gslide-opener` then **`yarn pack:import`** | Local testing / dev; produces a tarball with `companion/manifest.json` at the **archive root** (do **not** use `npm pack` for Companion—it nests files under `package/` and import fails). |
+| **Bitfocus registry / other** | [companion-module-google-slidescontroller](https://github.com/bitfocus/companion-module-google-slidescontroller) on GitHub | Same family of module; version and packaging may differ slightly from the `.tgz` on *this* app’s releases page. |
 
 ### Install in Companion
 
-1. Go to Modules, then Import Module Package
-2. Select `companion-module-gslide-opener.tgz`
-3. Add a new connection and set:
-   - Host: your presentation computer IP (or `127.0.0.1` if Companion is on the same machine)
-   - Port: your API port (default 9595)
+1. In Companion: **Modules** → **Import module package**.
+2. Choose **`companion-module-gslide-opener.tgz`** from the app’s GitHub Release (or a file you built as above).
+3. Add a connection and set:
+   - **Host:** presentation computer IP (or `127.0.0.1` if Companion runs on the same machine as the app)
+   - **Port:** API port (default **9595**)
 
 ### What it does
 
@@ -144,6 +178,7 @@ Open Presentation, Open Presentation with Notes, Open Preset (1/2/3), Close, Nex
 - `presentation_display_id`, `notes_display_id`
 - `login_state` (Yes/No)
 - `logged_in_user` (email)
+- `notes_zoom_steps`, `notes_zoom_default` (native speaker-notes zoom vs saved default; app **1.9.10+**)
 
 ### Feedbacks
 

@@ -6848,6 +6848,20 @@ function startWebUiServer() {
               nextBtnControls.innerHTML = nextIconSmall + ' Next Slide';
             }
           }
+
+          // Gate preview button on notes layout
+          const previewBtn = document.getElementById('previews-toggle-btn');
+          if (previewBtn) {
+            const previewsBlocked = data.notesLayout === 'hide';
+            previewBtn.disabled = previewsBlocked;
+            if (previewsBlocked) {
+              previewBtn.title = 'Change layout to Narrow Panel or Google Default to use previews';
+              previewBtn.classList.add('btn-disabled');
+            } else {
+              previewBtn.title = 'Toggle slide previews';
+              previewBtn.classList.remove('btn-disabled');
+            }
+          }
         })
         .catch(err => {
           // Silently fail - connection might be down, don't spam logs
@@ -8022,6 +8036,51 @@ function startWebUiServer() {
       }
     }
     
+    // Live-save notes layout preference when dropdown changes
+    document.getElementById('web-notes-layout').addEventListener('change', async (e) => {
+      try {
+        const res = await fetch(API_BASE + '/api/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notesLayout: e.target.value })
+        });
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Notes layout saved. Use Relaunch Notes to apply.', false);
+        } else {
+          showStatus('Failed to save layout: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Failed to save layout: ' + error.message, true);
+      }
+    });
+
+    // Relaunch Notes button — close + reopen notes window to apply layout change
+    document.getElementById('btn-relaunch-notes').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-relaunch-notes');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Relaunching...';
+      try {
+        const res = await fetch(API_BASE + '/api/relaunch-speaker-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        const result = await res.json();
+        if (result.success) {
+          showStatus('Notes relaunched with new layout', false);
+        } else {
+          showStatus('Relaunch failed: ' + (result.error || 'Unknown error'), true);
+        }
+      } catch (error) {
+        showStatus('Relaunch failed: ' + error.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+
     // Save monitor settings
     document.getElementById('btn-save-displays').addEventListener('click', async () => {
       try {

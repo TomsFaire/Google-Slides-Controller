@@ -3632,6 +3632,44 @@ function startHttpServer() {
       return;
     }
 
+    // POST /api/relaunch-speaker-notes - Close and reopen notes window to apply layout changes
+    if (req.method === 'POST' && req.url === '/api/relaunch-speaker-notes') {
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation is open' }));
+        return;
+      }
+
+      try {
+        // Close notes if open
+        if (notesWindow && !notesWindow.isDestroyed()) {
+          notesWindow.close();
+          notesWindow = null;
+          // Brief pause so the window actually closes before reopening
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        // Reopen via the S key (same as open-speaker-notes)
+        presentationWindow.focus();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+
+        // Broadcast to backups (async, don't wait)
+        sendToBackups('/api/relaunch-speaker-notes', {}).catch(err => {
+          console.error('[Backup] Error broadcasting relaunch-speaker-notes:', err);
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Speaker notes relaunched' }));
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
+
     // POST /api/scroll-notes-down - Scroll speaker notes down (JS only, no keyboard)
     if (req.method === 'POST' && req.url === '/api/scroll-notes-down') {
       if (!notesWindow || notesWindow.isDestroyed()) {

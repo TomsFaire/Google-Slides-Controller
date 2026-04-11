@@ -3641,6 +3641,7 @@ function startHttpServer() {
       }
 
       try {
+        console.log('[API] Relaunching speaker notes');
         // Close notes if open
         if (notesWindow && !notesWindow.isDestroyed()) {
           notesWindow.close();

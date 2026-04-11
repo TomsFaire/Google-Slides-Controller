@@ -392,6 +392,10 @@ module.exports = function (self) {
 					const layout = event.options.layout
 					self.log('info', `Setting notes layout to: ${layout}`)
 					const response = await self.apiRequest('POST', '/api/preferences', { notesLayout: layout })
+					if (!response.success) {
+						self.log('error', `Failed to save layout: ${response.error || 'Unknown error'}`)
+						return
+					}
 					self.log('info', response.message || 'Notes layout saved')
 				} catch (error) {
 					self.log('error', `Failed to set notes layout: ${error.message}`)

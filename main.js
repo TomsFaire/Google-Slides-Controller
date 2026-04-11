@@ -2613,6 +2613,7 @@ function startHttpServer() {
           console.error('[API] Error checking login state:', error);
         }
         
+        const statusPrefs = loadPreferences();
         const state = {
           status: 'ok',
           version: appBuildInfo.version,
@@ -2632,8 +2633,8 @@ function startHttpServer() {
           loginState: loginState,
           loggedInUser: loggedInUser || null,
           notesZoomSteps: notesZoomStepsFromDefault,
-          notesZoomDefault: getDefaultNotesZoomStepsFromPrefs(),
-          notesLayout: loadPreferences().notesLayout || 'hide'
+          notesZoomDefault: (statusPrefs.defaultNotesZoomSteps !== undefined && statusPrefs.defaultNotesZoomSteps !== null) ? clampNotesZoomSteps(statusPrefs.defaultNotesZoomSteps) : 0,
+          notesLayout: statusPrefs.notesLayout || 'hide'
         };
         
         // Get slide info and other data from notes window DOM

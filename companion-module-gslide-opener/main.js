@@ -25,11 +25,11 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			notesDisplayId: null,
 			loginState: false,
 			loggedInUser: null,
-		backupControlsEnabled: true,
+			backupControlsEnabled: true,
 			notesZoomSteps: null,
 			notesZoomDefault: null,
 			notesLayout: 'hide'
-	}
+		}
 		
 		// Polling interval
 		this.pollInterval = null

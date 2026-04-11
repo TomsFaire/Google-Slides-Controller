@@ -5558,6 +5558,11 @@ function startWebUiServer() {
       width: 18px;
       height: 18px;
     }
+        .preview-toggle-btn:disabled,
+        .preview-toggle-btn.btn-disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
     .remote-controls {
       display: flex;
       flex-direction: row;
@@ -6852,7 +6857,7 @@ function startWebUiServer() {
           // Gate preview button on notes layout
           const previewBtn = document.getElementById('previews-toggle-btn');
           if (previewBtn) {
-            const previewsBlocked = data.notesLayout === 'hide';
+            const previewsBlocked = (data.notesLayout || 'hide') === 'hide';
             previewBtn.disabled = previewsBlocked;
             if (previewsBlocked) {
               previewBtn.title = 'Change layout to Narrow Panel or Google Default to use previews';

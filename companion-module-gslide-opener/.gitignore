@@ -4,3 +4,6 @@ package-lock.json
 /*.tgz
 gslide-opener-*.tgz
 /.yarn
+
+# macOS Finder folder icon (must not be packaged)
+Icon[]

@@ -12,7 +12,7 @@ The desktop app can start a **Quick Tunnel** from **Settings → WAN Access** (a
 
 If the Web UI uses **HTTPS** (including the app’s self-signed certificate), the tunnel runs `cloudflared` with **`--no-tls-verify`** so the origin connection succeeds. Traffic to Cloudflare’s edge is still encrypted.
 
-**Important:** Anyone with the tunnel link can use the web remote until you disable the tunnel or restart the app. Treat the URL like a password. The **controller IP allowlist** does not limit remote users on this link, because traffic reaches your Web UI from `localhost` via the local `cloudflared` process.
+**Important:** Anyone with the tunnel link can use the web remote until you disable the tunnel or restart the app. Treat the URL like a password—**or** enable an optional **Web UI PIN** in the desktop app (**Settings → WAN Access**) and choose whether it applies to the **tunnel**, **LAN** (non-localhost), or **both**; see the main [README.md](../README.md) WAN section. The **controller IP allowlist** does not limit remote users on this link, because traffic reaches your Web UI from `localhost` via the local `cloudflared` process.
 
 ### Restricted Web UI on the shared link
 

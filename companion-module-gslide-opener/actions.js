@@ -382,7 +382,6 @@ module.exports = function (self) {
 					default: 'hide',
 					choices: [
 						{ id: 'hide', label: 'Full Notes (slide previews hidden)' },
-						{ id: 'narrow', label: 'Narrow Panel (previews available)' },
 						{ id: 'default', label: 'Google Default (50/50 split)' },
 					],
 				},

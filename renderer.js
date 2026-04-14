@@ -60,6 +60,12 @@ const wanEnabledCheckbox = document.getElementById('wan-enabled');
 const wanStatusRow = document.getElementById('wan-status-row');
 const wanUrlDisplay = document.getElementById('wan-url-display');
 const wanCopyBtn = document.getElementById('wan-copy-btn');
+const wanTunnelPinNewInput = document.getElementById('wan-tunnel-pin-new');
+const wanTunnelPinConfirmInput = document.getElementById('wan-tunnel-pin-confirm');
+const wanTunnelPinSaveBtn = document.getElementById('wan-tunnel-pin-save');
+const wanTunnelPinRemoveBtn = document.getElementById('wan-tunnel-pin-remove');
+const wanTunnelPinStatusEl = document.getElementById('wan-tunnel-pin-status');
+const wanPinScopeSelect = document.getElementById('wan-pin-scope');
 
 let isSignedIn = false;
 
@@ -248,6 +254,61 @@ function renderControllerIpList(ips = []) {
   normalized.forEach((ip) => addControllerIpRow(ip));
 }
 
+function updateTunnelPinStatusFromPrefs(preferences) {
+  if (wanPinScopeSelect && preferences) {
+    const s = String(preferences.webUiPinScope || 'tunnel').toLowerCase();
+    wanPinScopeSelect.value = s === 'lan' || s === 'both' ? s : 'tunnel';
+  }
+  if (!wanTunnelPinStatusEl) return;
+  if (preferences && preferences.webUiTunnelPinEnabled) {
+    const scope = String(preferences.webUiPinScope || 'tunnel').toLowerCase();
+    const scopeLabel =
+      scope === 'lan' ? 'LAN clients only' : scope === 'both' ? 'tunnel and LAN clients' : 'Cloudflare tunnel clients only';
+    wanTunnelPinStatusEl.textContent = `A PIN is set (${scopeLabel}). Matching browsers must unlock the web remote first.`;
+  } else {
+    wanTunnelPinStatusEl.textContent = 'No PIN is set.';
+  }
+}
+
+async function saveWanTunnelPinFromDesktop() {
+  if (!wanTunnelPinNewInput || !wanTunnelPinConfirmInput) return;
+  const a = String(wanTunnelPinNewInput.value || '').trim();
+  const b = String(wanTunnelPinConfirmInput.value || '').trim();
+  if (a !== b) {
+    showStatus('Tunnel PIN and confirmation do not match', 'error');
+    return;
+  }
+  if (!/^[0-9]{4,12}$/.test(a)) {
+    showStatus('Tunnel PIN must be 4 to 12 digits', 'error');
+    return;
+  }
+  try {
+    await window.electronAPI.savePreferences({ webUiTunnelPin: a });
+    wanTunnelPinNewInput.value = '';
+    wanTunnelPinConfirmInput.value = '';
+    const preferences = await window.electronAPI.getPreferences();
+    updateTunnelPinStatusFromPrefs(preferences);
+    showStatus('Tunnel PIN saved', 'info');
+  } catch (e) {
+    console.error('save tunnel pin:', e);
+    showStatus('Failed to save tunnel PIN', 'error');
+  }
+}
+
+async function removeWanTunnelPinFromDesktop() {
+  try {
+    await window.electronAPI.savePreferences({ webUiTunnelPinClear: true });
+    if (wanTunnelPinNewInput) wanTunnelPinNewInput.value = '';
+    if (wanTunnelPinConfirmInput) wanTunnelPinConfirmInput.value = '';
+    const preferences = await window.electronAPI.getPreferences();
+    updateTunnelPinStatusFromPrefs(preferences);
+    showStatus('Tunnel PIN removed', 'info');
+  } catch (e) {
+    console.error('remove tunnel pin:', e);
+    showStatus('Failed to remove tunnel PIN', 'error');
+  }
+}
+
 // Initialize displays
 async function initDisplays() {
   try {
@@ -341,6 +402,8 @@ async function initDisplays() {
     if (webUiCustomCssPathInput) {
       webUiCustomCssPathInput.value = preferences.webUiCustomCssPath || '';
     }
+
+    updateTunnelPinStatusFromPrefs(preferences);
     
     // Restore primary/backup mode
     const mode = preferences.primaryBackupMode || 'standalone';
@@ -377,6 +440,27 @@ async function initDisplays() {
     notesDisplay.addEventListener('change', saveMonitorPreferences);
     const notesLayoutEl = document.getElementById('notes-layout');
     if (notesLayoutEl) notesLayoutEl.addEventListener('change', saveMonitorPreferences);
+    const relaunchNotesBtn = document.getElementById('btn-relaunch-speaker-notes');
+    if (relaunchNotesBtn) {
+      relaunchNotesBtn.addEventListener('click', async () => {
+        const originalText = relaunchNotesBtn.textContent;
+        relaunchNotesBtn.disabled = true;
+        relaunchNotesBtn.textContent = 'Relaunching...';
+        try {
+          const result = await window.electronAPI.relaunchSpeakerNotes();
+          if (result && result.success) {
+            showStatus(result.message || 'Speaker notes relaunched', 'info');
+          } else {
+            showStatus(result?.error || 'Relaunch failed', 'error');
+          }
+        } catch (err) {
+          showStatus(err.message || 'Relaunch failed', 'error');
+        } finally {
+          relaunchNotesBtn.disabled = false;
+          relaunchNotesBtn.textContent = originalText;
+        }
+      });
+    }
     const defaultNotesZoomEl = document.getElementById('default-notes-zoom-steps');
     if (defaultNotesZoomEl) defaultNotesZoomEl.addEventListener('change', saveMonitorPreferences);
     machineNameInput.addEventListener('change', saveMachineName);
@@ -575,6 +659,32 @@ async function initDisplays() {
       window.electronAPI.onTunnelUrlChanged((url) => {
         if (wanUrlDisplay) wanUrlDisplay.value = url || '';
         if (url) showStatus('WAN tunnel connected', 'info');
+      });
+    }
+
+    if (wanTunnelPinSaveBtn) {
+      wanTunnelPinSaveBtn.addEventListener('click', () => {
+        saveWanTunnelPinFromDesktop();
+      });
+    }
+    if (wanTunnelPinRemoveBtn) {
+      wanTunnelPinRemoveBtn.addEventListener('click', () => {
+        removeWanTunnelPinFromDesktop();
+      });
+    }
+    if (wanPinScopeSelect) {
+      wanPinScopeSelect.addEventListener('change', async () => {
+        const v = wanPinScopeSelect.value;
+        const scope = v === 'lan' || v === 'both' ? v : 'tunnel';
+        try {
+          await window.electronAPI.savePreferences({ webUiPinScope: scope });
+          const preferences = await window.electronAPI.getPreferences();
+          updateTunnelPinStatusFromPrefs(preferences);
+          showStatus('PIN scope saved', 'info');
+        } catch (e) {
+          console.error('save pin scope:', e);
+          showStatus('Failed to save PIN scope', 'error');
+        }
       });
     }
 

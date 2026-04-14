@@ -45,6 +45,9 @@ function safeStringify(value, space = 0) {
     return JSON.stringify(
       value,
       (k, v) => {
+        if (k === 'webUiTunnelPinScrypt' || k === 'webUiTunnelPinSalt') {
+          return v ? '[REDACTED]' : v;
+        }
         if (k && SECRET_KEY_RE.test(String(k))) {
           return v ? '[REDACTED]' : v;
         }
@@ -557,37 +560,12 @@ const PRESENTER_VIEW_HIDE_SIDE_PANEL_CSS = `
   }
 `;
 
-// CSS to force narrow side panel (20%) — used when side panel is shown but narrowed.
-const PRESENTER_VIEW_NARROW_SIDE_PANEL_CSS = `
-  table.punch-viewer-speakernotes {
-    table-layout: fixed !important;
-  }
-  td.punch-viewer-speakernotes-side-panel {
-    width: 20% !important;
-    max-width: 20% !important;
-    overflow: hidden !important;
-  }
-  div.punch-viewer-speakernotes-dragger {
-    left: 20% !important;
-  }
-  div.punch-viewer-speakernotes-text-body-scrollable {
-    left: 20% !important;
-  }
-  div.punch-viewer-speakernotes-text-header-container {
-    left: 20% !important;
-  }
-  div.punch-viewer-speaker-qanda-content {
-    left: 20% !important;
-  }
-`;
-
 function onNotesWindowCreated(win) {
   startNotesWindowNormalizationInterval();
   win.once('closed', stopNotesWindowNormalizationInterval);
 
   // Fix presenter view layout based on preference:
-  // - 'hide' (default): hide side panel entirely, notes get full width
-  // - 'narrow': show side panel at 20% width
+  // - 'hide': hide side panel entirely, notes get full width
   // - 'default': leave Google's layout as-is (50/50)
   win.webContents.on('did-finish-load', () => {
     if (win.isDestroyed()) return;
@@ -597,10 +575,6 @@ function onNotesWindowCreated(win) {
     if (mode === 'hide') {
       win.webContents.insertCSS(PRESENTER_VIEW_HIDE_SIDE_PANEL_CSS).then(() => {
         logInfo('[Notes] Presenter layout: side panel hidden');
-      }).catch(() => {});
-    } else if (mode === 'narrow') {
-      win.webContents.insertCSS(PRESENTER_VIEW_NARROW_SIDE_PANEL_CSS).then(() => {
-        logInfo('[Notes] Presenter layout: side panel narrowed to 20%');
       }).catch(() => {});
     } else {
       logInfo('[Notes] Presenter layout: using Google default');
@@ -647,6 +621,28 @@ function loadSavedNotesBounds() {
     if (b && b.width > 100 && b.height > 100) return b;
   } catch (e) {}
   return null;
+}
+
+/** Close presenter notes (if open) and reopen via the same shortcut as the HTTP API. */
+async function relaunchSpeakerNotesWindow() {
+  if (!presentationWindow || presentationWindow.isDestroyed()) {
+    return { success: false, error: 'No presentation is open' };
+  }
+  console.log('[API] Relaunching speaker notes');
+  if (notesWindow && !notesWindow.isDestroyed()) {
+    notesWindow.close();
+    notesWindow = null;
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  presentationWindow.focus();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
+  presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
+  presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
+  sendToBackups('/api/relaunch-speaker-notes', {}).catch(err => {
+    console.error('[Backup] Error broadcasting relaunch-speaker-notes:', err);
+  });
+  return { success: true, message: 'Speaker notes relaunched' };
 }
 
 // Function to set speaker notes window to fullscreen on a specific display (preferred).
@@ -1068,6 +1064,8 @@ function loadPreferences() {
       prefs.backupIps = getBackupIpsFromPrefs(prefs);
       prefs.controllerIps = getControllerIpsFromPrefs(prefs);
       prefs.presetUrls = getPresetUrlsFromPrefs(prefs);
+      // Removed layout mode 'narrow' (broken preview scaling); treat as Google default.
+      if (prefs.notesLayout === 'narrow') prefs.notesLayout = 'default';
       logDebug('[Preferences] Loaded preferences:', safeStringify(prefs));
       return prefs;
     } else {
@@ -1096,6 +1094,7 @@ function savePreferences(prefs) {
     if (prefs.defaultNotesZoomSteps !== undefined && prefs.defaultNotesZoomSteps !== null) {
       prefs.defaultNotesZoomSteps = clampNotesZoomSteps(prefs.defaultNotesZoomSteps);
     }
+    if (prefs.notesLayout === 'narrow') prefs.notesLayout = 'default';
     logDebug('[Preferences] Saving to:', prefsPath);
     logDebug('[Preferences] Data to save (sanitized):', safeStringify(prefs, 2));
     
@@ -1265,6 +1264,310 @@ function isWebUiRestrictedTunnelClient(req, prefs) {
   if (!prefs || prefs.cloudflaredEnabled !== true) return false;
   const remote = normalizeRemoteAddress(req?.socket?.remoteAddress);
   return isLocalhostAddress(remote);
+}
+
+function getWebUiPinScopeFromPrefs(prefs) {
+  const s = String(prefs?.webUiPinScope || 'tunnel').toLowerCase();
+  if (s === 'lan' || s === 'both') return s;
+  return 'tunnel';
+}
+
+/**
+ * Whether the Web UI PIN gate should run for this request (PIN must also be configured).
+ * tunnel: Cloudflare Quick Tunnel path (localhost to the Web UI while tunnel is on).
+ * lan: non-localhost clients only (typical LAN devices). Does not cover the tunnel URL, which appears as localhost.
+ * both: tunnel path or non-localhost.
+ */
+function isWebUiPinGateActiveForRequest(req, prefs) {
+  const remote = normalizeRemoteAddress(req?.socket?.remoteAddress);
+  const isLocal = isLocalhostAddress(remote);
+  const restrictedTunnel = isWebUiRestrictedTunnelClient(req, prefs);
+  const scope = getWebUiPinScopeFromPrefs(prefs);
+  if (scope === 'lan') return !isLocal;
+  if (scope === 'both') return restrictedTunnel || !isLocal;
+  return restrictedTunnel;
+}
+
+// --- Web UI PIN (optional; scope via webUiPinScope) ---
+
+const TUNNEL_WEB_UI_COOKIE_NAME = 'gso_tunnel_webui';
+const WEBUI_TUNNEL_SESSION_SECRET_BYTES = 32;
+const TUNNEL_PIN_UNLOCK_MAX_BODY = 4096;
+const TUNNEL_PIN_MAX_FAILS = 10;
+const TUNNEL_PIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+
+let webUiTunnelSessionSecret = null;
+const tunnelPinFailTracker = new Map();
+
+function sanitizePreferencesForClient(prefs) {
+  if (!prefs || typeof prefs !== 'object') return {};
+  const out = { ...prefs };
+  delete out.webUiTunnelPinScrypt;
+  delete out.webUiTunnelPinSalt;
+  delete out.webUiTunnelPin;
+  delete out.webUiTunnelPinClear;
+  out.webUiTunnelPinEnabled = !!(prefs.webUiTunnelPinScrypt && prefs.webUiTunnelPinSalt);
+  return out;
+}
+
+function getWebUiTunnelSessionSecretPath() {
+  return path.join(app.getPath('userData'), 'webui-tunnel-session-secret.bin');
+}
+
+function rotateWebUiTunnelSessionSecret() {
+  webUiTunnelSessionSecret = crypto.randomBytes(WEBUI_TUNNEL_SESSION_SECRET_BYTES);
+  try {
+    fs.writeFileSync(getWebUiTunnelSessionSecretPath(), webUiTunnelSessionSecret);
+  } catch (e) {
+    logError('[Web UI] Failed to write tunnel session secret:', e.message);
+  }
+}
+
+function loadWebUiTunnelSessionSecret() {
+  if (webUiTunnelSessionSecret && webUiTunnelSessionSecret.length) return webUiTunnelSessionSecret;
+  const p = getWebUiTunnelSessionSecretPath();
+  try {
+    if (fs.existsSync(p)) {
+      const buf = fs.readFileSync(p);
+      if (buf.length >= 16) {
+        webUiTunnelSessionSecret = buf;
+        return webUiTunnelSessionSecret;
+      }
+    }
+  } catch (e) {
+    logError('[Web UI] Failed to read tunnel session secret:', e.message);
+  }
+  rotateWebUiTunnelSessionSecret();
+  return webUiTunnelSessionSecret;
+}
+
+function hashWebUiTunnelPin(pin, saltHex) {
+  const salt = Buffer.from(String(saltHex || ''), 'hex');
+  if (salt.length === 0) throw new Error('invalid salt');
+  return crypto.scryptSync(String(pin).normalize('NFKC'), salt, 64, {
+    N: 16384,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024
+  }).toString('hex');
+}
+
+function isWebUiTunnelPinConfigured(prefs) {
+  return !!(prefs && prefs.webUiTunnelPinScrypt && prefs.webUiTunnelPinSalt);
+}
+
+function verifyWebUiTunnelPin(pin, prefs) {
+  if (!isWebUiTunnelPinConfigured(prefs)) return false;
+  if (!/^\d{4,12}$/.test(String(pin || ''))) return false;
+  try {
+    const got = hashWebUiTunnelPin(pin, prefs.webUiTunnelPinSalt);
+    const want = String(prefs.webUiTunnelPinScrypt || '');
+    if (got.length !== want.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(got, 'hex'), Buffer.from(want, 'hex'));
+  } catch (e) {
+    return false;
+  }
+}
+
+function parseCookieHeader(raw) {
+  const out = {};
+  const s = String(raw || '');
+  if (!s) return out;
+  for (const part of s.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    const k = part.slice(0, idx).trim();
+    const v = part.slice(idx + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  }
+  return out;
+}
+
+function readWebUiTunnelCookie(req) {
+  return parseCookieHeader(req.headers && req.headers.cookie)[TUNNEL_WEB_UI_COOKIE_NAME];
+}
+
+function tunnelUnlockClientKey(req) {
+  const h = req.headers || {};
+  const cf = h['cf-connecting-ip'] || h['CF-Connecting-IP'];
+  const cfStr = cf ? String(cf).trim() : '';
+  if (cfStr) return `cf:${cfStr}`;
+  return `ra:${normalizeRemoteAddress(req?.socket?.remoteAddress)}`;
+}
+
+function isTunnelPinUnlockBlocked(key) {
+  const row = tunnelPinFailTracker.get(key);
+  if (!row) return false;
+  if (Date.now() > row.resetAt) {
+    tunnelPinFailTracker.delete(key);
+    return false;
+  }
+  return row.n >= TUNNEL_PIN_MAX_FAILS;
+}
+
+function recordTunnelPinFailure(key) {
+  const now = Date.now();
+  let row = tunnelPinFailTracker.get(key);
+  if (!row || now > row.resetAt) {
+    row = { n: 0, resetAt: now + TUNNEL_PIN_FAIL_WINDOW_MS };
+  }
+  row.n += 1;
+  tunnelPinFailTracker.set(key, row);
+}
+
+function clearTunnelPinFailures(key) {
+  tunnelPinFailTracker.delete(key);
+}
+
+function isValidTunnelWebUiSessionCookie(cookieVal, prefs) {
+  if (!cookieVal || typeof cookieVal !== 'string') return false;
+  if (!isWebUiTunnelPinConfigured(prefs)) return false;
+  const parts = cookieVal.split('.');
+  if (parts.length !== 2) return false;
+  const [payloadB64, sigHex] = parts;
+  const secret = loadWebUiTunnelSessionSecret();
+  const h = crypto.createHmac('sha256', secret);
+  h.update(payloadB64);
+  const expect = h.digest('hex');
+  if (expect.length !== sigHex.length) return false;
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(expect, 'hex'), Buffer.from(sigHex, 'hex'))) return false;
+  } catch (e) {
+    return false;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch (e) {
+    return false;
+  }
+  if (!payload || payload.v !== 1) return false;
+  const exp = Number(payload.exp);
+  if (!Number.isFinite(exp) || Date.now() > exp) return false;
+  const pinTag = String(payload.pt || '');
+  const wantTag = String(prefs.webUiTunnelPinScrypt).slice(0, 16);
+  if (!wantTag || pinTag !== wantTag) return false;
+  return true;
+}
+
+function buildTunnelWebUiSessionCookieValue(prefs) {
+  const exp = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const pinTag = String(prefs.webUiTunnelPinScrypt).slice(0, 16);
+  const payload = Buffer.from(JSON.stringify({ v: 1, exp, pt: pinTag }), 'utf8').toString('base64url');
+  const secret = loadWebUiTunnelSessionSecret();
+  const h = crypto.createHmac('sha256', secret);
+  h.update(payload);
+  const sig = h.digest('hex');
+  return `${payload}.${sig}`;
+}
+
+function shouldUseSecureFlagForTunnelSessionCookie(req) {
+  if (webUiServerUsesHttps) return true;
+  try {
+    const h = req && req.headers;
+    if (!h) return false;
+    if (h['cf-ray'] || h['CF-Ray']) return true;
+    const xf = String(h['x-forwarded-proto'] || '').toLowerCase();
+    const first = xf.split(',')[0].trim();
+    if (first === 'https') return true;
+  } catch (e) {
+    return false;
+  }
+  return false;
+}
+
+function buildSetTunnelSessionCookieHeader(prefs, req) {
+  const val = buildTunnelWebUiSessionCookieValue(prefs);
+  const parts = [
+    `${TUNNEL_WEB_UI_COOKIE_NAME}=${encodeURIComponent(val)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${7 * 24 * 60 * 60}`
+  ];
+  if (shouldUseSecureFlagForTunnelSessionCookie(req)) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function buildTunnelUnlockHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unlock Web Remote</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: #e2e8f0; padding: 24px; }
+    .card { width: 100%; max-width: 360px; background: #1e293b; border-radius: 12px; padding: 28px 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.35); border: 1px solid #334155; }
+    h1 { margin: 0 0 8px; font-size: 1.25rem; font-weight: 600; }
+    p { margin: 0 0 20px; font-size: 0.9rem; color: #94a3b8; line-height: 1.45; }
+    label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; }
+    input { width: 100%; padding: 12px 14px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; font-size: 1.1rem; letter-spacing: 0.08em; }
+    input:focus { outline: 2px solid #38bdf8; border-color: #38bdf8; }
+    button { margin-top: 18px; width: 100%; padding: 12px; border: none; border-radius: 8px; background: #38bdf8; color: #0f172a; font-weight: 600; font-size: 1rem; cursor: pointer; }
+    button:hover { background: #7dd3fc; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    #msg { margin-top: 14px; font-size: 0.85rem; min-height: 1.2em; }
+    .err { color: #fca5a5; }
+    .ok { color: #86efac; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Web remote locked</h1>
+    <p>Enter the PIN configured in the desktop app to use this page.</p>
+    <label for="pin">PIN</label>
+    <input id="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="12" autofocus />
+    <button type="button" id="go">Unlock</button>
+    <div id="msg"></div>
+  </div>
+  <script>
+    const pinEl = document.getElementById('pin');
+    const goBtn = document.getElementById('go');
+    const msg = document.getElementById('msg');
+    function setMsg(text, isErr) {
+      msg.textContent = text || '';
+      msg.className = isErr ? 'err' : (text ? 'ok' : '');
+    }
+    async function submit() {
+      const pin = (pinEl.value || '').trim();
+      if (!/^[0-9]{4,12}$/.test(pin)) {
+        setMsg('PIN must be 4–12 digits.', true);
+        return;
+      }
+      goBtn.disabled = true;
+      setMsg('');
+      try {
+        const res = await fetch('/tunnel-unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: pin })
+        });
+        const data = await res.json().catch(function () { return {}; });
+        if (res.ok && data.success) {
+          setMsg('Success — opening remote…', false);
+          window.location.replace('/');
+          return;
+        }
+        if (res.status === 429) {
+          setMsg(data.error || 'Too many attempts. Try again later.', true);
+        } else {
+          setMsg(data.error || 'Incorrect PIN.', true);
+        }
+      } catch (e) {
+        setMsg('Network error. Try again.', true);
+      } finally {
+        goBtn.disabled = false;
+      }
+    }
+    goBtn.addEventListener('click', submit);
+    pinEl.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') submit();
+    });
+  </script>
+</body>
+</html>`;
 }
 
 function getBackupIpsFromPrefs(prefs) {
@@ -1712,7 +2015,7 @@ ipcMain.handle('get-displays', async () => {
 
 // Get saved preferences
 ipcMain.handle('get-preferences', async () => {
-  return loadPreferences();
+  return sanitizePreferencesForClient(loadPreferences());
 });
 
 // Get speaker notes (normalized) for desktop UI - same as GET /api/get-speaker-notes
@@ -1847,11 +2150,39 @@ ipcMain.handle('open-external', async (_event, url) => {
 });
 
 // Save preferences
-ipcMain.handle('save-preferences', async (event, prefs) => {
+ipcMain.handle('save-preferences', async (event, incoming) => {
   const currentPrefs = loadPreferences();
-  const mergedPrefs = { ...currentPrefs, ...prefs };
+  const mergedPrefs = { ...currentPrefs, ...incoming };
+  delete mergedPrefs.webUiTunnelPin;
+  // Never accept PIN hash/salt from IPC; only set via clear / new PIN below.
+  delete mergedPrefs.webUiTunnelPinScrypt;
+  delete mergedPrefs.webUiTunnelPinSalt;
+  if (incoming && incoming.webUiTunnelPinClear === true) {
+    rotateWebUiTunnelSessionSecret();
+  } else if (incoming && typeof incoming.webUiTunnelPin === 'string' && incoming.webUiTunnelPin.trim() !== '') {
+    const salt = crypto.randomBytes(16).toString('hex');
+    mergedPrefs.webUiTunnelPinSalt = salt;
+    mergedPrefs.webUiTunnelPinScrypt = hashWebUiTunnelPin(incoming.webUiTunnelPin.trim(), salt);
+    rotateWebUiTunnelSessionSecret();
+  } else {
+    mergedPrefs.webUiTunnelPinScrypt = currentPrefs.webUiTunnelPinScrypt;
+    mergedPrefs.webUiTunnelPinSalt = currentPrefs.webUiTunnelPinSalt;
+  }
+  delete mergedPrefs.webUiTunnelPinClear;
+  if (incoming && incoming.webUiPinScope !== undefined) {
+    const ps = String(incoming.webUiPinScope).toLowerCase();
+    mergedPrefs.webUiPinScope = ps === 'lan' || ps === 'both' ? ps : 'tunnel';
+  }
   savePreferences(mergedPrefs);
   return { success: true };
+});
+
+ipcMain.handle('relaunch-speaker-notes', async () => {
+  try {
+    return await relaunchSpeakerNotesWindow();
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 // Open file dialog for selecting a custom CSS file (Web UI white-label)
@@ -2528,6 +2859,7 @@ const DEFAULT_WEB_UI_HTTPS_PORT = 443;
 let httpServer;
 let webUiServer;
 let currentWebUiPort = null; // Set when Web UI server starts
+let webUiServerUsesHttps = false;
 
 // Cloudflare Quick Tunnel (WAN access) — child process + parsed trycloudflare.com URL
 let cloudflaredProcess = null;
@@ -2877,7 +3209,7 @@ function startHttpServer() {
     // GET /api/preferences - Get all preferences
     if (req.method === 'GET' && req.url === '/api/preferences') {
       try {
-        const prefs = loadPreferences();
+        const prefs = sanitizePreferencesForClient(loadPreferences());
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(prefs));
       } catch (error) {
@@ -2907,6 +3239,12 @@ function startHttpServer() {
             delete data.webUiDebugConsoleEnabled;
             // WAN tunnel toggle is desktop-only (IPC); do not allow enabling via HTTP API
             delete data.cloudflaredEnabled;
+            // Tunnel PIN is desktop-only (IPC)
+            delete data.webUiTunnelPin;
+            delete data.webUiTunnelPinClear;
+            delete data.webUiTunnelPinScrypt;
+            delete data.webUiTunnelPinSalt;
+            delete data.webUiPinScope;
           }
           
           // Merge new preferences with existing ones
@@ -3634,36 +3972,15 @@ function startHttpServer() {
 
     // POST /api/relaunch-speaker-notes - Close and reopen notes window to apply layout changes
     if (req.method === 'POST' && req.url === '/api/relaunch-speaker-notes') {
-      if (!presentationWindow || presentationWindow.isDestroyed()) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'No presentation is open' }));
-        return;
-      }
-
       try {
-        console.log('[API] Relaunching speaker notes');
-        // Close notes if open
-        if (notesWindow && !notesWindow.isDestroyed()) {
-          notesWindow.close();
-          notesWindow = null;
-          // Brief pause so the window actually closes before reopening
-          await new Promise(resolve => setTimeout(resolve, 300));
+        const result = await relaunchSpeakerNotesWindow();
+        if (!result.success) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: result.error || 'Relaunch failed' }));
+          return;
         }
-
-        // Reopen via the S key (same as open-speaker-notes)
-        presentationWindow.focus();
-        await new Promise(resolve => setTimeout(resolve, 50));
-        presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-        presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-        presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-
-        // Broadcast to backups (async, don't wait)
-        sendToBackups('/api/relaunch-speaker-notes', {}).catch(err => {
-          console.error('[Backup] Error broadcasting relaunch-speaker-notes:', err);
-        });
-
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, message: 'Speaker notes relaunched' }));
+        res.end(JSON.stringify({ success: true, message: result.message || 'Speaker notes relaunched' }));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: error.message }));
@@ -4424,7 +4741,7 @@ function startHttpServer() {
           fileSize: stats ? stats.size : null,
           fileModified: stats ? stats.mtime : null,
           fileContent: content,
-          preferences: loadPreferences(),
+          preferences: sanitizePreferencesForClient(loadPreferences()),
           platform: process.platform,
           userData: app.getPath('userData')
         }));
@@ -5052,6 +5369,103 @@ function startWebUiServer() {
     }
 
     const reqPath = String(req.url || '').split('?')[0];
+
+    // Tunnel clients (localhost via cloudflared): optional PIN gate before Web UI + /api proxy
+    try {
+      const prefsGate = loadPreferences();
+      if (isWebUiPinGateActiveForRequest(req, prefsGate) && isWebUiTunnelPinConfigured(prefsGate)) {
+        const tunnelAuthed = isValidTunnelWebUiSessionCookie(readWebUiTunnelCookie(req), prefsGate);
+        if (!tunnelAuthed) {
+          if (reqPath === '/tunnel-unlock' && req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(buildTunnelUnlockHtml());
+            return;
+          }
+          if (reqPath === '/tunnel-unlock' && req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk.toString();
+              if (body.length > TUNNEL_PIN_UNLOCK_MAX_BODY) {
+                try {
+                  req.destroy();
+                } catch (e) {
+                  // ignore
+                }
+              }
+            });
+            req.on('end', () => {
+              try {
+                const key = tunnelUnlockClientKey(req);
+                if (isTunnelPinUnlockBlocked(key)) {
+                  res.writeHead(429, {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type'
+                  });
+                  res.end(JSON.stringify({ success: false, error: 'Too many attempts. Try again later.' }));
+                  return;
+                }
+                const j = JSON.parse(body || '{}');
+                const pin = j.pin;
+                if (!verifyWebUiTunnelPin(pin, prefsGate)) {
+                  recordTunnelPinFailure(key);
+                  res.writeHead(401, {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type'
+                  });
+                  res.end(JSON.stringify({ success: false, error: 'Invalid PIN' }));
+                  return;
+                }
+                clearTunnelPinFailures(key);
+                res.writeHead(200, {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type',
+                  'Set-Cookie': buildSetTunnelSessionCookieHeader(prefsGate, req)
+                });
+                res.end(JSON.stringify({ success: true }));
+              } catch (e) {
+                res.writeHead(400, {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                  'Access-Control-Allow-Headers': 'Content-Type'
+                });
+                res.end(JSON.stringify({ success: false, error: 'Bad request' }));
+              }
+            });
+            return;
+          }
+          if (reqPath.startsWith('/api/')) {
+            res.writeHead(401, {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+              'Access-Control-Allow-Headers': 'Content-Type'
+            });
+            res.end(JSON.stringify({
+              success: false,
+              error: 'Web UI PIN required. Open /tunnel-unlock in this browser, then try again.'
+            }));
+            return;
+          }
+          if (req.method === 'GET') {
+            res.writeHead(302, { Location: '/tunnel-unlock', 'Cache-Control': 'no-store' });
+            res.end();
+            return;
+          }
+          res.writeHead(403, { 'Content-Type': 'text/plain' });
+          res.end('Forbidden');
+          return;
+        }
+      }
+    } catch (e) {
+      logDebug('[Web UI] tunnel pin gate:', e);
+    }
 
     // GET /custom-style.css - Serve user-selected CSS override (white-label)
     if (req.method === 'GET' && reqPath === '/custom-style.css') {
@@ -6151,7 +6565,6 @@ function startWebUiServer() {
           <label for="web-notes-layout">Notes Layout</label>
           <select id="web-notes-layout" class="input-field" style="width: 100%; padding: 8px;">
             <option value="hide">Full Notes (slide previews hidden)</option>
-            <option value="narrow">Narrow Panel (previews available)</option>
             <option value="default">Google Default (50/50 split)</option>
           </select>
           <small style="display: block; margin-top: 5px; color: #888; font-size: 12px;">Applies on next notes launch. Use Relaunch Notes to apply immediately.</small>
@@ -6860,7 +7273,7 @@ function startWebUiServer() {
             const previewsBlocked = (data.notesLayout || 'hide') === 'hide';
             previewBtn.disabled = previewsBlocked;
             if (previewsBlocked) {
-              previewBtn.title = 'Change layout to Narrow Panel or Google Default to use previews';
+              previewBtn.title = 'Change layout to Google Default (50/50) to use previews';
               previewBtn.classList.add('btn-disabled');
             } else {
               previewBtn.title = 'Toggle slide previews';
@@ -8445,6 +8858,7 @@ function startWebUiServer() {
   if (creds && webUiPort === 80) {
     webUiPort = DEFAULT_WEB_UI_HTTPS_PORT;
   }
+  webUiServerUsesHttps = !!creds;
   if (creds) {
     webUiServer = https.createServer(creds, requestHandler);
   } else {

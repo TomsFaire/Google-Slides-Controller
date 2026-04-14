@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPreferences: () => ipcRenderer.invoke('get-preferences'),
   getSpeakerNotes: () => ipcRenderer.invoke('get-speaker-notes'),
   savePreferences: (prefs) => ipcRenderer.invoke('save-preferences', prefs),
+  relaunchSpeakerNotes: () => ipcRenderer.invoke('relaunch-speaker-notes'),
   showOpenCssDialog: () => ipcRenderer.invoke('show-open-css-dialog'),
   showOpenLogoDialog: () => ipcRenderer.invoke('show-open-logo-dialog'),
   showOpenCertDialog: () => ipcRenderer.invoke('show-open-cert-dialog'),

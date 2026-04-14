@@ -313,7 +313,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			},
 			{
 				variableId: 'notes_layout',
-				name: 'Notes Layout (hide / narrow / default)'
+				name: 'Notes Layout (hide / default)'
 			}
 		]
 
@@ -456,7 +456,6 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 						default: 'hide',
 						choices: [
 							{ id: 'hide', label: 'Full Notes' },
-							{ id: 'narrow', label: 'Narrow Panel' },
 							{ id: 'default', label: 'Google Default' },
 						],
 					},

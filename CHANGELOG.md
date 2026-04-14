@@ -2,6 +2,18 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.11] - 2026-04-14
+
+### Added
+- **Web UI PIN (optional)** – From desktop **Settings → WAN Access**, set a **4–12 digit** PIN so browsers must unlock at **`/tunnel-unlock`** before the Web UI and its **`/api` proxy** respond. PIN is stored as a **scrypt** hash; unlock uses an **HttpOnly** session cookie (about **7 days**), with **`Secure`** when appropriate (e.g. `trycloudflare.com` or local HTTPS Web UI). Failed attempts are **rate-limited**. Changing or removing the PIN **rotates the session secret** (existing cookies invalidated).
+- **PIN scope** – Choose who must unlock: **Cloudflare tunnel only** (default; localhost path while Quick Tunnel is on), **local network only** (non-localhost clients; does not cover the share link, which appears as localhost), or **tunnel and local network**.
+
+### Security / API
+- **`GET /api/preferences`** and IPC **`get-preferences`** return a safe payload: `webUiTunnelPinEnabled` and `webUiPinScope` without PIN material. **`POST /api/preferences`** cannot set PIN, scope, tunnel toggle, or controller allowlist (unchanged or tightened for scope).
+
+### Changed
+- **Version 1.9.11**, **build 67**.
+
 ## [1.9.10] - 2026-04-10
 
 ### Added

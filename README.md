@@ -116,7 +116,25 @@ The download script is [`scripts/download-cloudflared.sh`](scripts/download-clou
 
 1. Start the app and open **Settings → WAN Access**.
 2. Turn **Quick Tunnel** on. When the Web UI server is listening, the app spawns `cloudflared` and shows the public URL (logs also list it).
-3. Treat that URL like a **password**: anyone with it can use the **Remote** and **Controls** Web UI until you turn the tunnel off or quit the app.
+3. Treat that URL like a **password**: anyone with it can use the **Remote** and **Controls** Web UI until you turn the tunnel off or quit the app—**unless** you add an optional **Web UI PIN** (see below).
+
+### Optional Web UI PIN
+
+In **Settings → WAN Access**, you can set a **numeric PIN (4–12 digits)** so browsers must open **`/tunnel-unlock`** once and enter the PIN before the main Web UI and its **`/api` proxy** work. Remove the PIN anytime from the same section.
+
+**Who must unlock** is controlled by **Require Web UI PIN for**:
+
+| Option | Meaning |
+|--------|---------|
+| **Cloudflare tunnel only** (default) | Only traffic that hits the Web UI as **localhost** while Quick Tunnel is enabled—i.e. typical **`trycloudflare.com`** users. Matches the same “restricted tunnel” model as the hidden Settings tab. |
+| **Local network only** | Any client whose source address is **not** localhost (e.g. `http://192.168.x.x` on your LAN). **Does not** apply to the share link by itself, because Quick Tunnel still connects to your Mac as **127.0.0.1**. |
+| **Tunnel and local network** | Either of the above—PIN for both the public link and LAN browsers. |
+
+Details:
+
+- The PIN is stored on disk as a **scrypt** hash (not plaintext). Unlock sets an **HttpOnly** session cookie (about **7 days**); the cookie uses **`Secure`** when the browser session is HTTPS (e.g. Cloudflare’s edge) or when the Web UI is served over **HTTPS** locally.
+- Changing or removing the PIN **rotates the session secret**; old unlock cookies stop working.
+- PIN and scope are **desktop-only** (not via `POST /api/preferences`). `GET /api/preferences` exposes flags such as **`webUiTunnelPinEnabled`** and **`webUiPinScope`** without secret material.
 
 **3. HTTPS Web UI on the presentation machine**
 
@@ -148,7 +166,7 @@ Integrate with Bitfocus Companion using the HTTP API on port **9595** (or your c
 | Package | Where it comes from | Use case |
 |---------|---------------------|----------|
 | **`companion-module-gslide-opener.tgz`** | Attached to **[GitHub Releases](https://github.com/TomsFaire/Google-Slides-Controller/releases)** of this app (built in CI from the [Bitfocus companion module](https://github.com/bitfocus/companion-module-google-slidescontroller) source) | **Recommended** for most users—matches the release you installed. |
-| **Flat `.tgz` from this repo** | In a checkout of this project, `cd companion-module-gslide-opener` then **`yarn pack:import`** | Local testing / dev; produces a tarball with `companion/manifest.json` at the **archive root** (do **not** use `npm pack` for Companion—it nests files under `package/` and import fails). |
+| **Built `.tgz` from this repo** | In a checkout, `cd companion-module-gslide-opener` then **`yarn package`** or **`yarn pack:import`** | Local testing / dev; runs **`companion-module-build`** (bundled `pkg/` layout). Do **not** use `npm pack` (wrong folder layout) or a hand-made source-only tar (missing bundled deps). |
 | **Bitfocus registry / other** | [companion-module-google-slidescontroller](https://github.com/bitfocus/companion-module-google-slidescontroller) on GitHub | Same family of module; version and packaging may differ slightly from the `.tgz` on *this* app’s releases page. |
 
 ### Install in Companion

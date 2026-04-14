@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Companion expects companion/manifest.json at the root of the archive.
-# `npm pack` wraps files in package/ which breaks import ("missing manifest").
+# Companion 3 expects a package from `companion-module-build` (webpack bundle + pkg/ layout).
+# A plain `tar` of source files has no bundled deps — import may succeed but the module will
+# fail to load (`Cannot find module '@companion-module/base'`).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 NAME=$(node -p "require('./package.json').name")
 VER=$(node -p "require('./package.json').version")
+BUILT="gslide-opener-${VER}.tgz"
 OUT="${NAME}-${VER}.tgz"
-rm -f "$OUT"
-export COPYFILE_DISABLE=1
-TAR_FILES=(companion main.js actions.js package.json README.md)
-if [[ -f CHANGELOG.md ]]; then TAR_FILES+=(CHANGELOG.md); fi
-tar -czvf "$OUT" \
-  --exclude='._*' \
-  --exclude='.DS_Store' \
-  --exclude='**/Icon*' \
-  "${TAR_FILES[@]}"
-echo "Wrote $(pwd)/${OUT}"
-tar -tzf "$OUT"
+
+echo "[pack-import] Running companion-module-build (yarn package)..."
+yarn run package
+
+if [[ ! -f "$BUILT" ]]; then
+  echo "ERROR: expected $BUILT after build" >&2
+  exit 1
+fi
+
+cp -f "$BUILT" "$OUT"
+echo "[pack-import] Wrote $(pwd)/$OUT"
+echo "[pack-import] (same contents as $BUILT; rename for release/docs compatibility)"
+tar -tzf "$OUT" | head -20

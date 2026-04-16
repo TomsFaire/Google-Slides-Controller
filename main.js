@@ -488,6 +488,95 @@ function getSpeakerNotesWindowOptions(notesDisplay) {
   };
 }
 
+const VALID_PRESENTATION_GPU_MODES = new Set(['default', 'disable-gpu', 'angle-metal', 'angle-gl', 'swiftshader']);
+
+/** BrowserWindow constructor options shared by all Google Slides presentation windows. */
+function getPresentationBrowserWindowOptions(presentationBounds) {
+  const b = presentationBounds && presentationBounds.width ? presentationBounds : screen.getPrimaryDisplay().bounds;
+  return {
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: GOOGLE_SESSION_PARTITION
+    }
+  };
+}
+
+function readPreferencesFileJsonSync() {
+  try {
+    const prefsPath = path.join(app.getPath('userData'), 'preferences.json');
+    if (!fs.existsSync(prefsPath)) return {};
+    return JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+/**
+ * Apply GPU / ANGLE switches before app.ready(). Must stay in sync with loadPreferences() normalization.
+ * Changing presentationGpuMode requires an app restart to take effect.
+ */
+function applyPresentationGpuCommandLineEarly() {
+  let mode = 'default';
+  try {
+    const prefs = readPreferencesFileJsonSync();
+    const raw = prefs && prefs.presentationGpuMode;
+    if (raw && VALID_PRESENTATION_GPU_MODES.has(String(raw))) {
+      mode = String(raw);
+    }
+  } catch (e) {
+    mode = 'default';
+  }
+  if (mode === 'disable-gpu') {
+    app.disableHardwareAcceleration();
+  } else if (mode === 'angle-metal') {
+    app.commandLine.appendSwitch('use-angle', 'metal');
+  } else if (mode === 'angle-gl') {
+    app.commandLine.appendSwitch('use-angle', 'gl');
+  } else if (mode === 'swiftshader') {
+    app.commandLine.appendSwitch('use-gl', 'swiftshader');
+  }
+}
+
+applyPresentationGpuCommandLineEarly();
+
+function wantsPresentationNativeFullscreen(prefs) {
+  return process.platform === 'darwin' && prefs && prefs.presentationNativeFullscreen === true;
+}
+
+/** macOS: simple fullscreen (default) vs native fullscreen (diagnostic / compositor path). No-op on other OSes. */
+function applyPresentationFullscreenChrome(presentationWindow, prefs) {
+  if (process.platform !== 'darwin' || !presentationWindow || presentationWindow.isDestroyed()) return;
+  const p = prefs || loadPreferences();
+  try {
+    if (wantsPresentationNativeFullscreen(p)) {
+      presentationWindow.setFullScreen(true);
+    } else {
+      presentationWindow.setSimpleFullScreen(true);
+    }
+  } catch (e) {
+    try {
+      presentationWindow.setSimpleFullScreen(true);
+    } catch (e2) {
+      // ignore
+    }
+  }
+}
+
+function presentationFullscreenNeedsReapply(presentationWindow, prefs) {
+  if (process.platform !== 'darwin' || !presentationWindow || presentationWindow.isDestroyed()) return false;
+  const p = prefs || loadPreferences();
+  if (wantsPresentationNativeFullscreen(p)) {
+    return !presentationWindow.isFullScreen();
+  }
+  return !presentationWindow.isSimpleFullScreen();
+}
+
 // Normalize speaker notes text in the notes window: replace U+FFFD and "-" with real newlines in text nodes only.
 // Uses TreeWalker so we don't replace the whole div (which broke slide updates). Runs on an interval.
 // Set white-space: pre-wrap on the notes container so newline characters in text nodes actually render as line breaks.
@@ -1066,6 +1155,12 @@ function loadPreferences() {
       prefs.presetUrls = getPresetUrlsFromPrefs(prefs);
       // Removed layout mode 'narrow' (broken preview scaling); treat as Google default.
       if (prefs.notesLayout === 'narrow') prefs.notesLayout = 'default';
+      if (!VALID_PRESENTATION_GPU_MODES.has(String(prefs.presentationGpuMode || ''))) {
+        prefs.presentationGpuMode = 'default';
+      }
+      if (prefs.presentationNativeFullscreen !== undefined && prefs.presentationNativeFullscreen !== null) {
+        prefs.presentationNativeFullscreen = prefs.presentationNativeFullscreen === true;
+      }
       logDebug('[Preferences] Loaded preferences:', safeStringify(prefs));
       return prefs;
     } else {
@@ -1784,20 +1879,9 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
   const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
   const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
 
-  presentationWindow = new BrowserWindow({
-    x: presentationDisplay.bounds.x,
-    y: presentationDisplay.bounds.y,
-    width: presentationDisplay.bounds.width,
-    height: presentationDisplay.bounds.height,
-    frame: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      partition: GOOGLE_SESSION_PARTITION
-    }
-  });
+  presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
   if (process.platform === 'darwin') {
-    presentationWindow.setSimpleFullScreen(true);
+    applyPresentationFullscreenChrome(presentationWindow, prefs);
   }
   attachCrashHandlers(presentationWindow, 'presentation');
 
@@ -2081,13 +2165,19 @@ ipcMain.handle('get-build-info', async () => {
   try {
     return {
       version: appBuildInfo.version,
-      buildNumber: appBuildInfo.buildNumber
+      buildNumber: appBuildInfo.buildNumber,
+      chrome: process.versions.chrome,
+      electronRuntime: process.versions.electron,
+      node: process.versions.node
     };
   } catch (error) {
     console.error('[Build Info] Error loading build info:', error);
     return {
       version: 'unknown',
-      buildNumber: 'unknown'
+      buildNumber: 'unknown',
+      chrome: process.versions.chrome,
+      electronRuntime: process.versions.electron,
+      node: process.versions.node
     };
   }
 });
@@ -2172,6 +2262,13 @@ ipcMain.handle('save-preferences', async (event, incoming) => {
   if (incoming && incoming.webUiPinScope !== undefined) {
     const ps = String(incoming.webUiPinScope).toLowerCase();
     mergedPrefs.webUiPinScope = ps === 'lan' || ps === 'both' ? ps : 'tunnel';
+  }
+  if (incoming && incoming.presentationGpuMode !== undefined) {
+    const g = String(incoming.presentationGpuMode || '');
+    mergedPrefs.presentationGpuMode = VALID_PRESENTATION_GPU_MODES.has(g) ? g : 'default';
+  }
+  if (incoming && incoming.presentationNativeFullscreen !== undefined) {
+    mergedPrefs.presentationNativeFullscreen = incoming.presentationNativeFullscreen === true;
   }
   savePreferences(mergedPrefs);
   return { success: true };
@@ -2595,22 +2692,11 @@ ipcMain.handle('open-test-presentation', async () => {
   if (!presentationWindow) {
     // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
     // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
-    presentationWindow = new BrowserWindow({
-      x: presentationDisplay.bounds.x,
-      y: presentationDisplay.bounds.y,
-      width: presentationDisplay.bounds.width,
-      height: presentationDisplay.bounds.height,
-      frame: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        partition: GOOGLE_SESSION_PARTITION
-      }
-    });
+    presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
     
     // Set simple fullscreen on macOS to avoid Spaces conflicts
     if (process.platform === 'darwin') {
-      presentationWindow.setSimpleFullScreen(true);
+      applyPresentationFullscreenChrome(presentationWindow, prefs);
     }
     attachCrashHandlers(presentationWindow, 'presentation');
 
@@ -2726,22 +2812,11 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Open presentation window
   // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
   // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
-  presentationWindow = new BrowserWindow({
-    x: presentationDisplay.bounds.x,
-    y: presentationDisplay.bounds.y,
-    width: presentationDisplay.bounds.width,
-    height: presentationDisplay.bounds.height,
-    frame: false,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      partition: GOOGLE_SESSION_PARTITION
-    }
-  });
+  presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
   
   // Set simple fullscreen on macOS to avoid Spaces conflicts
   if (process.platform === 'darwin') {
-    presentationWindow.setSimpleFullScreen(true);
+    applyPresentationFullscreenChrome(presentationWindow, loadPreferences());
   }
   attachCrashHandlers(presentationWindow, 'presentation');
 
@@ -2966,7 +3041,14 @@ function startHttpServer() {
           loggedInUser: loggedInUser || null,
           notesZoomSteps: notesZoomStepsFromDefault,
           notesZoomDefault: (statusPrefs.defaultNotesZoomSteps !== undefined && statusPrefs.defaultNotesZoomSteps !== null) ? clampNotesZoomSteps(statusPrefs.defaultNotesZoomSteps) : 0,
-          notesLayout: statusPrefs.notesLayout || 'hide'
+          notesLayout: statusPrefs.notesLayout || 'hide',
+          runtime: {
+            chrome: process.versions.chrome,
+            electron: process.versions.electron,
+            node: process.versions.node
+          },
+          presentationGpuMode: statusPrefs.presentationGpuMode || 'default',
+          presentationNativeFullscreen: statusPrefs.presentationNativeFullscreen === true
         };
         
         // Get slide info and other data from notes window DOM
@@ -3336,22 +3418,11 @@ function startHttpServer() {
           // Create the presentation window
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
-          presentationWindow = new BrowserWindow({
-            x: presentationDisplay.bounds.x,
-            y: presentationDisplay.bounds.y,
-            width: presentationDisplay.bounds.width,
-            height: presentationDisplay.bounds.height,
-            frame: false,
-            webPreferences: {
-              nodeIntegration: false,
-              contextIsolation: true,
-              partition: GOOGLE_SESSION_PARTITION
-            }
-          });
+          presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
           
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
-            presentationWindow.setSimpleFullScreen(true);
+            applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
           
@@ -3503,22 +3574,11 @@ function startHttpServer() {
           // Create the presentation window
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
-          presentationWindow = new BrowserWindow({
-            x: presentationDisplay.bounds.x,
-            y: presentationDisplay.bounds.y,
-            width: presentationDisplay.bounds.width,
-            height: presentationDisplay.bounds.height,
-            frame: false,
-            webPreferences: {
-              nodeIntegration: false,
-              contextIsolation: true,
-              partition: GOOGLE_SESSION_PARTITION
-            }
-          });
+          presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
           
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
-            presentationWindow.setSimpleFullScreen(true);
+            applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
           
@@ -4927,22 +4987,11 @@ function startHttpServer() {
           // Create the presentation window (reuse open-presentation logic)
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
-          presentationWindow = new BrowserWindow({
-            x: presentationDisplay.bounds.x,
-            y: presentationDisplay.bounds.y,
-            width: presentationDisplay.bounds.width,
-            height: presentationDisplay.bounds.height,
-            frame: false,
-            webPreferences: {
-              nodeIntegration: false,
-              contextIsolation: true,
-              partition: GOOGLE_SESSION_PARTITION
-            }
-          });
+          presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
           
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
-            presentationWindow.setSimpleFullScreen(true);
+            applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
           
@@ -5046,8 +5095,7 @@ function startHttpServer() {
               });
               setTimeout(() => {
                 if (presentationWindow && !presentationWindow.isDestroyed()) {
-                  // Use setSimpleFullScreen to avoid Spaces conflicts
-                  presentationWindow.setSimpleFullScreen(true);
+                  applyPresentationFullscreenChrome(presentationWindow, prefs);
                 }
               }, 50);
             }
@@ -5055,15 +5103,14 @@ function startHttpServer() {
           
           if (process.platform === 'darwin') {
             setTimeout(() => {
-              if (presentationWindow && !presentationWindow.isDestroyed() && !presentationWindow.isSimpleFullScreen()) {
+              if (presentationWindow && !presentationWindow.isDestroyed() && presentationFullscreenNeedsReapply(presentationWindow, prefs)) {
                 presentationWindow.setBounds({
                   x: presentationDisplay.bounds.x,
                   y: presentationDisplay.bounds.y,
                   width: presentationDisplay.bounds.width,
                   height: presentationDisplay.bounds.height
                 });
-                // Use setSimpleFullScreen to avoid Spaces conflicts
-                presentationWindow.setSimpleFullScreen(true);
+                applyPresentationFullscreenChrome(presentationWindow, prefs);
               }
             }, 200);
           }

@@ -2,6 +2,18 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [1.9.12] - 2026-04-15
+
+### Fixed / rendering
+- **Google Slides transparent PNG / layer compositing** – Upgraded **Electron to 33.x** (newer Chromium, closer to Chrome). Added **Settings → Monitor Setup → Presentation GPU mode** (`default`, ANGLE **Metal** / **OpenGL**, **SwiftShader**, or **disable GPU**) applied at startup via `app.commandLine` / `disableHardwareAcceleration()`; **restart required** after changing GPU mode. Optional **macOS native fullscreen** for the slide window (diagnostic compositor path vs simple fullscreen).
+
+### Added
+- **`GET /api/status`** – `runtime` (`chrome`, `electron`, `node`), `presentationGpuMode`, `presentationNativeFullscreen`. **`get-build-info`** includes Chromium/Electron/Node versions for the footer.
+- **`yarn smoke:slides-gpu`** – Minimal Electron window to reproduce presenter rendering; optional `GSLIDE_GPU_MODE` and `GSLIDE_SESSION_PARTITION`.
+
+### Changed
+- **Version 1.9.12**, **build 68**.
+
 ## [1.9.11] - 2026-04-14
 
 ### Added

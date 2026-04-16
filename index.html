@@ -269,6 +269,26 @@
           <input type="number" id="default-notes-zoom-steps" class="select-input" min="-10" max="40" value="0" step="1" />
           <p class="field-hint">Extra &quot;Zoom in&quot; clicks in Google Slides when speaker notes open (0 = Slides default). Negative values zoom out. Same scale as the remote zoom buttons.</p>
         </div>
+
+        <div class="form-group">
+          <label for="presentation-gpu-mode">Presentation GPU mode</label>
+          <select id="presentation-gpu-mode" class="select-input">
+            <option value="default">Default (Chromium decides)</option>
+            <option value="angle-metal">ANGLE Metal (macOS)</option>
+            <option value="angle-gl">ANGLE OpenGL</option>
+            <option value="swiftshader">SwiftShader (software GL)</option>
+            <option value="disable-gpu">Disable GPU (software compositing)</option>
+          </select>
+          <p class="field-hint">If slide images show wrong transparency, boxes, or seams vs Chrome, try ANGLE Metal or Disable GPU. <strong>Restart the app</strong> after changing this.</p>
+        </div>
+        <div class="form-group" id="presentation-native-fullscreen-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="presentation-native-fullscreen" style="width: auto;" />
+            <span>macOS: use native fullscreen for slides (not simple fullscreen)</span>
+          </label>
+          <p class="field-hint">Diagnostic: uses a different compositor path (may use an extra Space). Helps compare rendering glitches; default off.</p>
+        </div>
+        <button type="button" id="save-presentation-rendering-btn" class="btn btn-secondary">Save presentation rendering</button>
       </section>
 
       <!-- Machine Name Section -->

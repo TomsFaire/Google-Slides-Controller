@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
-  "version": "1.9.11",
-  "buildNumber": "67",
+  "version": "1.9.12",
+  "buildNumber": "68",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -12,7 +12,8 @@
     "build:linux": "electron-builder --linux",
     "build:mac": "electron-builder --mac",
     "build:icon:win": "node scripts/build-windows-icon.js",
-    "download:cloudflared": "bash scripts/download-cloudflared.sh"
+    "download:cloudflared": "bash scripts/download-cloudflared.sh",
+    "smoke:slides-gpu": "electron scripts/slides-presenter-gpu-smoke.cjs"
   },
   "keywords": [
     "electron",
@@ -27,7 +28,7 @@
   },
   "devDependencies": {
     "cross-env": "^10.1.0",
-    "electron": "^28.1.0",
+    "electron": "^33.4.11",
     "electron-builder": "^24.13.3",
     "png-to-ico": "^2.1.8"
   },

@@ -358,6 +358,22 @@ async function initDisplays() {
       defaultNotesZoomInput.value = dz !== undefined && dz !== null ? String(dz) : '0';
     }
 
+    const presentationGpuModeSelect = document.getElementById('presentation-gpu-mode');
+    if (presentationGpuModeSelect) {
+      const allowedGpu = ['default', 'angle-metal', 'angle-gl', 'swiftshader', 'disable-gpu'];
+      const m = String(preferences.presentationGpuMode || 'default');
+      presentationGpuModeSelect.value = allowedGpu.includes(m) ? m : 'default';
+    }
+    const presentationNativeFullscreenGroup = document.getElementById('presentation-native-fullscreen-group');
+    const presentationNativeFullscreenCheckbox = document.getElementById('presentation-native-fullscreen');
+    const isMacUi = /Mac/i.test(navigator.platform || '') || /Mac OS X/.test(navigator.userAgent || '');
+    if (presentationNativeFullscreenGroup) {
+      presentationNativeFullscreenGroup.style.display = isMacUi ? '' : 'none';
+    }
+    if (presentationNativeFullscreenCheckbox) {
+      presentationNativeFullscreenCheckbox.checked = preferences.presentationNativeFullscreen === true;
+    }
+
     // Restore machine name
     if (preferences.machineName) {
       machineNameInput.value = preferences.machineName;
@@ -463,6 +479,10 @@ async function initDisplays() {
     }
     const defaultNotesZoomEl = document.getElementById('default-notes-zoom-steps');
     if (defaultNotesZoomEl) defaultNotesZoomEl.addEventListener('change', saveMonitorPreferences);
+    const savePresentationRenderingBtn = document.getElementById('save-presentation-rendering-btn');
+    if (savePresentationRenderingBtn) {
+      savePresentationRenderingBtn.addEventListener('click', savePresentationRenderingPreferences);
+    }
     machineNameInput.addEventListener('change', saveMachineName);
     apiPortInput.addEventListener('change', savePortPreferences);
     webUiPortInput.addEventListener('change', savePortPreferences);
@@ -968,6 +988,24 @@ async function updateNetworkInfo() {
   }
 }
 
+async function savePresentationRenderingPreferences() {
+  try {
+    const gpuEl = document.getElementById('presentation-gpu-mode');
+    const nativeEl = document.getElementById('presentation-native-fullscreen');
+    const mode = gpuEl ? String(gpuEl.value || 'default') : 'default';
+    const allowedGpu = ['default', 'angle-metal', 'angle-gl', 'swiftshader', 'disable-gpu'];
+    const presentationGpuMode = allowedGpu.includes(mode) ? mode : 'default';
+    await window.electronAPI.savePreferences({
+      presentationGpuMode,
+      presentationNativeFullscreen: nativeEl ? nativeEl.checked === true : false
+    });
+    showStatus('Presentation rendering saved. Restart the app for GPU mode to take effect.', 'info');
+  } catch (error) {
+    console.error('Failed to save presentation rendering:', error);
+    showStatus('Failed to save presentation rendering', 'error');
+  }
+}
+
 // Save monitor preferences
 async function saveMonitorPreferences() {
   try {
@@ -1455,7 +1493,8 @@ async function displayBuildNumber() {
     
     const buildNumberEl = document.getElementById('build-number');
     if (buildNumberEl) {
-      buildNumberEl.textContent = versionString;
+      const chrome = buildInfo.chrome ? ` · Chromium ${buildInfo.chrome}` : '';
+      buildNumberEl.textContent = versionString + chrome;
     }
   } catch (error) {
     console.error('Failed to load build number:', error);

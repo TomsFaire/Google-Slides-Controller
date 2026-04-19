@@ -120,7 +120,7 @@
           <div class="panel">
             <p class="card-description">Notes for the current slide, with line breaks fixed. Open speaker notes in the presentation to use this.</p>
             <div class="form-group">
-              <div id="speaker-notes-capture" class="speaker-notes-capture" style="white-space: pre-wrap; min-height: 120px; max-height: 280px; overflow-y: auto; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); font-size: 14px; line-height: 1.5;">No speaker notes window open.</div>
+              <div id="speaker-notes-capture" class="speaker-notes-capture" style="white-space: pre-wrap; min-height: 120px; max-height: 280px; overflow-y: auto; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);">No speaker notes window open.</div>
               <div id="notes-encoding-warning-desktop" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#907c3a; background:rgba(144,124,58,0.08); border:1px solid rgba(144,124,58,0.3); border-radius:var(--radius);">Line break encoding issues detected on this slide. The text above has corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the cleanup script (see docs/fix-speaker-notes.gs).</div>
               <div style="display: flex; gap: 8px; margin-top: 8px;">
                 <button type="button" id="speaker-notes-refresh" class="btn btn-secondary">Refresh</button>
@@ -147,7 +147,7 @@
               </button>
             </div>
           </div>
-          <div class="panel" style="margin-top: 16px;">
+          <div class="panel">
             <h2 class="panel-title">Machine Name</h2>
             <p class="card-description">Set a name for this machine (shown in web UI)</p>
             <div class="form-group">
@@ -176,7 +176,7 @@
           </div>
 
           <!-- Ports panel -->
-          <div class="panel" style="margin-top: 16px;">
+          <div class="panel">
             <h2 class="panel-title">Ports</h2>
             <p class="card-description">Configure ports for API and Web UI (restart required)</p>
 
@@ -233,7 +233,7 @@
           </div>
 
           <!-- WAN / Tunnel panel -->
-          <div class="panel" style="margin-top: 16px;">
+          <div class="panel">
             <h2 class="panel-title">Share over Internet</h2>
             <p class="card-description">Share the web remote with viewers outside your local network using a free Cloudflare Quick Tunnel (no account required).</p>
             <p class="field-hint" style="margin-bottom: 12px; color: var(--warn); background: rgba(144,124,58,0.06); border: 1px solid rgba(144,124,58,0.25); border-radius: var(--radius); padding: 10px 12px;">
@@ -247,15 +247,17 @@
                 <option value="both">Tunnel and local network</option>
               </select>
               <small class="field-hint">Tunnel traffic hits this machine as localhost, so it does not match "LAN IPs only". Use "Tunnel and local network" to PIN-protect both the share link and phones or laptops on your Wi‑Fi.</small>
-              <label for="wan-tunnel-pin-new" style="margin-top: 14px;">Web UI PIN (optional)</label>
-              <small class="field-hint">4–12 digits. Browsers must unlock once (cookie) when a PIN is set and the request matches the option above.</small>
-              <div id="wan-tunnel-pin-status" class="field-hint" style="margin-top: 8px; margin-bottom: 8px;"></div>
-              <input type="password" id="wan-tunnel-pin-new" class="input-field" placeholder="New PIN" inputmode="numeric" autocomplete="new-password" maxlength="12" />
-              <label for="wan-tunnel-pin-confirm" style="margin-top: 8px;">Confirm PIN</label>
-              <input type="password" id="wan-tunnel-pin-confirm" class="input-field" placeholder="Confirm new PIN" style="margin-top: 4px;" inputmode="numeric" autocomplete="new-password" maxlength="12" />
-              <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
-                <button type="button" id="wan-tunnel-pin-save" class="btn btn-secondary">Save PIN</button>
-                <button type="button" id="wan-tunnel-pin-remove" class="btn btn-secondary">Remove PIN</button>
+              <div class="form-group" style="margin-top: 14px;">
+                <label for="wan-tunnel-pin-new">Web UI PIN (optional)</label>
+                <small class="field-hint">4–12 digits. Browsers must unlock once (cookie) when a PIN is set and the request matches the option above.</small>
+                <div id="wan-tunnel-pin-status" class="field-hint" style="margin-top: 8px; margin-bottom: 8px;"></div>
+                <input type="password" id="wan-tunnel-pin-new" class="input-field" placeholder="New PIN" inputmode="numeric" autocomplete="new-password" maxlength="12" />
+                <label for="wan-tunnel-pin-confirm" style="margin-top: 8px;">Confirm PIN</label>
+                <input type="password" id="wan-tunnel-pin-confirm" class="input-field" placeholder="Confirm new PIN" style="margin-top: 4px;" inputmode="numeric" autocomplete="new-password" maxlength="12" />
+                <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                  <button type="button" id="wan-tunnel-pin-save" class="btn btn-secondary">Save PIN</button>
+                  <button type="button" id="wan-tunnel-pin-remove" class="btn btn-secondary">Remove PIN</button>
+                </div>
               </div>
             </div>
             <div class="form-group">
@@ -328,7 +330,7 @@
 
             <div class="form-group">
               <label for="default-notes-zoom-steps">Default speaker notes zoom (steps)</label>
-              <input type="number" id="default-notes-zoom-steps" class="select-input" min="-10" max="40" value="0" step="1" />
+              <input type="number" id="default-notes-zoom-steps" class="input-field" min="-10" max="40" value="0" step="1" />
               <p class="field-hint">Extra "Zoom in" clicks in Google Slides when speaker notes open (0 = Slides default). Negative values zoom out.</p>
             </div>
           </div>
@@ -398,7 +400,7 @@
           </div>
 
           <!-- Stagetimer panel -->
-          <div class="panel" style="margin-top: 16px;">
+          <div class="panel">
             <h2 class="panel-title">Stagetimer.io</h2>
             <p class="card-description">Connect to your stagetimer.io room to display live timer data. Get your Room ID and API Key from the stagetimer.io controller page.</p>
 
@@ -496,7 +498,7 @@
           </div>
 
           <!-- Presentation rendering panel -->
-          <div class="panel" style="margin-top: 16px;">
+          <div class="panel">
             <h2 class="panel-title">Presentation Rendering</h2>
 
             <div class="form-group">
@@ -523,7 +525,7 @@
           </div>
 
           <!-- Controller allowlist panel -->
-          <div class="panel" style="margin-top: 16px;">
+          <div class="panel">
             <h2 class="panel-title">Controller Allowlist</h2>
             <p class="card-description">Restrict which IP addresses can control this app via the Web UI and HTTP API. If left empty, any device on your network can control the app.</p>
 
@@ -552,7 +554,7 @@
           </div>
 
           <!-- Debug console panel -->
-          <div class="panel" style="margin-top: 16px;">
+          <div class="panel">
             <h2 class="panel-title">Debug Console</h2>
             <p class="card-description">Live application logs and a downloadable debug report for troubleshooting.</p>
 

@@ -16,6 +16,9 @@
   --ok: #49694c;
   --warn: #907c3a;
   --bad: #921100;
+  --led-ok: #3a7d3e;
+  --led-warn: #b8942a;
+  --led-bad: #a01200;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
   --font-serif: 'Lora', Georgia, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -173,9 +176,9 @@ body {
   flex-shrink: 0;
 }
 
-.led-ok      { background: #3a7d3e; box-shadow: 0 0 4px rgba(58,125,62,0.7); }
-.led-warn    { background: #b8942a; box-shadow: 0 0 4px rgba(184,148,42,0.7); }
-.led-bad     { background: #a01200; box-shadow: 0 0 4px rgba(160,18,0,0.7); }
+.led-ok      { background: var(--led-ok);  box-shadow: 0 0 4px rgba(58,125,62,0.7); }
+.led-warn    { background: var(--led-warn); box-shadow: 0 0 4px rgba(184,148,42,0.7); }
+.led-bad     { background: var(--led-bad);  box-shadow: 0 0 4px rgba(160,18,0,0.7); }
 .led-neutral { background: var(--border); }
 
 /* 5. CONTENT AREA + TABS
@@ -184,14 +187,6 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 28px 32px;
-}
-
-section[data-tab] {
-  /* shown/hidden by JS via hidden attribute */
-}
-
-section[data-tab][hidden] {
-  display: none;
 }
 
 .page-title {
@@ -382,16 +377,23 @@ input[type="radio"] {
   cursor: not-allowed;
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.btn:active:not(:disabled) {
+  opacity: 0.75;
+}
+
 /* Primary: near-black */
-.btn-primary,
-.btn:not(.btn-secondary):not(.btn-google):not(.btn-signout) {
+.btn-primary {
   background: var(--text);
   color: #fff;
   border-color: var(--text);
 }
 
-.btn-primary:hover,
-.btn:not(.btn-secondary):not(.btn-google):not(.btn-signout):hover {
+.btn-primary:hover {
   background: #000;
   border-color: #000;
 }

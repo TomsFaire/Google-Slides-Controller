@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.worktrees/
 release/
 *.log
 .DS_Store
@@ -66,6 +67,8 @@ PROJECT_STATUS*.md
 PHASE_*.md
 TESTING.md
 docs/EDITS-*.md
+docs/internal/
+docs/superpowers/
 memory/
 .claude/
 
@@ -81,6 +84,11 @@ newclaude.md
 !INSTALLATION.md
 !README-SECURITY.md
 !docs/
+!docs/CRASH-REPORTS.md
+!docs/PUBLIC-ACCESS.md
+!docs/SPEAKER-NOTES-ENCODING.md
+!docs/fix-speaker-notes.gs
+!docs/images/
 !companion-module-gslide-opener/README.md
 !companion-module-gslide-opener/companion/HELP.md
 

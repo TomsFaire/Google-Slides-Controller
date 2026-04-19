@@ -16,23 +16,23 @@
         <!-- Overview group -->
         <div class="nav-group">
           <div class="nav-group-label">Overview</div>
-          <a class="nav-item active" data-target="dashboard">Dashboard</a>
-          <a class="nav-item" data-target="notes">Speaker Notes</a>
+          <a class="nav-item active" data-target="dashboard" role="tab" tabindex="0">Dashboard</a>
+          <a class="nav-item" data-target="notes" role="tab" tabindex="0">Speaker Notes</a>
         </div>
         <!-- Setup group -->
         <div class="nav-group">
           <div class="nav-group-label">Setup</div>
-          <a class="nav-item" data-target="account">Account</a>
-          <a class="nav-item" data-target="network">Network</a>
-          <a class="nav-item" data-target="monitors">Monitors</a>
-          <a class="nav-item" data-target="presets">Presets</a>
-          <a class="nav-item" data-target="remote">Web Remote</a>
+          <a class="nav-item" data-target="account" role="tab" tabindex="0">Account</a>
+          <a class="nav-item" data-target="network" role="tab" tabindex="0">Network</a>
+          <a class="nav-item" data-target="monitors" role="tab" tabindex="0">Monitors</a>
+          <a class="nav-item" data-target="presets" role="tab" tabindex="0">Presets</a>
+          <a class="nav-item" data-target="remote" role="tab" tabindex="0">Web Remote</a>
         </div>
         <!-- Other group -->
         <div class="nav-group">
           <div class="nav-group-label">Other</div>
-          <a class="nav-item" data-target="advanced">Advanced</a>
-          <a class="nav-item" data-target="logs">Logs</a>
+          <a class="nav-item" data-target="advanced" role="tab" tabindex="0">Advanced</a>
+          <a class="nav-item" data-target="logs" role="tab" tabindex="0">Logs</a>
         </div>
       </nav>
       <footer class="sidebar-footer">
@@ -70,9 +70,9 @@
 
           <!-- Inline machine name rename -->
           <div class="dashboard-machine-name-block">
-            <span id="dashboard-machine-heading" class="dashboard-machine-heading" title="Click to rename">
+            <span id="dashboard-machine-heading" class="dashboard-machine-heading" title="Click to rename" role="button" tabindex="0">
               <span id="dashboard-machine-display"></span>
-              <svg class="rename-pencil" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z"/></svg>
+              <svg class="rename-pencil" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z"/></svg>
             </span>
           </div>
 
@@ -106,7 +106,7 @@
           <!-- CTA row -->
           <div class="dashboard-cta-row">
             <button id="test-btn" class="btn btn-primary">
-              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
               </svg>
               Open Test Presentation
@@ -137,7 +137,7 @@
             <h2 class="panel-title">Google Account</h2>
             <div class="auth-container">
               <button id="signin-btn" class="btn btn-google">
-                <svg class="btn-icon" viewBox="0 0 24 24">
+                <svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24">
                   <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                   <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                   <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -182,7 +182,7 @@
 
             <div class="form-group">
               <label for="api-port">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
                   <line x1="8" y1="21" x2="16" y2="21"></line>
                   <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -195,7 +195,7 @@
 
             <div class="form-group">
               <label for="web-ui-port">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
                   <line x1="8" y1="21" x2="16" y2="21"></line>
                   <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -251,7 +251,8 @@
               <small class="field-hint">4–12 digits. Browsers must unlock once (cookie) when a PIN is set and the request matches the option above.</small>
               <div id="wan-tunnel-pin-status" class="field-hint" style="margin-top: 8px; margin-bottom: 8px;"></div>
               <input type="password" id="wan-tunnel-pin-new" class="input-field" placeholder="New PIN" inputmode="numeric" autocomplete="new-password" maxlength="12" />
-              <input type="password" id="wan-tunnel-pin-confirm" class="input-field" placeholder="Confirm new PIN" style="margin-top: 8px;" inputmode="numeric" autocomplete="new-password" maxlength="12" />
+              <label for="wan-tunnel-pin-confirm" style="margin-top: 8px;">Confirm PIN</label>
+              <input type="password" id="wan-tunnel-pin-confirm" class="input-field" placeholder="Confirm new PIN" style="margin-top: 4px;" inputmode="numeric" autocomplete="new-password" maxlength="12" />
               <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
                 <button type="button" id="wan-tunnel-pin-save" class="btn btn-secondary">Save PIN</button>
                 <button type="button" id="wan-tunnel-pin-remove" class="btn btn-secondary">Remove PIN</button>
@@ -281,7 +282,7 @@
           <div class="panel">
             <div class="form-group">
               <label for="presentation-display">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
                   <line x1="8" y1="21" x2="16" y2="21"></line>
                   <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -295,7 +296,7 @@
 
             <div class="form-group">
               <label for="notes-display">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                   <polyline points="14 2 14 8 20 8"></polyline>
                   <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -311,7 +312,7 @@
 
             <div class="form-group">
               <label for="notes-layout">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                   <line x1="9" y1="3" x2="9" y2="21"></line>
                 </svg>
@@ -461,7 +462,7 @@
             <div id="backup-config" style="display: none;">
               <div class="form-group">
                 <label for="backup-port">
-                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
                     <line x1="8" y1="21" x2="16" y2="21"></line>
                     <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -474,7 +475,7 @@
 
               <div class="form-group">
                 <label>
-                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="10"></circle>
                     <line x1="12" y1="2" x2="12" y2="6"></line>
                     <line x1="12" y1="18" x2="12" y2="22"></line>

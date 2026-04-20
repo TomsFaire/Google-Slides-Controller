@@ -4,9 +4,22 @@ All notable changes to Google Slides Opener are documented here.
 
 ## [2.0.0] - 2026-04-20
 
-### Changed
-- **Major version** – Desktop settings window redesign (sidebar navigation, dashboard, Faire-style UI); development continues locally on `feature/desktop-ui-redesign` before release.
-- **Version 2.0.0**, **build 69**.
+### Desktop app (Electron settings)
+- **New shell** – Sidebar navigation plus tabbed content for a clearer settings workflow.
+- **Visual system** – Faire-inspired design tokens, typography, cards, and button hierarchy for a more polished, consistent window.
+- **Quality-of-life** – Tab switching and URL handling improvements, status bar refinements, and inline rename flows where presets and lists are edited.
+- **Accessibility** – Stronger focus states, nav semantics, and small interaction fixes from review.
+
+### Web remote (browser UI served by the app)
+- **Light theme (V2-C)** – Full-height remote layout, warm Faire-style surfaces, bottom tab bar for Remote / Controls / Settings, wider layout on tablet and desktop, and safer scrolling (bottom nav moved outside `overflow: hidden` so it is not clipped).
+- **All themes** – Shared structure for Controls and Settings (section cards, primary/secondary buttons, inputs) so every theme feels like the same product; per-theme color tokens for sections, accents, and StageTimer states.
+- **StageTimer** – Non-light themes use a compact flat layout with clear idle / running / warning / critical / overtime / disabled palettes and tabular clock digits.
+- **Presets in the browser** – Clearer empty state (link into Settings), launch row layout, and warning callouts where appropriate.
+- **Reliability** – Root URL works with query strings; HTML responses use `no-store` where appropriate; inactive tab panels stay hidden so Remote content cannot leak onto Controls or Settings on iPad-sized layouts.
+- **Corner radius** – Buttons, tabs, panels, and preview chrome use the same radius language as the light theme (`4px` controls, `10px` settings cards, `2px` slide preview thumbnails) across original, dark, max, touch, and thumb themes.
+
+### Build
+- **Version 2.0.0**, **build 70**.
 
 ## [1.9.12] - 2026-04-15
 

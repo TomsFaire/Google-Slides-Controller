@@ -29,10 +29,6 @@ More context: **[README-SECURITY.md](README-SECURITY.md)** (why the warning exis
 
 See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
-## Screenshots
-
-Desktop and web UI as of **v2.0**. The PNGs in `docs/images/` are **high-fidelity previews** of the current layout (colors, spacing, and structure). For **pixel-exact** captures from *your* machine—including real data in fields—run `yarn capture:readme-screenshots`, which starts the app briefly, writes the same filenames, and restores your Web UI port and theme in `preferences.json`.
-
 ### Desktop app (Electron settings)
 
 Redesigned **sidebar navigation**, **status bar**, and **card-based** pages (Faire-inspired typography and spacing).

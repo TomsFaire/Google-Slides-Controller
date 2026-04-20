@@ -53,11 +53,6 @@ Redesigned **sidebar navigation**, **status bar**, and **card-based** pages (Fai
 | :--: | :--: |
 | ![Web UI — Remote (light)](docs/images/web-ui-remote-light.png) | ![Web UI — Controls (light)](docs/images/web-ui-controls-light.png) |
 
-To regenerate these images from a dev checkout (uses Web UI port **8765** briefly, then restores `preferences.json`):
-
-```bash
-yarn capture:readme-screenshots
-```
 
 ## How it works
 

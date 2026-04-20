@@ -6439,9 +6439,10 @@ function startWebUiServer() {
     /* Light: V2-C Faire layout (full-height remote, bottom tabs) */
     body.theme-light {
       background: var(--faire-page);
-      padding-top: 0;
-      padding-left: 0;
-      padding-right: 0;
+      /* Override base body padding: 20px — otherwise height:100vh .container + padding clips bottom nav */
+      padding: 0;
+      min-height: 100vh;
+      min-height: 100dvh;
       font-family: var(--faire-font-sans);
       color: var(--faire-text);
       align-items: stretch;
@@ -6451,7 +6452,6 @@ function startWebUiServer() {
     body.theme-light.previews-visible { padding-top: 0; }
     body.theme-light .web-ui-header { display: none; }
     body.theme-light > .container > .tabs { display: none; }
-    body.theme-light .bottom-tabs { display: flex; }
     body.theme-light .container {
       max-width: min(440px, 100vw);
       background: var(--faire-surface);
@@ -6461,11 +6461,12 @@ function startWebUiServer() {
       padding: 0;
       display: flex;
       flex-direction: column;
-      min-height: 100vh;
+      width: 100%;
+      flex: 1 1 auto;
+      min-height: 0;
       height: 100vh;
       max-height: 100dvh;
       overflow: hidden;
-      width: 100%;
     }
     body.theme-light.notes-visible .container,
     body.theme-light.previews-visible .container { max-width: min(440px, 100vw); }
@@ -6473,7 +6474,7 @@ function startWebUiServer() {
     body.theme-light #tab-remote.tab-content.active {
       display: flex;
       flex-direction: column;
-      flex: 1 1 auto;
+      flex: 1 1 0;
       min-height: 0;
       overflow: hidden;
     }
@@ -6671,11 +6672,15 @@ function startWebUiServer() {
       color: var(--faire-surface);
     }
     body.theme-light .bottom-tabs {
+      display: flex;
+      flex: 0 0 auto;
       border-top: 1px solid var(--faire-border);
       background: var(--faire-surface);
-      padding: 6px 0 12px;
+      padding: 6px 0 calc(12px + env(safe-area-inset-bottom, 0px));
       flex-shrink: 0;
       margin-top: auto;
+      position: relative;
+      z-index: 2;
     }
     body.theme-light .bottom-tabs .tab-btn {
       flex: 1;

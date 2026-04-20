@@ -1,6 +1,6 @@
 # Google Slides Opener
 
-Run Google Slides fullscreen on one display, speaker notes on another, and drive the deck from a phone or from Companion/Q-SYS over the network.
+Run Google Slides fullscreen on one display, speaker notes on another, and drive the deck from a phone or over the HTTP API (e.g. Bitfocus Companion).
 
 [Releases](https://github.com/TomsFaire/Google-Slides-Controller/releases) · [Changelog](CHANGELOG.md)
 

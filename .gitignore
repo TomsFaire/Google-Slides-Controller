@@ -72,6 +72,7 @@ docs/internal/
 docs/superpowers/
 memory/
 .claude/
+.superpowers/
 
 # Private/sensitive directories
 Private\ &\ Shared/

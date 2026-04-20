@@ -5573,8 +5573,8 @@ function startWebUiServer() {
       return;
     }
     
-    // GET / - Serve the web UI
-    if (req.method === 'GET' && req.url === '/') {
+    // GET / - Serve the web UI (use path only — req.url includes ?query and would not match '/')
+    if (req.method === 'GET' && reqPath === '/') {
       // Get configured API port for the web UI
       const prefs = loadPreferences();
       const apiPort = prefs.apiPort || DEFAULT_API_PORT;
@@ -5601,7 +5601,7 @@ function startWebUiServer() {
         .replace(/'/g, '&#039;');
 
       const html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-gso-build="${String(appBuildInfo.buildNumber || '0')}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -6459,6 +6459,8 @@ function startWebUiServer() {
       border-radius: 0;
       box-shadow: 0 1px 3px rgba(0,0,0,0.06);
       padding: 0;
+      /* Space for fixed bottom tab bar (.bottom-tabs is position:fixed) */
+      padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
       display: flex;
       flex-direction: column;
       width: 100%;
@@ -6467,6 +6469,7 @@ function startWebUiServer() {
       height: 100vh;
       max-height: 100dvh;
       overflow: hidden;
+      box-sizing: border-box;
     }
     body.theme-light.notes-visible .container,
     body.theme-light.previews-visible .container { max-width: min(440px, 100vw); }
@@ -6673,14 +6676,19 @@ function startWebUiServer() {
     }
     body.theme-light .bottom-tabs {
       display: flex;
-      flex: 0 0 auto;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      width: min(440px, 100vw);
+      max-width: 100%;
+      margin: 0 auto;
+      box-sizing: border-box;
       border-top: 1px solid var(--faire-border);
       background: var(--faire-surface);
       padding: 6px 0 calc(12px + env(safe-area-inset-bottom, 0px));
-      flex-shrink: 0;
-      margin-top: auto;
-      position: relative;
-      z-index: 2;
+      z-index: 100;
+      box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.06);
     }
     body.theme-light .bottom-tabs .tab-btn {
       flex: 1;
@@ -6705,6 +6713,10 @@ function startWebUiServer() {
     body.theme-light .bottom-tabs .tab-icon {
       width: 22px;
       height: 22px;
+    }
+    body.theme-light .build-number {
+      bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+      z-index: 101;
     }
     body.theme-light .tab-btn { border-radius: 0; }
     body.theme-light .btn, body.theme-light .remote-btn, body.theme-light .notes-zoom-btn { border-radius: var(--faire-radius); }
@@ -9338,7 +9350,11 @@ function startWebUiServer() {
 </body>
 </html>`;
       
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache'
+      });
       res.end(html);
       return;
     }

@@ -3,481 +3,592 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Google Slides Opener</title>
+  <title>Google Slides Controller</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="container">
-    <main>
-      <!-- Google Account -->
-      <section class="card">
-        <h2>Google Account</h2>
-        
-        <div class="auth-container">
-          <button id="signin-btn" class="btn btn-google">
-            <svg class="btn-icon" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-              <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-              <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-              <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-            </svg>
-            Sign in with Google
-          </button>
+  <div class="app">
+    <aside class="sidebar">
+      <nav class="sidebar-nav">
+        <!-- Overview group -->
+        <div class="nav-group">
+          <div class="nav-group-label">Overview</div>
+          <a class="nav-item active" data-target="dashboard" role="tab" tabindex="0">Dashboard</a>
+          <a class="nav-item" data-target="notes" role="tab" tabindex="0">Speaker Notes</a>
         </div>
-      </section>
+        <!-- Setup group -->
+        <div class="nav-group">
+          <div class="nav-group-label">Setup</div>
+          <a class="nav-item" data-target="account" role="tab" tabindex="0">Account</a>
+          <a class="nav-item" data-target="network" role="tab" tabindex="0">Network</a>
+          <a class="nav-item" data-target="monitors" role="tab" tabindex="0">Monitors</a>
+          <a class="nav-item" data-target="presets" role="tab" tabindex="0">Presets</a>
+          <a class="nav-item" data-target="remote" role="tab" tabindex="0">Web Remote</a>
+        </div>
+        <!-- Other group -->
+        <div class="nav-group">
+          <div class="nav-group-label">Other</div>
+          <a class="nav-item" data-target="advanced" role="tab" tabindex="0">Advanced</a>
+          <a class="nav-item" data-target="logs" role="tab" tabindex="0">Logs</a>
+        </div>
+      </nav>
+      <footer class="sidebar-footer">
+        <div id="build-number"></div>
+      </footer>
+    </aside>
 
-      <!-- Primary/Backup Configuration Section -->
-      <section class="card">
-        <h2>Primary/Backup Configuration</h2>
-        <p class="card-description">Configure this instance as primary (controls backups) or backup (follows primary)</p>
-        
-        <div class="form-group">
-          <label>Mode</label>
-          <div style="display: flex; gap: 20px; margin-top: 8px;">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="radio" name="primary-backup-mode" id="mode-primary" value="primary" />
-              <span>Primary</span>
-            </label>
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="radio" name="primary-backup-mode" id="mode-backup" value="backup" />
-              <span>Backup</span>
-            </label>
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="radio" name="primary-backup-mode" id="mode-standalone" value="standalone" checked />
-              <span>Standalone</span>
-            </label>
+    <div class="main">
+      <header class="status-bar">
+        <span id="status-machine-name" class="status-bar-machine"></span>
+        <div class="status-bar-indicators">
+          <span class="status-indicator" id="status-signin">
+            <span class="led" id="status-signin-led"></span>
+            <span id="status-signin-label">Not signed in</span>
+          </span>
+          <span class="status-indicator" id="status-port">
+            <span class="led led-neutral"></span>
+            <span id="status-port-label">:9595</span>
+          </span>
+          <span class="status-indicator" id="status-tunnel">
+            <span class="led" id="status-tunnel-led"></span>
+            <span id="status-tunnel-label">LAN only</span>
+          </span>
+          <span class="status-indicator" id="status-mode">
+            <span class="led led-neutral"></span>
+            <span id="status-mode-label">Standalone</span>
+          </span>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- DASHBOARD TAB -->
+        <section data-tab="dashboard">
+          <h1 class="page-title">Dashboard</h1>
+
+          <!-- Inline machine name rename -->
+          <div class="dashboard-machine-name-block">
+            <span id="dashboard-machine-heading" class="dashboard-machine-heading" title="Click to rename" role="button" tabindex="0">
+              <span id="dashboard-machine-display"></span>
+              <svg class="rename-pencil" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z"/></svg>
+            </span>
           </div>
-          <small class="field-hint">Primary: Controls backup machines. Backup: Follows primary commands. Standalone: Independent operation.</small>
-        </div>
 
-        <div id="backup-config" style="display: none;">
-          <div class="form-group">
-            <label for="backup-port">
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-                <line x1="8" y1="21" x2="16" y2="21"></line>
-                <line x1="12" y1="17" x2="12" y2="21"></line>
+          <!-- Share URLs panel -->
+          <div class="panel">
+            <h2 class="panel-title">Share URLs</h2>
+            <div class="network-group">
+              <strong>API (Companion):</strong>
+              <div id="dashboard-api-urls" class="url-list"></div>
+            </div>
+            <div class="network-group" style="margin-top: 12px;">
+              <strong>Web UI:</strong>
+              <div id="dashboard-web-ui-urls" class="url-list"></div>
+            </div>
+          </div>
+
+          <!-- WAN summary panel (read-only mirror) -->
+          <div class="panel">
+            <h2 class="panel-title">Internet Access</h2>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="dashboard-wan-enabled" style="width: auto;" />
+                <span>Enable WAN access (Cloudflare Quick Tunnel)</span>
+              </label>
+            </div>
+            <div id="dashboard-wan-url-row" style="display: none; margin-top: 8px;">
+              <input type="text" id="dashboard-wan-url-display" class="input-field" readonly placeholder="Connecting…" style="flex: 1; min-width: 180px;" />
+            </div>
+          </div>
+
+          <!-- CTA row -->
+          <div class="dashboard-cta-row">
+            <button id="test-btn" class="btn btn-primary">
+              <svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
               </svg>
-              Backup Communication Port
-            </label>
-            <input type="number" id="backup-port" class="input-field" min="1024" max="65535" placeholder="9595" />
-            <small class="field-hint">Port used to communicate with backup machines (default: 9595, same as API port)</small>
+              Open Test Presentation
+            </button>
           </div>
+        </section>
 
-          <div class="form-group">
-            <label>
-              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="2" x2="12" y2="6"></line>
-                <line x1="12" y1="18" x2="12" y2="22"></line>
-                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
-                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
-                <line x1="2" y1="12" x2="6" y2="12"></line>
-                <line x1="18" y1="12" x2="22" y2="12"></line>
-                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
-                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
-              </svg>
-              Backup Machines
-            </label>
-            <div id="backup-ip-list" style="display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0;"></div>
-            <button type="button" id="add-backup-ip" class="btn btn-secondary" style="margin-top: 10px;">+ Add backup machine</button>
-            <small class="field-hint">Enter an IP address or hostname for each backup. Leave blank to remove. Supports any number of backups.</small>
+        <!-- SPEAKER NOTES TAB -->
+        <section data-tab="notes" hidden>
+          <h1 class="page-title">Speaker Notes</h1>
+          <div class="panel">
+            <p class="card-description">Notes for the current slide, with line breaks fixed. Open speaker notes in the presentation to use this.</p>
+            <div class="form-group">
+              <div id="speaker-notes-capture" class="speaker-notes-capture" style="white-space: pre-wrap; min-height: 120px; max-height: 280px; overflow-y: auto; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);">No speaker notes window open.</div>
+              <div id="notes-encoding-warning-desktop" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#907c3a; background:rgba(144,124,58,0.08); border:1px solid rgba(144,124,58,0.3); border-radius:var(--radius);">Line break encoding issues detected on this slide. The text above has corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the cleanup script (see docs/fix-speaker-notes.gs).</div>
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button type="button" id="speaker-notes-refresh" class="btn btn-secondary">Refresh</button>
+                <button type="button" id="speaker-notes-copy" class="btn btn-secondary">Copy to clipboard</button>
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- Speaker notes (current slide) - clean copy from our API -->
-      <section class="card">
-        <h2>Speaker notes (current slide)</h2>
-        <p class="card-description">Notes for the current slide, with line breaks fixed. Open speaker notes in the presentation to use this. Copy from here for clean text.</p>
-        <div class="form-group">
-          <div id="speaker-notes-capture" class="speaker-notes-capture" style="white-space: pre-wrap; min-height: 120px; max-height: 280px; overflow-y: auto; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-primary); font-size: 14px; line-height: 1.5;">No speaker notes window open.</div>
-          <div id="notes-encoding-warning-desktop" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#b26a00; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); border-radius:6px;">Line break encoding issues detected on this slide. The text above has corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the cleanup script (see docs/fix-speaker-notes.gs).</div>
-          <div style="display: flex; gap: 8px; margin-top: 8px;">
-            <button type="button" id="speaker-notes-refresh" class="btn btn-secondary">Refresh</button>
-            <button type="button" id="speaker-notes-copy" class="btn btn-secondary">Copy to clipboard</button>
+        <!-- ACCOUNT TAB -->
+        <section data-tab="account" hidden>
+          <h1 class="page-title">Account</h1>
+          <div class="panel">
+            <h2 class="panel-title">Google Account</h2>
+            <div class="auth-container">
+              <button id="signin-btn" class="btn btn-google">
+                <svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24">
+                  <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                  <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                Sign in with Google
+              </button>
+            </div>
           </div>
-        </div>
-      </section>
-
-      <!-- Port Configuration Section -->
-      <section class="card">
-        <h2>Network Ports</h2>
-        <p class="card-description">Configure ports for API and Web UI (restart required)</p>
-        
-        <div class="form-group">
-          <label for="api-port">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-              <line x1="8" y1="21" x2="16" y2="21"></line>
-              <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
-            API Port (Companion)
-          </label>
-          <input type="number" id="api-port" class="input-field" min="1024" max="65535" placeholder="9595" />
-          <small class="field-hint">Port for Companion module API (default: 9595)</small>
-        </div>
-
-        <div class="form-group">
-          <label for="web-ui-port">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-              <line x1="8" y1="21" x2="16" y2="21"></line>
-              <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
-            Web UI Port
-          </label>
-          <input type="number" id="web-ui-port" class="input-field" min="1" max="65535" placeholder="80" />
-          <small class="field-hint">Port for web interface (default: 80, requires admin for ports &lt;1024)</small>
-        </div>
-
-        <div class="form-group">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="web-ui-use-https" style="width: auto;" />
-            <span>Serve Web UI over HTTPS</span>
-          </label>
-          <small class="field-hint">Encrypt the Web UI. Use a custom certificate and key below, or leave empty to use a self-signed certificate (browsers will show a warning). Restart required.</small>
-        </div>
-        <div class="form-group" id="web-ui-https-cert-group" style="display: none;">
-          <label>Certificate file (optional)</label>
-          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <input type="text" id="web-ui-cert-path" class="input-field" placeholder="Path to certificate (.pem, .crt)" readonly style="flex: 1; min-width: 180px;" />
-            <button type="button" id="web-ui-cert-choose" class="btn btn-secondary">Choose</button>
-            <button type="button" id="web-ui-cert-clear" class="btn btn-secondary">Clear</button>
+          <div class="panel">
+            <h2 class="panel-title">Machine Name</h2>
+            <p class="card-description">Set a name for this machine (shown in web UI)</p>
+            <div class="form-group">
+              <label for="machine-name">Machine Name</label>
+              <input type="text" id="machine-name" class="input-field" placeholder="Enter machine name..." maxlength="50" />
+              <small class="field-hint">Leave empty to use system hostname</small>
+            </div>
           </div>
-        </div>
-        <div class="form-group" id="web-ui-https-key-group" style="display: none;">
-          <label>Private key file (optional)</label>
-          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <input type="text" id="web-ui-key-path" class="input-field" placeholder="Path to private key (.pem)" readonly style="flex: 1; min-width: 180px;" />
-            <button type="button" id="web-ui-key-choose" class="btn btn-secondary">Choose</button>
-            <button type="button" id="web-ui-key-clear" class="btn btn-secondary">Clear</button>
-          </div>
-        </div>
+        </section>
 
-        <!-- Network Access Information -->
-        <div class="network-info">
-          <h3>Network Access</h3>
-          <div class="network-urls">
+        <!-- NETWORK TAB -->
+        <section data-tab="network" hidden>
+          <h1 class="page-title">Network</h1>
+
+          <!-- Share URLs panel -->
+          <div class="panel">
+            <h2 class="panel-title">Share URLs</h2>
             <div class="network-group">
               <strong>API (Companion):</strong>
               <div id="api-urls" class="url-list"></div>
             </div>
-            <div class="network-group">
+            <div class="network-group" style="margin-top: 12px;">
               <strong>Web UI:</strong>
               <div id="web-ui-urls" class="url-list"></div>
             </div>
           </div>
-        </div>
-      </section>
 
-      <section class="card">
-        <h2>WAN Access</h2>
-        <p class="card-description">
-          Share the web remote with viewers outside your local network using a free Cloudflare Quick Tunnel (no account required).
-        </p>
-        <p class="field-hint" style="margin-bottom: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 10px 12px;">
-          <strong>Security:</strong> Anyone with the tunnel link can use the web remote until you turn this off or restart the app. Treat the link like a password. Your controller IP allowlist does not apply to traffic through this tunnel (connections arrive from localhost). You can add a numeric PIN below so the web remote asks for it before loading over the tunnel.
-        </p>
-        <div class="form-group" id="wan-tunnel-pin-group">
-          <label for="wan-pin-scope">Require Web UI PIN for</label>
-          <select id="wan-pin-scope" class="input-field">
-            <option value="tunnel">Cloudflare tunnel only</option>
-            <option value="lan">Local network only (LAN IPs)</option>
-            <option value="both">Tunnel and local network</option>
-          </select>
-          <small class="field-hint">Tunnel traffic hits this machine as localhost, so it does not match “LAN IPs only”. Use “Tunnel and local network” to PIN-protect both the share link and phones or laptops on your Wi‑Fi.</small>
-          <label for="wan-tunnel-pin-new" style="margin-top: 14px;">Web UI PIN (optional)</label>
-          <small class="field-hint">4–12 digits. Browsers must unlock once (cookie) when a PIN is set and the request matches the option above.</small>
-          <div id="wan-tunnel-pin-status" class="field-hint" style="margin-top: 8px; margin-bottom: 8px;"></div>
-          <input type="password" id="wan-tunnel-pin-new" class="input-field" placeholder="New PIN" inputmode="numeric" autocomplete="new-password" maxlength="12" />
-          <input type="password" id="wan-tunnel-pin-confirm" class="input-field" placeholder="Confirm new PIN" style="margin-top: 8px;" inputmode="numeric" autocomplete="new-password" maxlength="12" />
-          <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
-            <button type="button" id="wan-tunnel-pin-save" class="btn btn-secondary">Save PIN</button>
-            <button type="button" id="wan-tunnel-pin-remove" class="btn btn-secondary">Remove PIN</button>
+          <!-- Ports panel -->
+          <div class="panel">
+            <h2 class="panel-title">Ports</h2>
+            <p class="card-description">Configure ports for API and Web UI (restart required)</p>
+
+            <div class="form-group">
+              <label for="api-port">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                  <line x1="8" y1="21" x2="16" y2="21"></line>
+                  <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                API Port (Companion)
+              </label>
+              <input type="number" id="api-port" class="input-field" min="1024" max="65535" placeholder="9595" />
+              <small class="field-hint">Port for Companion module API (default: 9595)</small>
+            </div>
+
+            <div class="form-group">
+              <label for="web-ui-port">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                  <line x1="8" y1="21" x2="16" y2="21"></line>
+                  <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                Web UI Port
+              </label>
+              <input type="number" id="web-ui-port" class="input-field" min="1" max="65535" placeholder="80" />
+              <small class="field-hint">Port for web interface (default: 80, requires admin for ports &lt;1024)</small>
+            </div>
+
+            <!-- HTTPS toggle lives here, adjacent to ports (§4b) -->
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="web-ui-use-https" style="width: auto;" />
+                <span>Serve over HTTPS</span>
+              </label>
+              <small class="field-hint">Encrypt the Web UI. Use a custom certificate and key below, or leave empty to use a self-signed certificate (browsers will show a warning). Restart required.</small>
+            </div>
+            <div class="form-group" id="web-ui-https-cert-group" style="display: none;">
+              <label>Certificate file (optional)</label>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="web-ui-cert-path" class="input-field" placeholder="Path to certificate (.pem, .crt)" readonly style="flex: 1; min-width: 180px;" />
+                <button type="button" id="web-ui-cert-choose" class="btn btn-secondary">Choose</button>
+                <button type="button" id="web-ui-cert-clear" class="btn btn-secondary">Clear</button>
+              </div>
+            </div>
+            <div class="form-group" id="web-ui-https-key-group" style="display: none;">
+              <label>Private key file (optional)</label>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="web-ui-key-path" class="input-field" placeholder="Path to private key (.pem)" readonly style="flex: 1; min-width: 180px;" />
+                <button type="button" id="web-ui-key-choose" class="btn btn-secondary">Choose</button>
+                <button type="button" id="web-ui-key-clear" class="btn btn-secondary">Clear</button>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="form-group">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="wan-enabled" style="width: auto;" />
-            <span>Enable WAN access (Cloudflare Quick Tunnel)</span>
-          </label>
-          <small class="field-hint">Points the tunnel at your Web UI port. Run <code>yarn download:cloudflared</code> once before testing or building.</small>
-        </div>
-        <div id="wan-status-row" class="form-group" style="display: none;">
-          <label>Tunnel URL</label>
-          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <input type="text" id="wan-url-display" class="input-field" readonly placeholder="Connecting…" style="flex: 1; min-width: 180px;" />
-            <button type="button" id="wan-copy-btn" class="btn btn-secondary">Copy</button>
+
+          <!-- WAN / Tunnel panel -->
+          <div class="panel">
+            <h2 class="panel-title">Share over Internet</h2>
+            <p class="card-description">Share the web remote with viewers outside your local network using a free Cloudflare Quick Tunnel (no account required).</p>
+            <p class="field-hint" style="margin-bottom: 12px; color: var(--warn); background: rgba(144,124,58,0.06); border: 1px solid rgba(144,124,58,0.25); border-radius: var(--radius); padding: 10px 12px;">
+              <strong>Security:</strong> Anyone with the tunnel link can use the web remote until you turn this off or restart the app. Treat the link like a password. Your controller IP allowlist does not apply to traffic through this tunnel (connections arrive from localhost). You can add a numeric PIN below so the web remote asks for it before loading over the tunnel.
+            </p>
+            <div class="form-group" id="wan-tunnel-pin-group">
+              <label for="wan-pin-scope">Require Web UI PIN for</label>
+              <select id="wan-pin-scope" class="input-field">
+                <option value="tunnel">Cloudflare tunnel only</option>
+                <option value="lan">Local network only (LAN IPs)</option>
+                <option value="both">Tunnel and local network</option>
+              </select>
+              <small class="field-hint">Tunnel traffic hits this machine as localhost, so it does not match "LAN IPs only". Use "Tunnel and local network" to PIN-protect both the share link and phones or laptops on your Wi‑Fi.</small>
+              <div class="form-group" style="margin-top: 14px;">
+                <label for="wan-tunnel-pin-new">Web UI PIN (optional)</label>
+                <small class="field-hint">4–12 digits. Browsers must unlock once (cookie) when a PIN is set and the request matches the option above.</small>
+                <div id="wan-tunnel-pin-status" class="field-hint" style="margin-top: 8px; margin-bottom: 8px;"></div>
+                <input type="password" id="wan-tunnel-pin-new" class="input-field" placeholder="New PIN" inputmode="numeric" autocomplete="new-password" maxlength="12" />
+                <label for="wan-tunnel-pin-confirm" style="margin-top: 8px;">Confirm PIN</label>
+                <input type="password" id="wan-tunnel-pin-confirm" class="input-field" placeholder="Confirm new PIN" style="margin-top: 4px;" inputmode="numeric" autocomplete="new-password" maxlength="12" />
+                <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                  <button type="button" id="wan-tunnel-pin-save" class="btn btn-secondary">Save PIN</button>
+                  <button type="button" id="wan-tunnel-pin-remove" class="btn btn-secondary">Remove PIN</button>
+                </div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="wan-enabled" style="width: auto;" />
+                <span>Enable WAN access (Cloudflare Quick Tunnel)</span>
+              </label>
+              <small class="field-hint">Points the tunnel at your Web UI port. Run <code>yarn download:cloudflared</code> once before testing or building.</small>
+            </div>
+            <div id="wan-status-row" class="form-group" style="display: none;">
+              <label>Tunnel URL</label>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="wan-url-display" class="input-field" readonly placeholder="Connecting…" style="flex: 1; min-width: 180px;" />
+                <button type="button" id="wan-copy-btn" class="btn btn-secondary">Copy</button>
+              </div>
+              <small class="field-hint">The URL changes each time the app starts. Requires internet access.</small>
+            </div>
           </div>
-          <small class="field-hint">The URL changes each time the app starts. Requires internet access.</small>
-        </div>
-      </section>
+        </section>
 
-      <!-- Monitor Selection Section -->
-      <section class="card">
-        <h2>Monitor Setup</h2>
-        
-        <div class="form-group">
-          <label for="presentation-display">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-              <line x1="8" y1="21" x2="16" y2="21"></line>
-              <line x1="12" y1="17" x2="12" y2="21"></line>
-            </svg>
-            Presentation Monitor
-          </label>
-          <select id="presentation-display" class="select-input">
-            <option value="">Loading displays...</option>
-          </select>
-        </div>
+        <!-- MONITORS TAB -->
+        <section data-tab="monitors" hidden>
+          <h1 class="page-title">Monitors</h1>
+          <div class="panel">
+            <div class="form-group">
+              <label for="presentation-display">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                  <line x1="8" y1="21" x2="16" y2="21"></line>
+                  <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+                Presentation Monitor
+              </label>
+              <select id="presentation-display" class="select-input">
+                <option value="">Loading displays...</option>
+              </select>
+            </div>
 
-        <div class="form-group">
-          <label for="notes-display">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
-            Notes Monitor
-          </label>
-          <select id="notes-display" class="select-input">
-            <option value="">Loading displays...</option>
-          </select>
-        </div>
+            <div class="form-group">
+              <label for="notes-display">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                  <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                Notes Monitor
+              </label>
+              <select id="notes-display" class="select-input">
+                <option value="">Loading displays...</option>
+              </select>
+            </div>
 
-        <div class="form-group">
-          <label for="notes-layout">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="9" y1="3" x2="9" y2="21"></line>
-            </svg>
-            Notes Layout
-          </label>
-          <select id="notes-layout" class="select-input">
-            <option value="hide">Notes only (hide previews)</option>
-            <option value="default">Google default (50/50)</option>
-          </select>
-          <p class="field-hint">Applies when speaker notes open. Use Relaunch Notes to apply immediately if notes are already open.</p>
-          <button type="button" id="btn-relaunch-speaker-notes" class="btn btn-secondary" style="margin-top: 8px;">Relaunch Notes</button>
-        </div>
+            <div class="form-group">
+              <label for="notes-layout">
+                <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="9" y1="3" x2="9" y2="21"></line>
+                </svg>
+                Notes Layout
+              </label>
+              <select id="notes-layout" class="select-input">
+                <option value="hide">Notes only (hide previews)</option>
+                <option value="default">Google default (50/50)</option>
+              </select>
+              <p class="field-hint">Applies when speaker notes open. Use Relaunch Notes to apply immediately if notes are already open.</p>
+              <button type="button" id="btn-relaunch-speaker-notes" class="btn btn-secondary" style="margin-top: 8px;">Relaunch Notes</button>
+            </div>
 
-        <div class="form-group">
-          <label for="default-notes-zoom-steps">Default speaker notes zoom (steps)</label>
-          <input type="number" id="default-notes-zoom-steps" class="select-input" min="-10" max="40" value="0" step="1" />
-          <p class="field-hint">Extra &quot;Zoom in&quot; clicks in Google Slides when speaker notes open (0 = Slides default). Negative values zoom out. Same scale as the remote zoom buttons.</p>
-        </div>
-
-        <div class="form-group">
-          <label for="presentation-gpu-mode">Presentation GPU mode</label>
-          <select id="presentation-gpu-mode" class="select-input">
-            <option value="default">Default (Chromium decides)</option>
-            <option value="angle-metal">ANGLE Metal (macOS)</option>
-            <option value="angle-gl">ANGLE OpenGL</option>
-            <option value="swiftshader">SwiftShader (software GL)</option>
-            <option value="disable-gpu">Disable GPU (software compositing)</option>
-          </select>
-          <p class="field-hint">If slide images show wrong transparency, boxes, or seams vs Chrome, try ANGLE Metal or Disable GPU. <strong>Restart the app</strong> after changing this.</p>
-        </div>
-        <div class="form-group" id="presentation-native-fullscreen-group">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="presentation-native-fullscreen" style="width: auto;" />
-            <span>macOS: use native fullscreen for slides (not simple fullscreen)</span>
-          </label>
-          <p class="field-hint">Diagnostic: uses a different compositor path (may use an extra Space). Helps compare rendering glitches; default off.</p>
-        </div>
-        <button type="button" id="save-presentation-rendering-btn" class="btn btn-secondary">Save presentation rendering</button>
-      </section>
-
-      <!-- Machine Name Section -->
-      <section class="card">
-        <h2>Machine Name</h2>
-        <p class="card-description">Set a name for this machine (shown in web UI)</p>
-        
-        <div class="form-group">
-          <label for="machine-name">
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-              <circle cx="12" cy="7" r="4"></circle>
-            </svg>
-            Machine Name
-          </label>
-          <input type="text" id="machine-name" class="input-field" placeholder="Enter machine name..." maxlength="50" />
-          <small class="field-hint">Leave empty to use system hostname</small>
-        </div>
-      </section>
-
-      <!-- Controller Allowlist Section (Desktop-only for security) -->
-      <section class="card">
-        <h2>Controller Allowlist (Optional)</h2>
-        <p class="card-description">
-          Restrict which IP addresses can control this app via the Web UI and HTTP API.
-          If left empty, any device on your network can control the app.
-        </p>
-        
-        <div class="form-group">
-          <label>Allowed Controller IPs</label>
-          <div id="controller-ip-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
-          <button type="button" id="add-controller-ip" class="btn btn-secondary" style="margin-top: 10px;">+ Add controller IP</button>
-          <small class="field-hint">
-            Tip: Use the IPs shown above in "Network Access". You can also allow a subnet using CIDR (e.g. <code>192.168.1.0/24</code>). Localhost (127.0.0.1) is always allowed.
-          </small>
-        </div>
-      </section>
-
-      <!-- Preset Presentations Section -->
-      <section class="card">
-        <h2>Preset Presentations</h2>
-        <p class="card-description">Configure preset presentations that can be opened from Companion or the web UI. Add as many as you need.</p>
-        
-        <div class="form-group">
-          <label>Presentations</label>
-          <div id="preset-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
-          <button type="button" id="add-preset" class="btn btn-secondary" style="margin-top: 10px;">+ Add presentation</button>
-          <small class="field-hint">Enter a Google Slides URL for each preset. Leave blank to remove. Preset 1, 2, 3… correspond to Companion actions.</small>
-        </div>
-        
-        <button id="save-presets-btn" class="btn">Save Presets</button>
-        <button id="load-presets-btn" class="btn btn-secondary">Load Current Presets</button>
-      </section>
-
-      <!-- Stagetimer.io Integration Section -->
-      <section class="card">
-        <h2>Stagetimer.io Integration</h2>
-        <p class="card-description">Connect to your stagetimer.io room to display live timer data. Get your Room ID and API Key from the stagetimer.io controller page.</p>
-        
-        <div class="form-group">
-          <label for="stagetimer-room-id">Room ID</label>
-          <input type="text" id="stagetimer-room-id" class="input-field" placeholder="Enter your stagetimer.io Room ID" />
-        </div>
-        
-        <div class="form-group">
-          <label for="stagetimer-api-key">API Key</label>
-          <input type="password" id="stagetimer-api-key" class="input-field" placeholder="Enter your stagetimer.io API Key" />
-        </div>
-        
-        <div class="form-group">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="stagetimer-enabled" style="width: auto;" />
-            <span>Enable timer display</span>
-          </label>
-        </div>
-        
-        <div class="form-group">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="stagetimer-visible" style="width: auto;" checked />
-            <span>Show timer on Remote tab</span>
-          </label>
-        </div>
-        
-        <button id="save-stagetimer-btn" class="btn">Save Stagetimer Settings</button>
-        <button id="load-stagetimer-btn" class="btn btn-secondary">Load Current Settings</button>
-      </section>
-
-      <!-- Web UI Appearance Section -->
-      <section class="card">
-        <h2>Web UI Appearance</h2>
-        <p class="card-description">Theme and custom CSS for the browser-based remote. Custom CSS overrides the selected theme. Reload the Web UI page to see changes.</p>
-        
-        <div class="form-group">
-          <label for="web-ui-theme">Theme</label>
-          <select id="web-ui-theme" class="select-input">
-            <option value="original">Original</option>
-            <option value="light">Light (minimalist white)</option>
-            <option value="dark">Dark</option>
-            <option value="max">Max (iPad, maximize space)</option>
-            <option value="touch">Touch (large tap targets)</option>
-            <option value="thumb">Thumb (one-handed)</option>
-          </select>
-        </div>
-        
-        <div class="form-group">
-          <label>Brand logo</label>
-          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <input type="text" id="web-ui-logo-path" class="input-field" placeholder="No file selected" readonly style="flex: 1; min-width: 180px;" />
-            <button type="button" id="web-ui-logo-choose" class="btn btn-secondary">Choose file</button>
-            <button type="button" id="web-ui-logo-clear" class="btn btn-secondary">Clear</button>
+            <div class="form-group">
+              <label for="default-notes-zoom-steps">Default speaker notes zoom (steps)</label>
+              <input type="number" id="default-notes-zoom-steps" class="input-field" min="-10" max="40" value="0" step="1" />
+              <p class="field-hint">Extra "Zoom in" clicks in Google Slides when speaker notes open (0 = Slides default). Negative values zoom out.</p>
+            </div>
           </div>
-          <small class="field-hint">Replaces the icon next to the system name in all themes except Max. PNG, JPG, or SVG.</small>
-        </div>
-        
-        <div class="form-group">
-          <label>Custom CSS file</label>
-          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <input type="text" id="web-ui-custom-css-path" class="input-field" placeholder="No file selected" readonly style="flex: 1; min-width: 180px;" />
-            <button type="button" id="web-ui-custom-css-choose" class="btn btn-secondary">Choose file</button>
-            <button type="button" id="web-ui-custom-css-clear" class="btn btn-secondary">Clear</button>
+        </section>
+
+        <!-- PRESETS TAB -->
+        <section data-tab="presets" hidden>
+          <h1 class="page-title">Presets</h1>
+          <div class="panel">
+            <p class="card-description">Configure preset presentations that can be opened from Companion or the web UI. Add as many as you need.</p>
+            <div class="form-group">
+              <label>Presentations</label>
+              <div id="preset-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+              <button type="button" id="add-preset" class="btn btn-secondary" style="margin-top: 10px;">+ Add presentation</button>
+              <small class="field-hint">Enter a Google Slides URL for each preset. Leave blank to remove. Preset 1, 2, 3… correspond to Companion actions.</small>
+            </div>
+            <button id="save-presets-btn" class="btn btn-primary">Save Presets</button>
+            <button id="load-presets-btn" class="btn btn-secondary" style="margin-top: 8px;">Load Current Presets</button>
           </div>
-          <small class="field-hint">Optional. Select a local .css file to override Web UI styles (white-label).</small>
-          <div style="margin-top: 8px;">
-            <button type="button" id="web-ui-download-css-template" class="btn btn-secondary">Download CSS template</button>
+        </section>
+
+        <!-- WEB REMOTE TAB -->
+        <section data-tab="remote" hidden>
+          <h1 class="page-title">Web Remote</h1>
+
+          <!-- Appearance panel -->
+          <div class="panel">
+            <h2 class="panel-title">Appearance</h2>
+            <p class="card-description">Theme and custom CSS for the browser-based remote. Custom CSS overrides the selected theme. Reload the Web UI page to see changes.</p>
+
+            <div class="form-group">
+              <label for="web-ui-theme">Theme</label>
+              <select id="web-ui-theme" class="select-input">
+                <option value="original">Original</option>
+                <option value="light">Light (minimalist white)</option>
+                <option value="dark">Dark</option>
+                <option value="max">Max (iPad, maximize space)</option>
+                <option value="touch">Touch (large tap targets)</option>
+                <option value="thumb">Thumb (one-handed)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Brand logo</label>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="web-ui-logo-path" class="input-field" placeholder="No file selected" readonly style="flex: 1; min-width: 180px;" />
+                <button type="button" id="web-ui-logo-choose" class="btn btn-secondary">Choose file</button>
+                <button type="button" id="web-ui-logo-clear" class="btn btn-secondary">Clear</button>
+              </div>
+              <small class="field-hint">Replaces the icon next to the system name in all themes except Max. PNG, JPG, or SVG.</small>
+            </div>
+
+            <div class="form-group">
+              <label>Custom CSS file</label>
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <input type="text" id="web-ui-custom-css-path" class="input-field" placeholder="No file selected" readonly style="flex: 1; min-width: 180px;" />
+                <button type="button" id="web-ui-custom-css-choose" class="btn btn-secondary">Choose file</button>
+                <button type="button" id="web-ui-custom-css-clear" class="btn btn-secondary">Clear</button>
+              </div>
+              <small class="field-hint">Optional. Select a local .css file to override Web UI styles (white-label).</small>
+              <div style="margin-top: 8px;">
+                <button type="button" id="web-ui-download-css-template" class="btn btn-secondary">Download CSS template</button>
+              </div>
+            </div>
+
+            <button id="save-web-ui-appearance-btn" class="btn btn-primary">Save Web UI Appearance</button>
           </div>
-        </div>
-        
-        <button id="save-web-ui-appearance-btn" class="btn">Save Web UI Appearance</button>
-      </section>
 
-      <!-- Test Presentation Section -->
-      <section class="card">
-        <h2>Quick Test</h2>
-        <p class="card-description">Open the test presentation to verify setup</p>
-        
-        <button id="test-btn" class="btn btn-primary btn-large">
-          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="5 3 19 12 5 21 5 3"></polygon>
-          </svg>
-          Open Test Presentation
-        </button>
-      </section>
+          <!-- Stagetimer panel -->
+          <div class="panel">
+            <h2 class="panel-title">Stagetimer.io</h2>
+            <p class="card-description">Connect to your stagetimer.io room to display live timer data. Get your Room ID and API Key from the stagetimer.io controller page.</p>
 
-      <!-- Debug Logs Section -->
-      <section class="card">
-        <h2>Debug Logs</h2>
-        <p class="card-description">Live application logs and a downloadable debug report for troubleshooting.</p>
-        <div id="crash-info-block" style="margin-bottom: 12px; padding: 10px; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; font-size: 13px;">
-          <div><strong>Crash reports folder:</strong> <span id="crash-reports-dir">—</span></div>
-          <div style="margin-top: 6px;"><strong>Native crash dumps:</strong> <span id="crash-dumps-dir">—</span></div>
-          <div style="margin-top: 6px;"><strong>Last crash:</strong> <span id="last-crash-time">No crash recorded</span></div>
-          <button type="button" id="open-crash-reports-folder-btn" class="btn btn-secondary" style="margin-top: 8px;">Open crash reports folder</button>
-        </div>
-        <div id="debug-logs-console" style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.4; min-height: 360px; max-height: 480px; overflow-y: auto; margin-bottom: 10px;">
-          <div style="color: #888;">Waiting for logs...</div>
-        </div>
-        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-          <button type="button" id="debug-logs-clear" class="btn btn-secondary">Clear</button>
-          <button type="button" id="debug-logs-save" class="btn">Save Debug Log (.txt)</button>
-        </div>
-      </section>
+            <div class="form-group">
+              <label for="stagetimer-room-id">Room ID</label>
+              <input type="text" id="stagetimer-room-id" class="input-field" placeholder="Enter your stagetimer.io Room ID" />
+            </div>
 
-      <!-- Logging Section -->
-      <section class="card">
-        <h2>Logging</h2>
-        <p class="card-description">Control how much the app writes to terminal logs. Secrets (API keys/tokens/passwords) are always redacted.</p>
-        
-        <div class="form-group">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="verbose-logging" style="width: auto;" />
-            <span>Enable verbose logging</span>
-          </label>
-          <small class="field-hint">Useful for debugging. Takes effect immediately (no restart required).</small>
-        </div>
+            <div class="form-group">
+              <label for="stagetimer-api-key">API Key</label>
+              <input type="password" id="stagetimer-api-key" class="input-field" placeholder="Enter your stagetimer.io API Key" />
+            </div>
 
-        <div class="form-group" style="margin-top: 14px;">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="web-ui-debug-console-enabled" style="width: auto;" />
-            <span>Enable Web UI debug console</span>
-          </label>
-          <small class="field-hint">Off by default. When enabled, the Web UI will show a Debug Console for troubleshooting.</small>
-        </div>
-      </section>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="stagetimer-enabled" style="width: auto;" />
+                <span>Enable timer display</span>
+              </label>
+            </div>
 
-      <!-- Status Messages -->
-      <div id="status-message" class="status-message"></div>
-    </main>
-    <div id="build-number" class="build-number"></div>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="stagetimer-visible" style="width: auto;" checked />
+                <span>Show timer on Remote tab</span>
+              </label>
+            </div>
+
+            <button id="save-stagetimer-btn" class="btn btn-primary">Save Stagetimer Settings</button>
+            <button id="load-stagetimer-btn" class="btn btn-secondary" style="margin-top: 8px;">Load Current Settings</button>
+          </div>
+        </section>
+
+        <!-- ADVANCED TAB -->
+        <section data-tab="advanced" hidden>
+          <h1 class="page-title">Advanced</h1>
+
+          <!-- Primary/Backup panel -->
+          <div class="panel">
+            <h2 class="panel-title">Primary / Backup</h2>
+            <p class="card-description">Configure this instance as primary (controls backups) or backup (follows primary)</p>
+
+            <div class="form-group">
+              <label>Mode</label>
+              <div style="display: flex; gap: 20px; margin-top: 8px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="radio" name="primary-backup-mode" id="mode-primary" value="primary" />
+                  <span>Primary</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="radio" name="primary-backup-mode" id="mode-backup" value="backup" />
+                  <span>Backup</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                  <input type="radio" name="primary-backup-mode" id="mode-standalone" value="standalone" checked />
+                  <span>Standalone</span>
+                </label>
+              </div>
+              <small class="field-hint">Primary: Controls backup machines. Backup: Follows primary commands. Standalone: Independent operation.</small>
+            </div>
+
+            <div id="backup-config" style="display: none;">
+              <div class="form-group">
+                <label for="backup-port">
+                  <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                  </svg>
+                  Backup Communication Port
+                </label>
+                <input type="number" id="backup-port" class="input-field" min="1024" max="65535" placeholder="9595" />
+                <small class="field-hint">Port used to communicate with backup machines (default: 9595, same as API port)</small>
+              </div>
+
+              <div class="form-group">
+                <label>
+                  <svg class="icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="2" x2="12" y2="6"></line>
+                    <line x1="12" y1="18" x2="12" y2="22"></line>
+                    <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                    <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                    <line x1="2" y1="12" x2="6" y2="12"></line>
+                    <line x1="18" y1="12" x2="22" y2="12"></line>
+                    <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                    <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+                  </svg>
+                  Backup Machines
+                </label>
+                <div id="backup-ip-list" style="display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0;"></div>
+                <button type="button" id="add-backup-ip" class="btn btn-secondary" style="margin-top: 10px;">+ Add backup machine</button>
+                <small class="field-hint">Enter an IP address or hostname for each backup. Leave blank to remove. Supports any number of backups.</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Presentation rendering panel -->
+          <div class="panel">
+            <h2 class="panel-title">Presentation Rendering</h2>
+
+            <div class="form-group">
+              <label for="presentation-gpu-mode">GPU mode</label>
+              <select id="presentation-gpu-mode" class="select-input">
+                <option value="default">Default (Chromium decides)</option>
+                <option value="angle-metal">ANGLE Metal (macOS)</option>
+                <option value="angle-gl">ANGLE OpenGL</option>
+                <option value="swiftshader">SwiftShader (software GL)</option>
+                <option value="disable-gpu">Disable GPU (software compositing)</option>
+              </select>
+              <p class="field-hint">If slide images show wrong transparency, boxes, or seams vs Chrome, try ANGLE Metal or Disable GPU. <strong>Restart the app</strong> after changing this.</p>
+            </div>
+
+            <div class="form-group" id="presentation-native-fullscreen-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="presentation-native-fullscreen" style="width: auto;" />
+                <span>macOS: use native fullscreen for slides (not simple fullscreen)</span>
+              </label>
+              <p class="field-hint">Diagnostic: uses a different compositor path (may use an extra Space). Helps compare rendering glitches; default off.</p>
+            </div>
+
+            <button type="button" id="save-presentation-rendering-btn" class="btn btn-secondary">Save presentation rendering</button>
+          </div>
+
+          <!-- Controller allowlist panel -->
+          <div class="panel">
+            <h2 class="panel-title">Controller Allowlist</h2>
+            <p class="card-description">Restrict which IP addresses can control this app via the Web UI and HTTP API. If left empty, any device on your network can control the app.</p>
+
+            <div class="form-group">
+              <label>Allowed Controller IPs</label>
+              <div id="controller-ip-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+              <button type="button" id="add-controller-ip" class="btn btn-secondary" style="margin-top: 10px;">+ Add controller IP</button>
+              <small class="field-hint">Tip: Use the IPs shown above in "Network Access". You can also allow a subnet using CIDR (e.g. <code>192.168.1.0/24</code>). Localhost (127.0.0.1) is always allowed.</small>
+            </div>
+          </div>
+        </section>
+
+        <!-- LOGS TAB -->
+        <section data-tab="logs" hidden>
+          <h1 class="page-title">Logs</h1>
+
+          <!-- Crash reports panel -->
+          <div class="panel">
+            <h2 class="panel-title">Crash Reports</h2>
+            <div id="crash-info-block" style="font-size: 13px;">
+              <div><strong>Crash reports folder:</strong> <span id="crash-reports-dir">—</span></div>
+              <div style="margin-top: 6px;"><strong>Native crash dumps:</strong> <span id="crash-dumps-dir">—</span></div>
+              <div style="margin-top: 6px;"><strong>Last crash:</strong> <span id="last-crash-time">No crash recorded</span></div>
+              <button type="button" id="open-crash-reports-folder-btn" class="btn btn-secondary" style="margin-top: 8px;">Open crash reports folder</button>
+            </div>
+          </div>
+
+          <!-- Debug console panel -->
+          <div class="panel">
+            <h2 class="panel-title">Debug Console</h2>
+            <p class="card-description">Live application logs and a downloadable debug report for troubleshooting.</p>
+
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="verbose-logging" style="width: auto;" />
+                <span>Enable verbose logging</span>
+              </label>
+              <small class="field-hint">Useful for debugging. Takes effect immediately (no restart required).</small>
+            </div>
+
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="web-ui-debug-console-enabled" style="width: auto;" />
+                <span>Enable Web UI debug console</span>
+              </label>
+              <small class="field-hint">Off by default. When enabled, the Web UI will show a Debug Console for troubleshooting.</small>
+            </div>
+
+            <div id="debug-logs-console" style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: var(--radius); font-family: var(--font-mono); font-size: 12px; line-height: 1.4; min-height: 360px; max-height: 480px; overflow-y: auto; margin-bottom: 10px; margin-top: 12px;">
+              <div style="color: #888;">Waiting for logs...</div>
+            </div>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button type="button" id="debug-logs-clear" class="btn btn-secondary">Clear</button>
+              <button type="button" id="debug-logs-save" class="btn btn-primary">Save Debug Log (.txt)</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
   </div>
+
+  <!-- Global status toast (outside tabs) -->
+  <div id="status-message" class="status-message"></div>
 
   <script src="renderer.js"></script>
 </body>

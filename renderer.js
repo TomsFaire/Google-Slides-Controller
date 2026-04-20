@@ -67,6 +67,168 @@ const wanTunnelPinRemoveBtn = document.getElementById('wan-tunnel-pin-remove');
 const wanTunnelPinStatusEl = document.getElementById('wan-tunnel-pin-status');
 const wanPinScopeSelect = document.getElementById('wan-pin-scope');
 
+// Tab switching
+const NAV_ITEMS = document.querySelectorAll('.sidebar-nav [data-target]');
+const TAB_SECTIONS = document.querySelectorAll('.content section[data-tab]');
+const ACTIVE_TAB_KEY = 'desktop-ui:activeTab';
+
+function switchTab(tabName) {
+  TAB_SECTIONS.forEach(s => {
+    s.hidden = s.dataset.tab !== tabName;
+  });
+  NAV_ITEMS.forEach(a => {
+    a.classList.toggle('active', a.dataset.target === tabName);
+  });
+  try { localStorage.setItem(ACTIVE_TAB_KEY, tabName); } catch (_) {}
+}
+
+NAV_ITEMS.forEach(item => {
+  item.addEventListener('click', () => switchTab(item.dataset.target));
+  item.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab(item.dataset.target); }
+  });
+});
+
+// Restore last tab on load
+try {
+  const saved = localStorage.getItem(ACTIVE_TAB_KEY);
+  if (saved && document.querySelector(`section[data-tab="${saved}"]`)) {
+    switchTab(saved);
+  }
+} catch (_) {}
+
+// Status bar
+function updateStatusBar() {
+  const machineEl = document.getElementById('status-machine-name');
+  if (machineEl && machineNameInput) {
+    machineEl.textContent = machineNameInput.value.trim() || 'This machine';
+  }
+
+  // Sign-in LED
+  const signinLed = document.getElementById('status-signin-led');
+  const signinLabel = document.getElementById('status-signin-label');
+  if (signinLed && signinLabel) {
+    if (signinBtn && signinBtn.disabled) {
+      signinLed.className = 'led led-warn';
+      signinLabel.textContent = 'Signing in\u2026';
+    } else if (isSignedIn) {
+      signinLed.className = 'led led-ok';
+      signinLabel.textContent = 'Signed in';
+    } else {
+      signinLed.className = 'led led-bad';
+      signinLabel.textContent = 'Not signed in';
+    }
+  }
+
+  // Port label
+  const portLabel = document.getElementById('status-port-label');
+  if (portLabel && apiPortInput) {
+    portLabel.textContent = `:${apiPortInput.value || '9595'}`;
+  }
+
+  // Tunnel LED
+  const tunnelLed = document.getElementById('status-tunnel-led');
+  const tunnelLabel = document.getElementById('status-tunnel-label');
+  if (tunnelLed && tunnelLabel) {
+    const tunnelOn = wanEnabledCheckbox && wanEnabledCheckbox.checked;
+    tunnelLed.className = tunnelOn ? 'led led-ok' : 'led led-neutral';
+    tunnelLabel.textContent = tunnelOn ? 'Tunnel active' : 'LAN only';
+  }
+
+  // Mode label
+  const modeLabel = document.getElementById('status-mode-label');
+  if (modeLabel) {
+    if (modePrimary && modePrimary.checked) {
+      modeLabel.textContent = 'Primary';
+    } else if (modeBackup && modeBackup.checked) {
+      modeLabel.textContent = 'Backup';
+    } else {
+      modeLabel.textContent = 'Standalone';
+    }
+  }
+}
+
+// Dashboard WAN mirror
+const dashboardWanEnabled = document.getElementById('dashboard-wan-enabled');
+const dashboardWanUrlRow = document.getElementById('dashboard-wan-url-row');
+const dashboardWanUrlDisplay = document.getElementById('dashboard-wan-url-display');
+
+function syncDashboardWan() {
+  if (!wanEnabledCheckbox) return;
+  if (dashboardWanEnabled) dashboardWanEnabled.checked = wanEnabledCheckbox.checked;
+  if (dashboardWanUrlRow) dashboardWanUrlRow.style.display = wanEnabledCheckbox.checked ? '' : 'none';
+  if (dashboardWanUrlDisplay && wanUrlDisplay) {
+    dashboardWanUrlDisplay.value = wanUrlDisplay.value;
+  }
+}
+
+if (dashboardWanEnabled) {
+  dashboardWanEnabled.addEventListener('change', () => {
+    if (wanEnabledCheckbox) {
+      wanEnabledCheckbox.checked = dashboardWanEnabled.checked;
+      wanEnabledCheckbox.dispatchEvent(new Event('change'));
+    }
+  });
+}
+
+// Inline machine name rename on Dashboard
+function initMachineNameRename() {
+  const heading = document.getElementById('dashboard-machine-heading');
+  const display = document.getElementById('dashboard-machine-display');
+  if (!heading || !display || !machineNameInput) return;
+
+  function refreshDisplay() {
+    display.textContent = machineNameInput.value.trim() || 'This Machine';
+  }
+  refreshDisplay();
+
+  function startEditing() {
+    const current = machineNameInput.value.trim();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = current;
+    input.maxLength = 50;
+    input.style.cssText = 'font: inherit; border: none; outline: 2px solid var(--text); border-radius: 2px; background: transparent; width: 100%; min-width: 120px; padding: 0 2px;';
+    display.replaceWith(input);
+    input.select();
+
+    function commit() {
+      machineNameInput.value = input.value.trim();
+      machineNameInput.dispatchEvent(new Event('change'));
+      // restore display
+      const newDisplay = document.createElement('span');
+      newDisplay.id = 'dashboard-machine-display';
+      newDisplay.textContent = machineNameInput.value.trim() || 'This Machine';
+      input.replaceWith(newDisplay);
+      updateStatusBar();
+    }
+
+    function cancel() {
+      const newDisplay = document.createElement('span');
+      newDisplay.id = 'dashboard-machine-display';
+      newDisplay.textContent = current || 'This Machine';
+      input.replaceWith(newDisplay);
+    }
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('blur', commit);
+  }
+
+  heading.addEventListener('click', startEditing);
+  heading.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startEditing(); }
+  });
+
+  // Keep display in sync if machine-name input is changed elsewhere (e.g., Account tab)
+  machineNameInput.addEventListener('change', refreshDisplay);
+  machineNameInput.addEventListener('input', refreshDisplay);
+}
+
+initMachineNameRename();
+
 let isSignedIn = false;
 
 // Backup status (keyed by IP/hostname string)
@@ -608,20 +770,23 @@ async function initDisplays() {
       if (modePrimary.checked) {
         backupConfig.style.display = 'block';
         savePrimaryBackupPreferences();
+        updateStatusBar();
       }
     });
-    
+
     modeBackup.addEventListener('change', () => {
       if (modeBackup.checked) {
         backupConfig.style.display = 'none';
         savePrimaryBackupPreferences();
+        updateStatusBar();
       }
     });
-    
+
     modeStandalone.addEventListener('change', () => {
       if (modeStandalone.checked) {
         backupConfig.style.display = 'none';
         savePrimaryBackupPreferences();
+        updateStatusBar();
       }
     });
     
@@ -654,13 +819,15 @@ async function initDisplays() {
       wanEnabledCheckbox.addEventListener('change', async () => {
         const enabled = wanEnabledCheckbox.checked;
         if (wanStatusRow) wanStatusRow.style.display = enabled ? '' : 'none';
-        if (wanUrlDisplay) wanUrlDisplay.value = enabled ? 'Connecting…' : '';
+        if (wanUrlDisplay) wanUrlDisplay.value = enabled ? 'Connecting\u2026' : '';
         try {
           await window.electronAPI.setTunnelEnabled(enabled);
         } catch (e) {
           console.error('setTunnelEnabled failed:', e);
           showStatus('Could not update WAN tunnel setting', 'error');
         }
+        updateStatusBar();
+        syncDashboardWan();
       });
     }
     if (wanCopyBtn && wanUrlDisplay) {
@@ -678,6 +845,7 @@ async function initDisplays() {
     if (window.electronAPI.onTunnelUrlChanged) {
       window.electronAPI.onTunnelUrlChanged((url) => {
         if (wanUrlDisplay) wanUrlDisplay.value = url || '';
+        if (dashboardWanUrlDisplay) dashboardWanUrlDisplay.value = wanUrlDisplay ? (wanUrlDisplay.value) : (url || '');
         if (url) showStatus('WAN tunnel connected', 'info');
       });
     }
@@ -765,6 +933,7 @@ async function initDisplays() {
     }
     refreshSpeakerNotesCapture();
 
+    updateStatusBar();
   } catch (error) {
     showStatus('Failed to load displays', 'error');
   }
@@ -918,11 +1087,37 @@ async function loadTunnelStatus() {
       wanStatusRow.style.display = status.enabled ? '' : 'none';
     }
     if (wanUrlDisplay) {
-      wanUrlDisplay.value = status.url || (status.running ? 'Connecting…' : '');
+      wanUrlDisplay.value = status.url || (status.running ? 'Connecting\u2026' : '');
     }
+    updateStatusBar();
+    syncDashboardWan();
   } catch (err) {
     console.error('Failed to load tunnel status:', err);
   }
+}
+
+function renderUrlListInto(containerId, networkInfo, port, protocol) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.innerHTML = '';
+  if (!networkInfo || networkInfo.length === 0) {
+    el.innerHTML = '<div class="url-item">No network interfaces found</div>';
+    return;
+  }
+  networkInfo.forEach(ip => {
+    const item = document.createElement('div');
+    item.className = 'url-item' + (ip.internal ? ' internal' : '');
+    const url = `${protocol}://${ip.address}:${port}`;
+    item.textContent = url;
+    if (ip.internal) {
+      item.title = 'Localhost/internal interface';
+    } else {
+      item.style.cursor = 'pointer';
+      item.title = 'Click to open';
+      item.addEventListener('click', () => window.electronAPI.openExternal(url));
+    }
+    el.appendChild(item);
+  });
 }
 
 // Update network information display
@@ -930,61 +1125,22 @@ async function updateNetworkInfo() {
   try {
     const networkInfo = await window.electronAPI.getNetworkInfo();
     const preferences = await window.electronAPI.getPreferences();
-    
+
     const apiPort = preferences.apiPort || 9595;
     let webUiPort = preferences.webUiPort || 80;
     if (preferences.webUiUseHttps && webUiPort === 80) webUiPort = 443;
     const webUiProtocol = preferences.webUiUseHttps ? 'https' : 'http';
 
-    // Display API URLs
-    const apiUrlsDiv = document.getElementById('api-urls');
-    apiUrlsDiv.innerHTML = '';
-    
-    if (networkInfo.length === 0) {
-      apiUrlsDiv.innerHTML = '<div class="url-item">No network interfaces found</div>';
-    } else {
-      networkInfo.forEach(ip => {
-        const urlItem = document.createElement('div');
-        urlItem.className = 'url-item' + (ip.internal ? ' internal' : '');
-        const url = `http://${ip.address}:${apiPort}`;
-        urlItem.textContent = url;
-        if (ip.internal) {
-          urlItem.title = 'Localhost/internal interface';
-        } else {
-          urlItem.style.cursor = 'pointer';
-          urlItem.title = 'Click to open';
-          urlItem.addEventListener('click', () => window.electronAPI.openExternal(url));
-        }
-        apiUrlsDiv.appendChild(urlItem);
-      });
-    }
-    
-    // Display Web UI URLs
-    const webUiUrlsDiv = document.getElementById('web-ui-urls');
-    webUiUrlsDiv.innerHTML = '';
-    
-    if (networkInfo.length === 0) {
-      webUiUrlsDiv.innerHTML = '<div class="url-item">No network interfaces found</div>';
-    } else {
-      networkInfo.forEach(ip => {
-        const urlItem = document.createElement('div');
-        urlItem.className = 'url-item' + (ip.internal ? ' internal' : '');
-        const url = `${webUiProtocol}://${ip.address}:${webUiPort}`;
-        urlItem.textContent = url;
-        if (ip.internal) {
-          urlItem.title = 'Localhost/internal interface';
-        } else {
-          urlItem.style.cursor = 'pointer';
-          urlItem.title = 'Click to open';
-          urlItem.addEventListener('click', () => window.electronAPI.openExternal(url));
-        }
-        webUiUrlsDiv.appendChild(urlItem);
-      });
-    }
+    renderUrlListInto('api-urls',              networkInfo, apiPort,   'http');
+    renderUrlListInto('web-ui-urls',           networkInfo, webUiPort, webUiProtocol);
+    renderUrlListInto('dashboard-api-urls',    networkInfo, apiPort,   'http');
+    renderUrlListInto('dashboard-web-ui-urls', networkInfo, webUiPort, webUiProtocol);
   } catch (error) {
     console.error('Failed to load network info:', error);
-    document.getElementById('api-urls').innerHTML = '<div class="url-item">Error loading network info</div>';
-    document.getElementById('web-ui-urls').innerHTML = '<div class="url-item">Error loading network info</div>';
+    ['api-urls', 'web-ui-urls', 'dashboard-api-urls', 'dashboard-web-ui-urls'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '<div class="url-item">Error loading network info</div>';
+    });
   }
 }
 
@@ -1035,6 +1191,7 @@ async function saveMachineName() {
       machineName: machineName || null
     });
     showStatus('Machine name saved', 'info');
+    updateStatusBar();
   } catch (error) {
     console.error('Failed to save machine name:', error);
     showStatus('Failed to save machine name', 'error');
@@ -1092,13 +1249,14 @@ async function savePortPreferences() {
       prefsToSave.backupPort = apiPort;
     }
     await window.electronAPI.savePreferences(prefsToSave);
+    updateStatusBar();
     if (modePrimary.checked) {
       backupPortInput.value = String(apiPort);
     }
 
     // Update network info display with new ports
     await updateNetworkInfo();
-    
+
     showStatus('Ports saved. Please restart the app for changes to take effect.', 'info');
   } catch (error) {
     console.error('Failed to save port preferences:', error);
@@ -1413,6 +1571,7 @@ function updateAuthStatus(signedIn) {
     signinBtn.classList.add('btn-google');
     signinBtn.classList.remove('btn-signout');
   }
+  updateStatusBar();
 }
 
 // Sign in/out with Google

@@ -55,6 +55,7 @@ sidecar/
 # Claude Code internal files (development only)
 plan.md
 plan*.md
+!docs/plans/web-remote-v2c/plan.md
 *claude*.md
 *skills*.md
 *FINDINGS*.md

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Web Remote V2 — exploration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+  *, *::before, *::after { box-sizing: border-box; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="components/v2-explorations.jsx"></script>
+<script type="text/babel">
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection
+        title="V2 Stage-ready — layout explorations"
+        subtitle="Three takes on where notes zoom + scroll controls live, and how the Stagetimer sits alongside. All at phone width (390×844)."
+      >
+        <DCArtboard label="V2-A — Side rail (always-visible toolbar on the left of notes)" width={390} height={844}>
+          <V2A_NotesRail timerState="running"/>
+        </DCArtboard>
+
+        <DCArtboard label="V2-B — Top toolbar (scroll+zoom clustered above notes)" width={390} height={844}>
+          <V2B_NotesToolbar timerState="warning"/>
+        </DCArtboard>
+
+        <DCArtboard label="V2-C — Collapsed previews + bigger notes + inline timer message" width={390} height={844}>
+          <V2C_NotesExpanded timerState="critical"/>
+        </DCArtboard>
+
+        <DCPostIt top={-20} left={420} rotate={-2} width={220}>
+          V2-A: scroll/zoom live in a 44px rail on the left of the notes card. Zero clutter in reading flow. Fat targets. Visible "18" shows current font size.
+        </DCPostIt>
+
+        <DCPostIt top={-20} left={830} rotate={2} width={220}>
+          V2-B: scroll/zoom in a small toolbar above the notes. Groups (scroll) and (zoom −18px+) feel like editor UI. Clearest for new users.
+        </DCPostIt>
+
+        <DCPostIt top={-20} left={1260} rotate={-3} width={220}>
+          V2-C: shrinks previews to a strip so notes dominate. Current + next each get a title instead of a thumbnail-only label. Same toolbar as V2-B.
+        </DCPostIt>
+      </DCSection>
+
+      <DCSection
+        title="Stagetimer — every state, driven by the API"
+        subtitle="Background, border, and clock color come from the timer state (same signal Stagetimer.io sends). No gradients; tones are editorial, not neon."
+      >
+        <DCArtboard label="Idle — no active timer" width={350} height={140}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="idle" name="Standby" />
+          </div>
+        </DCArtboard>
+
+        <DCArtboard label="Running — normal countdown" width={350} height={140}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="running" name="Opening remarks" />
+          </div>
+        </DCArtboard>
+
+        <DCArtboard label="Warning — approaching end (≤ ~20%)" width={350} height={140}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="warning" name="Opening remarks" />
+          </div>
+        </DCArtboard>
+
+        <DCArtboard label="Critical — under 30s" width={350} height={140}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="critical" name="Opening remarks" />
+          </div>
+        </DCArtboard>
+
+        <DCArtboard label="Overtime — negative, high-alarm" width={350} height={140}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="overtime" name="Opening remarks" />
+          </div>
+        </DCArtboard>
+
+        <DCPostIt top={-20} left={0} rotate={-2} width={220}>
+          State mapping: <br/>
+          <code>idle</code> · neutral warm<br/>
+          <code>running</code> · calm green<br/>
+          <code>warning</code> · amber (≤ 20%)<br/>
+          <code>critical</code> · red (≤ 30s)<br/>
+          <code>overtime</code> · inverse red (negative)
+        </DCPostIt>
+      </DCSection>
+
+      <DCSection
+        title="Stagetimer — with a director's message"
+        subtitle="Stagetimer.io can push a message (e.g. 'wrap it up'). Treated as an annotation on the timer card, tone-matched."
+      >
+        <DCArtboard label="Warning + message" width={350} height={180}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="warning" name="Opening remarks" message="Wrap it up — Q&A coming"/>
+          </div>
+        </DCArtboard>
+        <DCArtboard label="Critical + message" width={350} height={180}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="critical" name="Closing" message="30 seconds to hard out"/>
+          </div>
+        </DCArtboard>
+        <DCArtboard label="Overtime + message" width={350} height={180}>
+          <div style={{ padding: 16, fontFamily: "'Inter'" }}>
+            <TimerStateStrip state="overtime" name="Closing" message="HARD OUT — please land the plane"/>
+          </div>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection
+        title="Control interactions — what scroll and zoom do"
+        subtitle="Clarifying which parts are remote commands vs local display."
+      >
+        <DCArtboard label="" width={960} height={280}>
+          <div style={{ padding: '24px 32px', fontFamily: "'Inter'", color: '#333', lineHeight: 1.55, fontSize: 13.5 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 500, color: '#757575', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 }}>Scroll ↑ / ↓</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  <li><b>Remote action</b>: tells the presenter machine to scroll the speaker-notes display (as today). Calls <code>/api/notes-scroll-up</code> / <code>/api/notes-scroll-down</code>.</li>
+                  <li>Visible on all variants; tap-and-hold could repeat.</li>
+                  <li>Always near the notes area (rail in V2-A, toolbar in V2-B/C) so the mental model stays intact.</li>
+                </ul>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 500, color: '#757575', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 }}>Zoom + / − (with current size readout)</div>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  <li><b>Local action</b>: resizes the speaker-notes text in the remote view only. Persists per device in localStorage.</li>
+                  <li>Current px shown (e.g. "18px") so users know they can dial it down — today's UI gives no feedback.</li>
+                  <li>Same cluster feels like one control.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

@@ -5607,8 +5607,39 @@ function startWebUiServer() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Google Slides Opener - Preset Manager</title>
   ${hasFavicon ? `<link rel="icon" type="image/png" href="${faviconHref}"><link rel="shortcut icon" href="${faviconHref}">` : ``}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <style>
+    :root {
+      --faire-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --faire-font-serif: 'Lora', Georgia, 'Times New Roman', serif;
+      --faire-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      --faire-text: #333333;
+      --faire-sub: #757575;
+      --faire-muted: #b5a998;
+      --faire-border: #dfe0e1;
+      --faire-surface: #ffffff;
+      --faire-warm: #fbf8f6;
+      --faire-page: #fafaf8;
+      --tmr-idle-bg: #fbf8f6;
+      --tmr-idle-bd: #dfe0e1;
+      --tmr-idle-fg: #757575;
+      --tmr-run-bg: #eef2ed;
+      --tmr-run-bd: #c8d4c8;
+      --tmr-run-fg: #49694c;
+      --tmr-warn-bg: #f6efdb;
+      --tmr-warn-bd: #d1b985;
+      --tmr-warn-fg: #907c3a;
+      --tmr-crit-bg: #f5dcd6;
+      --tmr-crit-bd: #d9a79a;
+      --tmr-crit-fg: #921100;
+      --tmr-over-bg: #3a1510;
+      --tmr-over-bd: #6e1100;
+      --tmr-over-fg: #ffd3c9;
+      --faire-radius: 4px;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html { overflow-x: hidden; }
     body {
@@ -6323,23 +6354,446 @@ function startWebUiServer() {
     .stagetimer-message.uppercase {
       text-transform: uppercase;
     }
+    .stagetimer-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+    .stagetimer-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .stagetimer-container .stagetimer-label { flex: 1; min-width: 0; text-align: left; }
+    .stagetimer-container .stagetimer-time { flex-shrink: 0; margin-left: auto; }
+    .remote-header-compact {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 8px 0 12px;
+    }
+    .remote-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #43a047;
+      flex-shrink: 0;
+    }
+    .remote-machine-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .slide-counter {
+      font-variant-numeric: tabular-nums;
+      color: #757575;
+      font-size: 12px;
+      margin-left: auto;
+      padding-right: 4px;
+    }
+    .speaker-notes-toolbar-label {
+      flex: 1;
+      font-size: 10.5px;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      color: #757575;
+      min-width: 0;
+    }
+    .notes-zoom-toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+    .notes-zoom-controls {
+      flex-wrap: wrap;
+    }
+    .bottom-tabs {
+      display: none;
+    }
+    .remote-btn .remote-btn-label {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .toggle-btn-text {
+      margin-left: 6px;
+    }
   </style>
   <style id="theme-overrides">
-    /* Light: minimalist white, clean lines, solid corners */
-    body.theme-light { background: #f5f5f5; padding-top: 25vh; }
+    body:not(.theme-light) .remote-machine-name,
+    body:not(.theme-light) .remote-status-dot { display: none; }
+    /* Light: V2-C Faire layout (full-height remote, bottom tabs) */
+    body.theme-light {
+      background: var(--faire-page);
+      padding-top: 0;
+      padding-left: 0;
+      padding-right: 0;
+      font-family: var(--faire-font-sans);
+      color: var(--faire-text);
+      align-items: stretch;
+      justify-content: flex-start;
+    }
     body.theme-light.notes-visible,
-    body.theme-light.previews-visible { padding-top: 4%; }
-    body.theme-light .container { background: #fff; border-radius: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e0e0e0; max-width: 75%; }
+    body.theme-light.previews-visible { padding-top: 0; }
+    body.theme-light .web-ui-header { display: none; }
+    body.theme-light > .container > .tabs { display: none; }
+    body.theme-light .bottom-tabs { display: flex; }
+    body.theme-light .container {
+      max-width: min(440px, 100vw);
+      background: var(--faire-surface);
+      border: 1px solid var(--faire-border);
+      border-radius: 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      height: 100vh;
+      max-height: 100dvh;
+      overflow: hidden;
+      width: 100%;
+    }
     body.theme-light.notes-visible .container,
-    body.theme-light.previews-visible .container { max-width: 85%; }
-    body.theme-light h1, body.theme-light h2, body.theme-light h3 { color: #212121; }
+    body.theme-light.previews-visible .container { max-width: min(440px, 100vw); }
+    /* Must include .active — otherwise this beats .tab-content { display:none } and Remote never hides */
+    body.theme-light #tab-remote.tab-content.active {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+    body.theme-light #tab-controls.tab-content.active,
+    body.theme-light #tab-settings.tab-content.active {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    body.theme-light .remote-header-compact {
+      padding: 14px 18px 10px;
+      font-size: 11.5px;
+      flex-shrink: 0;
+    }
+    body.theme-light .remote-machine-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--faire-text);
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    body.theme-light .remote-status-dot { background: #43a047; }
+    body.theme-light .slide-counter {
+      margin-left: auto;
+      color: var(--faire-sub);
+      font-size: 11.5px;
+      padding-right: 0;
+    }
+    body.theme-light .notes-toggle-btn,
+    body.theme-light .preview-toggle-btn {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-radius: var(--faire-radius);
+      border: 1px solid var(--faire-border);
+      background: var(--faire-surface);
+      color: var(--faire-sub);
+      justify-content: center;
+    }
+    body.theme-light .notes-toggle-btn svg,
+    body.theme-light .preview-toggle-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+    body.theme-light .toggle-btn-text { display: none; }
+    body.theme-light .slide-previews-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding: 0 18px 12px;
+      background: transparent;
+      border: none;
+    }
+    body.theme-light .slide-preview-card {
+      display: flex;
+      flex-direction: row;
+      gap: 8px;
+      align-items: center;
+      padding: 0;
+      background: transparent;
+      border: none;
+    }
+    body.theme-light .slide-preview-img {
+      width: 96px;
+      height: 54px;
+      border-radius: 2px;
+      border: 1px solid var(--faire-border);
+      object-fit: cover;
+      max-width: none;
+      max-height: none;
+    }
+    body.theme-light .slide-preview-card:last-child .slide-preview-img {
+      width: 72px;
+      height: 40px;
+    }
+    body.theme-light .slide-preview-label {
+      font-size: 10.5px;
+      color: var(--faire-sub);
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+    }
+    body.theme-light .speaker-notes-container {
+      flex: 1;
+      min-height: 0;
+      margin: 0 18px;
+      background: var(--faire-surface);
+      border: 1px solid var(--faire-border);
+      border-radius: var(--faire-radius);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    body.theme-light .notes-zoom-controls {
+      position: static;
+      display: flex;
+      visibility: visible;
+      padding: 6px 8px 6px 14px;
+      background: var(--faire-warm);
+      border-bottom: 1px solid var(--faire-border);
+      gap: 8px;
+      align-items: center;
+      margin-top: 0;
+      bottom: auto;
+      z-index: 1;
+    }
+    body.theme-light .speaker-notes-toolbar-label {
+      font-size: 10.5px;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      color: var(--faire-sub);
+      flex: 1;
+    }
+    body.theme-light .notes-zoom-btn {
+      background: var(--faire-surface);
+      border: 1px solid var(--faire-border);
+      border-radius: var(--faire-radius);
+      padding: 0;
+      width: 32px;
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--faire-text);
+      font-size: 16px;
+      font-weight: 400;
+    }
+    body.theme-light .notes-zoom-btn:hover {
+      background: var(--faire-warm);
+      color: var(--faire-text);
+      border-color: var(--faire-border);
+    }
+    body.theme-light #notes-zoom-readout {
+      font-family: var(--faire-font-mono);
+      font-size: 11px;
+      color: var(--faire-sub);
+      padding: 0 6px;
+      min-width: 36px;
+      text-align: center;
+    }
+    body.theme-light .speaker-notes-content-wrapper {
+      padding: 16px 18px;
+      flex: 1;
+      overflow-y: auto;
+      border-radius: 0;
+      border: none;
+      background: transparent;
+      height: auto;
+      min-height: 120px;
+    }
+    body.theme-light .speaker-notes-content {
+      font-family: var(--faire-font-serif);
+      font-size: 19px;
+      line-height: 30px;
+      color: var(--faire-text);
+    }
+    body.theme-light .remote-controls {
+      padding: 14px 18px;
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    body.theme-light .remote-btn {
+      flex: 1;
+      height: 72px;
+      border-radius: var(--faire-radius);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      min-height: 72px;
+      padding: 12px 16px;
+      font-family: var(--faire-font-sans);
+    }
+    body.theme-light .remote-btn .remote-btn-label {
+      margin-top: 2px;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    body.theme-light .remote-btn svg {
+      width: 28px;
+      height: 28px;
+    }
+    body.theme-light .remote-btn-prev {
+      background: var(--faire-surface);
+      border: 1px solid var(--faire-border);
+      color: var(--faire-text);
+    }
+    body.theme-light .remote-btn-next {
+      background: var(--faire-text);
+      border: 1px solid var(--faire-text);
+      color: var(--faire-surface);
+    }
+    body.theme-light .bottom-tabs {
+      border-top: 1px solid var(--faire-border);
+      background: var(--faire-surface);
+      padding: 6px 0 12px;
+      flex-shrink: 0;
+      margin-top: auto;
+    }
+    body.theme-light .bottom-tabs .tab-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      padding: 6px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      color: var(--faire-sub);
+      font-size: 10px;
+      letter-spacing: 0.2px;
+      font-weight: 400;
+    }
+    body.theme-light .bottom-tabs .tab-btn.active {
+      color: var(--faire-text);
+      font-weight: 500;
+      background: transparent;
+    }
+    body.theme-light .bottom-tabs .tab-icon {
+      width: 22px;
+      height: 22px;
+    }
     body.theme-light .tab-btn { border-radius: 0; }
-    body.theme-light .btn, body.theme-light .remote-btn, body.theme-light .notes-zoom-btn { border-radius: 0; }
+    body.theme-light .btn, body.theme-light .remote-btn, body.theme-light .notes-zoom-btn { border-radius: var(--faire-radius); }
     body.theme-light .slide-previews-grid, body.theme-light .speaker-notes-content-wrapper { border-radius: 0; }
-    body.theme-light .stagetimer-container { border-radius: 0; }
+    body.theme-light .stagetimer-container {
+      border-radius: var(--faire-radius);
+      background: var(--tmr-idle-bg);
+      border: 1px solid var(--tmr-idle-bd);
+      color: var(--tmr-idle-fg);
+      box-shadow: none;
+      padding: 12px 14px;
+      height: auto;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin: 0 18px 12px;
+    }
+    body.theme-light .stagetimer-container.running {
+      background: var(--tmr-run-bg);
+      border-color: var(--tmr-run-bd);
+      color: var(--tmr-run-fg);
+    }
+    body.theme-light .stagetimer-container.warning {
+      background: var(--tmr-warn-bg);
+      border-color: var(--tmr-warn-bd);
+      color: var(--tmr-warn-fg);
+    }
+    body.theme-light .stagetimer-container.critical {
+      background: var(--tmr-crit-bg);
+      border-color: var(--tmr-crit-bd);
+      color: var(--tmr-crit-fg);
+    }
+    body.theme-light .stagetimer-container.overtime {
+      background: var(--tmr-over-bg);
+      border-color: var(--tmr-over-bd);
+      color: var(--tmr-over-fg);
+    }
+    body.theme-light .stagetimer-container.error {
+      background: var(--tmr-crit-bg);
+      border-color: var(--tmr-crit-bd);
+      color: var(--tmr-crit-fg);
+    }
+    body.theme-light .stagetimer-container.disabled {
+      background: var(--tmr-idle-bg);
+      border-color: var(--tmr-idle-bd);
+      color: var(--faire-muted);
+    }
+    body.theme-light .stagetimer-time {
+      font-family: var(--faire-font-mono);
+      font-size: 28px;
+      font-weight: 500;
+      letter-spacing: 1px;
+      font-variant-numeric: tabular-nums;
+      color: currentColor;
+      margin: 0;
+    }
+    body.theme-light .stagetimer-label {
+      font-size: 10.5px;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      font-weight: 500;
+      opacity: 1;
+    }
+    body.theme-light .stagetimer-status { font-size: 11.5px; opacity: 1; }
+    body.theme-light .stagetimer-messages {
+      position: static;
+      border-top: 1px solid currentColor;
+      background: transparent;
+      backdrop-filter: none;
+      padding: 10px 0 0;
+      max-height: none;
+      margin: 0;
+    }
+    body.theme-light .stagetimer-message {
+      background: transparent;
+      color: currentColor;
+      padding: 0;
+      font-size: 12.5px;
+      line-height: 17px;
+    }
+    body.theme-light h1, body.theme-light h2, body.theme-light h3 { color: #212121; }
     @media (max-width: 768px) {
-      body.theme-light .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
-      body.theme-light.notes-visible .container, body.theme-light.previews-visible .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); }
+      body.theme-light .container {
+        width: min(100%, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
+        margin-left: auto;
+        margin-right: auto;
+      }
+      body.theme-light.notes-visible .container,
+      body.theme-light.previews-visible .container {
+        width: min(100%, calc(100vw - 24px));
+        max-width: calc(100vw - 24px);
+      }
     }
     /* Dark: dark tones */
     body.theme-dark { background: linear-gradient(180deg, #1c1c1e 0%, #2c2c2e 100%); padding-top: 25vh; }
@@ -6431,69 +6885,80 @@ function startWebUiServer() {
     
     <!-- Remote Tab (Default) -->
     <div id="tab-remote" class="tab-content active">
-      <div class="remote-header">
-        <h2>Remote Control</h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <button type="button" class="notes-toggle-btn" id="notes-toggle-btn" title="Toggle speaker notes">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            </svg>
-            Notes
-          </button>
-          <button type="button" class="preview-toggle-btn" id="previews-toggle-btn" title="Toggle slide previews">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="4" width="8" height="8" rx="1"></rect>
-              <rect x="13" y="4" width="8" height="8" rx="1"></rect>
-              <rect x="3" y="14" width="18" height="6" rx="1"></rect>
-            </svg>
-            Previews
-          </button>
-        </div>
+      <div class="remote-header-compact">
+        <span class="remote-status-dot" aria-hidden="true"></span>
+        <span class="remote-machine-name">${machineName}</span>
+        <span class="slide-counter" id="remote-slide-counter">—</span>
+        <button type="button" class="notes-toggle-btn" id="notes-toggle-btn" title="Toggle speaker notes" aria-label="Toggle speaker notes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span class="toggle-btn-text">Notes</span>
+        </button>
+        <button type="button" class="preview-toggle-btn" id="previews-toggle-btn" title="Toggle slide previews" aria-label="Toggle slide previews">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="8" height="8" rx="1"></rect>
+            <rect x="13" y="4" width="8" height="8" rx="1"></rect>
+            <rect x="3" y="14" width="18" height="6" rx="1"></rect>
+          </svg>
+          <span class="toggle-btn-text">Previews</span>
+        </button>
       </div>
       <div class="stagetimer-container disabled" id="stagetimer-container" style="display: none;">
-        <div class="stagetimer-label" id="stagetimer-label">Stage Timer</div>
-        <div class="stagetimer-time" id="stagetimer-time">--:--</div>
+        <div class="stagetimer-row">
+          <span class="stagetimer-dot" aria-hidden="true"></span>
+          <div class="stagetimer-label" id="stagetimer-label">Stage Timer</div>
+          <div class="stagetimer-time" id="stagetimer-time">--:--</div>
+        </div>
         <div class="stagetimer-status" id="stagetimer-status">Not configured</div>
         <div class="stagetimer-messages" id="stagetimer-messages"></div>
-      </div>
-      <div class="remote-controls" id="remote-controls">
-        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-            <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-          Previous Slide
-        </button>
-        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next">
-          Next Slide
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-            <polyline points="9 18 15 12 9 6"></polyline>
-          </svg>
-        </button>
       </div>
       <div class="slide-previews-container" id="slide-previews-container">
         <div class="slide-previews-grid">
           <div class="slide-preview-card clickable" id="slide-preview-current-card" title="Click to go to previous slide">
-            <div class="slide-preview-label" id="slide-preview-current-label">Current Slide</div>
             <img class="slide-preview-img empty" id="slide-preview-current-img" alt="Current slide — click to go back" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+            <div class="slide-preview-label" id="slide-preview-current-label">Current Slide</div>
           </div>
           <div class="slide-preview-card clickable" id="slide-preview-next-card" title="Click to go to next slide">
-            <div class="slide-preview-label" id="slide-preview-next-label">Next Slide</div>
             <img class="slide-preview-img empty" id="slide-preview-next-img" alt="Next slide — click to advance" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" />
+            <div class="slide-preview-label" id="slide-preview-next-label">Next Slide</div>
           </div>
         </div>
       </div>
 
       <div class="speaker-notes-container" id="speaker-notes-container">
         <div class="notes-zoom-controls" id="notes-zoom-controls">
-          <button type="button" class="notes-zoom-btn" id="btn-scroll-notes-up" title="Scroll speaker notes up">Scroll Up</button>
-          <button type="button" class="notes-zoom-btn" id="notes-zoom-out">Zoom Out</button>
-          <button type="button" class="notes-zoom-btn" id="notes-zoom-in">Zoom In</button>
-          <button type="button" class="notes-zoom-btn" id="btn-scroll-notes-down" title="Scroll speaker notes down">Scroll Down</button>
+          <span class="speaker-notes-toolbar-label" id="speaker-notes-toolbar-label">Speaker notes · <span id="speaker-notes-slide-num">—</span></span>
+          <span class="notes-zoom-toolbar-actions">
+            <button type="button" class="notes-zoom-btn" id="btn-scroll-notes-up" title="Scroll speaker notes up" aria-label="Scroll speaker notes up">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"></polyline></svg>
+            </button>
+            <button type="button" class="notes-zoom-btn" id="btn-scroll-notes-down" title="Scroll speaker notes down" aria-label="Scroll speaker notes down">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </button>
+            <button type="button" class="notes-zoom-btn" id="notes-zoom-out" aria-label="Zoom out">−</button>
+            <span id="notes-zoom-readout">18px</span>
+            <button type="button" class="notes-zoom-btn" id="notes-zoom-in" aria-label="Zoom in">+</button>
+          </span>
         </div>
         <div class="speaker-notes-content-wrapper">
           <div class="speaker-notes-content" id="speaker-notes-content">Loading notes...</div>
           <div id="notes-encoding-warning" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#b26a00; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); border-radius:6px;">Line break encoding issues detected on this slide. Notes are displayed with corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the <a href="https://github.com/TomsFaire/Google-Slides-Controller/blob/main/docs/fix-speaker-notes.gs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">cleanup script</a>.</div>
         </div>
+      </div>
+      <div class="remote-controls" id="remote-controls">
+        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          <span class="remote-btn-label">Previous</span>
+        </button>
+        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next">
+          <span class="remote-btn-label">Next slide</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
       </div>
     </div>
     
@@ -6793,7 +7258,22 @@ function startWebUiServer() {
       ` : ``}
     </div>
 ` : ''}
-    
+
+    <nav class="bottom-tabs" aria-label="Main tabs">
+      <button type="button" class="tab-btn active" data-tab="remote">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="12" rx="2"></rect><path d="M6 20h12M8 16v4M16 16v4"></path></svg>
+        <span>Remote</span>
+      </button>
+      <button type="button" class="tab-btn" data-tab="controls">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
+        <span>Controls</span>
+      </button>
+      ${!webUiRestrictedTunnelClient ? `<button type="button" class="tab-btn" data-tab="settings">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <span>Settings</span>
+      </button>` : ''}
+    </nav>
+
     <div id="status" class="status"></div>
     <div class="build-number">${versionString}</div>
   </div>
@@ -6843,19 +7323,18 @@ function startWebUiServer() {
       });
     });
     
-    // Tab switching
+    // Tab switching (sync all .tab-btn duplicates, e.g. top bar + bottom bar on theme-light)
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const tabName = btn.getAttribute('data-tab');
         if (window.__GSO_WEB_UI_RESTRICTED__ && tabName === 'settings') return;
         const tabPanel = document.getElementById('tab-' + tabName);
         if (!tabPanel) return;
-        
-        // Update buttons
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        
-        // Update content
+
+        document.querySelectorAll('.tab-btn').forEach(b => {
+          b.classList.toggle('active', b.getAttribute('data-tab') === tabName);
+        });
+
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         tabPanel.classList.add('active');
       });
@@ -6944,6 +7423,24 @@ function startWebUiServer() {
       s = s.replace(/\\r\\n/g, nl).replace(/\\r/g, nl).replace(/\\u2028/g, nl).replace(/\\u2029/g, nl).replace(/\\uFFFD+/g, nl).replace(/\\u0000/g, '');
       return s;
     }
+
+    function updateRemoteSlideContext(current, total) {
+      const counter = document.getElementById('remote-slide-counter');
+      const notesNum = document.getElementById('speaker-notes-slide-num');
+      var counterText = '—';
+      var slideNumText = '—';
+      if (typeof current === 'number' && !isNaN(current)) {
+        slideNumText = String(current);
+        if (typeof total === 'number' && !isNaN(total)) {
+          counterText = current + ' / ' + total;
+        } else {
+          counterText = String(current);
+        }
+      }
+      if (counter) counter.textContent = counterText;
+      if (notesNum) notesNum.textContent = slideNumText;
+    }
+
     function loadSpeakerNotes() {
       fetch(API_BASE + '/api/get-speaker-notes')
         .then(res => res.json())
@@ -6993,6 +7490,8 @@ function startWebUiServer() {
 
           currentLabel.textContent = (curNum ? ('Current Slide (' + curNum + ')') : 'Current Slide');
           nextLabel.textContent = (nextNum ? ('Next Slide (' + nextNum + ')') : 'Next Slide');
+
+          updateRemoteSlideContext(data.currentSlide, data.totalSlides);
 
           if (currentImg && data.current && typeof data.current.dataUrl === 'string' && data.current.dataUrl.startsWith('data:image/')) {
             currentImg.src = data.current.dataUrl;
@@ -7046,12 +7545,22 @@ function startWebUiServer() {
       }
     }
     
+    function updateNotesZoomReadout() {
+      const notesContent = document.getElementById('speaker-notes-content');
+      const readout = document.getElementById('notes-zoom-readout');
+      if (readout && notesContent) {
+        const px = parseInt(window.getComputedStyle(notesContent).fontSize, 10);
+        readout.textContent = (isNaN(px) ? 18 : px) + 'px';
+      }
+    }
+
     function updateNotesZoom() {
       const notesContent = document.getElementById('speaker-notes-content');
       // Calculate font size based on zoom level (18px base, +/- 2px per level)
       const baseSize = 18;
       const fontSize = baseSize + ((notesZoomLevel - 1) * 2);
       notesContent.style.fontSize = fontSize + 'px';
+      updateNotesZoomReadout();
     }
     
     document.getElementById('notes-toggle-btn').addEventListener('click', () => {
@@ -7278,22 +7787,14 @@ function startWebUiServer() {
           const prevIconSmall = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>';
           const nextIconSmall = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>';
           
-          // Update Remote tab Previous button
-          if (prevBtn) {
-            if (data.previousSlide) {
-              prevBtn.innerHTML = prevIcon + ' Previous Slide (' + data.previousSlide + ')';
-            } else {
-              prevBtn.innerHTML = prevIcon + ' Previous Slide';
-            }
-          }
+          updateRemoteSlideContext(data.currentSlide, data.totalSlides);
           
-          // Update Remote tab Next button
+          // Update Remote tab (V2-C: fixed labels; slide position is in the header counter)
+          if (prevBtn) {
+            prevBtn.innerHTML = prevIcon + '<span class="remote-btn-label">Previous</span>';
+          }
           if (nextBtn) {
-            if (data.nextSlide) {
-              nextBtn.innerHTML = 'Next Slide (' + data.nextSlide + ') ' + nextIcon;
-            } else {
-              nextBtn.innerHTML = 'Next Slide ' + nextIcon;
-            }
+            nextBtn.innerHTML = '<span class="remote-btn-label">Next slide</span>' + nextIcon;
           }
           
           // Update Controls tab Previous button
@@ -7519,6 +8020,7 @@ function startWebUiServer() {
         console.log('[Web UI] API connection successful:', data);
         // Update slide buttons on initial load
         updateSlideButtons();
+        updateNotesZoom();
         // API is reachable, now load presets
         return fetch(API_BASE + '/api/presets');
       })
@@ -7731,22 +8233,25 @@ function startWebUiServer() {
       statusEl.textContent = data.speaker || stagetimerCurrentTimer?.speaker || '';
       
       // Determine state and styling (but don't show status text)
-      if (data.running) {
+      if (data.remainingMs !== undefined) {
+        const remainingSeconds = Math.floor(data.remainingMs / 1000);
+        if (remainingSeconds < 0) {
+          container.className = 'stagetimer-container overtime';
+        } else if (remainingSeconds <= 15) {
+          container.className = 'stagetimer-container critical';
+        } else if (remainingSeconds <= 60) {
+          container.className = 'stagetimer-container warning';
+        } else if (data.running) {
+          container.className = 'stagetimer-container running';
+        } else {
+          container.className = 'stagetimer-container';
+        }
+      } else if (data.running) {
         container.className = 'stagetimer-container running';
       } else if (data.pause) {
         container.className = 'stagetimer-container';
       } else {
         container.className = 'stagetimer-container';
-      }
-      
-      // Color coding based on remaining time (if available)
-      if (data.remainingMs !== undefined) {
-        const remainingSeconds = Math.floor(data.remainingMs / 1000);
-        if (remainingSeconds <= 15) {
-          container.className = 'stagetimer-container critical';
-        } else if (remainingSeconds <= 60) {
-          container.className = 'stagetimer-container warning';
-        }
       }
       
       // Display messages - positioned absolutely so buttons don't move
@@ -8076,19 +8581,23 @@ function startWebUiServer() {
       timeEl.textContent = displayTime;
       statusEl.textContent = state.speaker || stagetimerCurrentTimer?.speaker || '';
       
-      // Update styling
-      if (isRunning) {
+      const remainingSeconds = Math.floor(remainingMs / 1000);
+      if (state.finish && state.start) {
+        if (remainingSeconds < 0) {
+          container.className = 'stagetimer-container overtime';
+        } else if (remainingSeconds <= 15) {
+          container.className = 'stagetimer-container critical';
+        } else if (remainingSeconds <= 60) {
+          container.className = 'stagetimer-container warning';
+        } else if (isRunning) {
+          container.className = 'stagetimer-container running';
+        } else {
+          container.className = 'stagetimer-container';
+        }
+      } else if (isRunning) {
         container.className = 'stagetimer-container running';
       } else {
         container.className = 'stagetimer-container';
-      }
-      
-      // Color coding based on remaining time
-      const remainingSeconds = Math.floor(remainingMs / 1000);
-      if (remainingSeconds <= 15) {
-        container.className = 'stagetimer-container critical';
-      } else if (remainingSeconds <= 60) {
-        container.className = 'stagetimer-container warning';
       }
       
       // Update messages from stored state

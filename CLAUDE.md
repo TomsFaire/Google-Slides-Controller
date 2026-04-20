@@ -18,7 +18,7 @@ This project uses the **Everything Claude Code (ECC)** global library for develo
 
 ## Project Overview
 
-**Google Slides Controller** (v1.9.2) is an Electron desktop application for controlling Google Slides presentations across multiple monitors with a web-based remote and HTTP API for AV integration.
+**Google Slides Controller** (v2.0.0) is an Electron desktop application for controlling Google Slides presentations across multiple monitors with a web-based remote and HTTP API for AV integration.
 
 - **Stack:** Electron 28, vanilla JavaScript (no production npm deps), electron-builder for packaging
 - **Primary Deployment:** macOS (arm64/x64), Linux (AppImage, .deb)
@@ -52,6 +52,12 @@ Three Electron processes manage the application:
    - IPC security bridge exposing `window.electronAPI` to renderer
 
 ## Development Workflow
+
+### v2 desktop UI (feature branch)
+
+The redesigned desktop settings window (`index.html`, `renderer.js`, `styles.css`) is developed on **`feature/desktop-ui-redesign`**. Continue all v2 UI work there until it is ready to merge. Ship changes to **`main`** with a **pull request** when the branch is complete (do not merge ad hoc partial UI while `main` still reflects the pre-redesign layout, unless you intentionally integrate early).
+
+On this machine the branch may live in a **separate git worktree** so it can be checked out alongside `main`; use whichever clone has `feature/desktop-ui-redesign` checked out when editing the new UI.
 
 ### Setup
 

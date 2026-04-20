@@ -2,6 +2,12 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.0.0] - 2026-04-20
+
+### Changed
+- **Major version** – Desktop settings window redesign (sidebar navigation, dashboard, Faire-style UI); development continues locally on `feature/desktop-ui-redesign` before release.
+- **Version 2.0.0**, **build 69**.
+
 ## [1.9.12] - 2026-04-15
 
 ### Fixed / rendering

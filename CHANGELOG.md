@@ -18,6 +18,9 @@ All notable changes to Google Slides Opener are documented here.
 - **Reliability** – Root URL works with query strings; HTML responses use `no-store` where appropriate; inactive tab panels stay hidden so Remote content cannot leak onto Controls or Settings on iPad-sized layouts.
 - **Corner radius** – Buttons, tabs, panels, and preview chrome use the same radius language as the light theme (`4px` controls, `10px` settings cards, `2px` slide preview thumbnails) across original, dark, max, touch, and thumb themes.
 
+### Documentation
+- **README** — New `docs/images/` gallery for v2 desktop settings and light-theme web remote; maintainer script `yarn capture:readme-screenshots` (temporarily uses Web UI port **8765**, then restores preferences).
+
 ### Build
 - **Version 2.0.0**, **build 70**.
 

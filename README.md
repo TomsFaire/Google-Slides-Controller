@@ -29,7 +29,35 @@ More context: **[README-SECURITY.md](README-SECURITY.md)** (why the warning exis
 
 See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
-![Web UI Remote](docs/images/web-ui-remote.png)
+## Screenshots
+
+Desktop and web UI as of **v2.0**. The PNGs in `docs/images/` are **high-fidelity previews** of the current layout (colors, spacing, and structure). For **pixel-exact** captures from *your* machine—including real data in fields—run `yarn capture:readme-screenshots`, which starts the app briefly, writes the same filenames, and restores your Web UI port and theme in `preferences.json`.
+
+### Desktop app (Electron settings)
+
+Redesigned **sidebar navigation**, **status bar**, and **card-based** pages (Faire-inspired typography and spacing).
+
+| Dashboard | Presets |
+| :--: | :--: |
+| ![Desktop — Dashboard](docs/images/desktop-settings-dashboard.png) | ![Desktop — Presets](docs/images/desktop-settings-presets.png) |
+
+| Primary / backup (Advanced) |
+| :--: |
+| ![Desktop — Primary and backup](docs/images/desktop-settings-primary-backup.png) |
+
+### Web remote (browser)
+
+**Light** theme: full-height layout, **bottom tab bar** (Remote / Controls / Settings), and warm neutral surfaces. Other themes (original, dark, max, touch, thumb) share the same structure with their own palettes.
+
+| Remote | Controls |
+| :--: | :--: |
+| ![Web UI — Remote (light)](docs/images/web-ui-remote-light.png) | ![Web UI — Controls (light)](docs/images/web-ui-controls-light.png) |
+
+To regenerate these images from a dev checkout (uses Web UI port **8765** briefly, then restores `preferences.json`):
+
+```bash
+yarn capture:readme-screenshots
+```
 
 ## How it works
 
@@ -54,11 +82,7 @@ Based on [nerif-tafu's gslide-opener](https://github.com/nerif-tafu/gslide-opene
 
 ## Web UI
 
-Access the Web UI at `http://YOUR_PRESENTATION_PC_IP` (port 80 by default).
-
-![Web UI Remote Tab](docs/images/web-ui-remote.png)
-![Web UI Controls Tab](docs/images/web-ui-controls.png)
-![Desktop Primary Backup](docs/images/desktop-primary-backup.png)
+Access the Web UI at `http://YOUR_PRESENTATION_PC_IP` (port 80 by default). Screenshots of the current **light** theme are in [Screenshots](#screenshots) above.
 
 ### Remote tab (presenter control)
 
@@ -298,6 +322,12 @@ Want to modify the code? Here's how to get started:
 ```bash
 npm install
 npm run dev
+```
+
+Refresh README screenshots after UI changes:
+
+```bash
+yarn capture:readme-screenshots
 ```
 
 To build releases:

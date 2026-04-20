@@ -2086,6 +2086,140 @@ function createWindow() {
   // mainWindow.webContents.openDevTools();
 }
 
+/**
+ * Maintainer helper: write README screenshots to docs/images (desktop + Web UI).
+ * Run: `yarn capture:readme-screenshots` (or `cross-env GSO_README_CAPTURE=1 electron .`).
+ * Temporarily sets Web UI theme to "light" for browser captures, then restores preferences.
+ */
+async function runReadmeScreenshotCapture() {
+  const docsImages = path.join(__dirname, 'docs', 'images');
+  if (!fs.existsSync(docsImages)) {
+    fs.mkdirSync(docsImages, { recursive: true });
+  }
+
+  const savePng = async (win, filename) => {
+    if (!win || win.isDestroyed()) return;
+    await new Promise((r) => setTimeout(r, 350));
+    const image = await win.webContents.capturePage();
+    fs.writeFileSync(path.join(docsImages, filename), image.toPNG());
+    logInfo('[readme-capture] wrote', path.join('docs', 'images', filename));
+  };
+
+  let webWin;
+  try {
+    if (webUiServerUsesHttps) {
+      session.defaultSession.setCertificateVerifyProc((request, callback) => {
+        if (request.hostname === '127.0.0.1' || request.hostname === 'localhost') {
+          callback(0);
+        } else {
+          callback(-2);
+        }
+      });
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await mainWindow.webContents.executeJavaScript(`
+        (function () {
+          document.querySelector('[data-target="dashboard"]')?.click();
+        })();
+      `);
+      await new Promise((r) => setTimeout(r, 700));
+      await savePng(mainWindow, 'desktop-settings-dashboard.png');
+
+      await mainWindow.webContents.executeJavaScript(`
+        (function () {
+          document.querySelector('[data-target="presets"]')?.click();
+        })();
+      `);
+      await new Promise((r) => setTimeout(r, 700));
+      await savePng(mainWindow, 'desktop-settings-presets.png');
+
+      await mainWindow.webContents.executeJavaScript(`
+        (function () {
+          document.querySelector('[data-target="advanced"]')?.click();
+        })();
+      `);
+      await new Promise((r) => setTimeout(r, 500));
+      await mainWindow.webContents.executeJavaScript(`
+        (function () {
+          const titles = [...document.querySelectorAll('.panel-title')];
+          const p = titles.find((el) => (el.textContent || '').includes('Primary'));
+          if (p) p.scrollIntoView({ block: 'start' });
+        })();
+      `);
+      await new Promise((r) => setTimeout(r, 500));
+      await savePng(mainWindow, 'desktop-settings-primary-backup.png');
+    }
+
+    const port = currentWebUiPort;
+    if (!port) {
+      logWarn('[readme-capture] Web UI port not ready; skipping in-browser captures');
+      return;
+    }
+
+    savePreferences({ ...loadPreferences(), webUiTheme: 'light' });
+
+    webWin = new BrowserWindow({
+      width: 440,
+      height: 920,
+      show: false,
+      backgroundColor: '#fbfaf7',
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    });
+
+    const origin = `${webUiServerUsesHttps ? 'https' : 'http'}://127.0.0.1:${port}`;
+    await webWin.loadURL(`${origin}/?readme-capture=${Date.now()}`);
+    await webWin.webContents.executeJavaScript('document.fonts.ready');
+    await new Promise((r) => setTimeout(r, 2000));
+    await savePng(webWin, 'web-ui-remote-light.png');
+
+    await webWin.webContents.executeJavaScript(`
+      (function () {
+        const b = document.querySelector('.bottom-tabs button[data-tab="controls"]') ||
+          document.querySelector('.tabs .tab-btn[data-tab="controls"]');
+        b?.click();
+      })();
+    `);
+    await new Promise((r) => setTimeout(r, 900));
+    await savePng(webWin, 'web-ui-controls-light.png');
+  } catch (err) {
+    logError('[readme-capture] failed:', err);
+  } finally {
+    try {
+      if (readmeCapturePrefsBackup != null) {
+        savePreferences(JSON.parse(JSON.stringify(readmeCapturePrefsBackup)));
+      }
+    } catch (e) {
+      logError('[readme-capture] restore prefs failed:', e);
+    }
+    if (webWin && !webWin.isDestroyed()) {
+      webWin.close();
+    }
+    if (webUiServerUsesHttps) {
+      try {
+        session.defaultSession.setCertificateVerifyProc(null);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+}
+
+function scheduleReadmeScreenshotCapture() {
+  if (process.env.GSO_README_CAPTURE !== '1') return;
+  const delayMs = Number(process.env.GSO_README_CAPTURE_DELAY_MS) || 5000;
+  setTimeout(() => {
+    runReadmeScreenshotCapture()
+      .catch((err) => logError('[readme-capture]', err))
+      .finally(() => {
+        setTimeout(() => app.exit(0), 250);
+      });
+  }, delayMs);
+}
+
 // Get all available displays
 ipcMain.handle('get-displays', async () => {
   const displays = screen.getAllDisplays();
@@ -2935,6 +3069,8 @@ let httpServer;
 let webUiServer;
 let currentWebUiPort = null; // Set when Web UI server starts
 let webUiServerUsesHttps = false;
+/** When `GSO_README_CAPTURE=1`, original prefs before forcing Web UI port 8765 for scripted screenshots */
+let readmeCapturePrefsBackup = null;
 
 // Cloudflare Quick Tunnel (WAN access) — child process + parsed trycloudflare.com URL
 let cloudflaredProcess = null;
@@ -10641,22 +10777,34 @@ function startWebUiServer() {
   }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[Web UI] Port ${webUiPort} is already in use`);
-      dialog.showErrorBox(
-        'Port Already in Use',
-        `Port ${webUiPort} is already in use. Another instance of Google Slides Opener may be running.\n\nPlease quit the other instance or change the Web UI port in settings.`
-      );
+      if (process.env.GSO_README_CAPTURE !== '1') {
+        dialog.showErrorBox(
+          'Port Already in Use',
+          `Port ${webUiPort} is already in use. Another instance of Google Slides Opener may be running.\n\nPlease quit the other instance or change the Web UI port in settings.`
+        );
+      }
       // Don't exit the app, but the server won't start
     } else {
       console.error('[Web UI] Server error:', err);
-      dialog.showErrorBox(
-        'Server Error',
-        `Failed to start Web UI server: ${err.message}`
-      );
+      if (process.env.GSO_README_CAPTURE !== '1') {
+        dialog.showErrorBox(
+          'Server Error',
+          `Failed to start Web UI server: ${err.message}`
+        );
+      }
     }
   });
 }
 
 app.whenReady().then(() => {
+  if (process.env.GSO_README_CAPTURE === '1') {
+    try {
+      readmeCapturePrefsBackup = JSON.parse(JSON.stringify(loadPreferences()));
+      savePreferences({ ...readmeCapturePrefsBackup, webUiPort: 8765 });
+    } catch (e) {
+      logError('[readme-capture] could not apply capture Web UI port:', e);
+    }
+  }
   setupGoogleSessionEncoding();
   createWindow();
   startHttpServer();
@@ -10665,6 +10813,8 @@ app.whenReady().then(() => {
 
   // Start backup status polling if in primary mode
   startBackupStatusPolling();
+
+  scheduleReadmeScreenshotCapture();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -13,7 +13,8 @@
     "build:mac": "electron-builder --mac",
     "build:icon:win": "node scripts/build-windows-icon.js",
     "download:cloudflared": "bash scripts/download-cloudflared.sh",
-    "smoke:slides-gpu": "electron scripts/slides-presenter-gpu-smoke.cjs"
+    "smoke:slides-gpu": "electron scripts/slides-presenter-gpu-smoke.cjs",
+    "capture:readme-screenshots": "cross-env GSO_README_CAPTURE=1 electron ."
   },
   "keywords": [
     "electron",

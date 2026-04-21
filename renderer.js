@@ -1330,16 +1330,26 @@ async function savePrimaryBackupPreferences() {
       prefs.backupIps = getBackupIpsFromUi();
     }
     
-    await window.electronAPI.savePreferences(prefs);
-    
+    const saveResult = await window.electronAPI.savePreferences(prefs);
+
     // Restart backup status polling if needed
     if (mode === 'primary') {
       startBackupStatusPolling();
     } else {
       stopBackupStatusPolling();
     }
-    
-    showStatus('Primary/Backup configuration saved', 'info');
+
+    if (saveResult && Array.isArray(saveResult.removedSelfReferentialBackupIps) && saveResult.removedSelfReferentialBackupIps.length > 0) {
+      showStatus(
+        `Saved. Removed this computer from backups: ${saveResult.removedSelfReferentialBackupIps.join(', ')}`,
+        'error'
+      );
+      const refreshed = await window.electronAPI.getPreferences();
+      renderBackupIpList(Array.isArray(refreshed.backupIps) ? refreshed.backupIps : []);
+      refreshBackupStatusBadges();
+    } else {
+      showStatus('Primary/Backup configuration saved', 'info');
+    }
   } catch (error) {
     console.error('Failed to save primary/backup preferences:', error);
     showStatus('Failed to save primary/backup preferences', 'error');

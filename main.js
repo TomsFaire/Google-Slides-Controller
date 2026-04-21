@@ -22,6 +22,8 @@ try {
   // node-pty optional
 }
 const os = require('os');
+const net = require('net');
+const dns = require('dns');
 const util = require('util');
 const QRCode = require('qrcode');
 
@@ -1150,7 +1152,21 @@ function loadPreferences() {
       setVerboseLoggingFromPrefs(prefs);
       // Normalize/migrate preferences in-memory (do not write here; loadPreferences is called often)
       // Primary/Backup migration: support both legacy backupIp1/2/3 and new backupIps[]
-      prefs.backupIps = getBackupIpsFromPrefs(prefs);
+      refreshLocalBackupTargetKeySet();
+      const mergedBk = mergeBackupIpsFromPrefsObject(prefs);
+      const cleanedBk = removeSelfReferentialBackupIps(mergedBk);
+      prefs.backupIps = cleanedBk.kept;
+      if (cleanedBk.removed.length > 0) {
+        logWarn('[Preferences] Stripped backup IP(s) that resolve to this machine:', cleanedBk.removed.join(', '));
+        delete prefs.backupIp1;
+        delete prefs.backupIp2;
+        delete prefs.backupIp3;
+        try {
+          savePreferences(prefs);
+        } catch (e) {
+          logError('[Preferences] Could not persist cleaned backup IPs:', e.message);
+        }
+      }
       prefs.controllerIps = getControllerIpsFromPrefs(prefs);
       prefs.presetUrls = getPresetUrlsFromPrefs(prefs);
       // Removed layout mode 'narrow' (broken preview scaling); treat as Google default.
@@ -1179,12 +1195,23 @@ function loadPreferences() {
 
 // Save preferences
 function savePreferences(prefs) {
+  const meta = { removedSelfReferentialBackupIps: [] };
   try {
     const prefsPath = getPreferencesPath();
     // Ensure verbose flag is applied immediately
     setVerboseLoggingFromPrefs(prefs);
     // Normalize/migrate before writing
     prefs.backupIps = getBackupIpsFromPrefs(prefs);
+    refreshLocalBackupTargetKeySet();
+    const selfBackup = removeSelfReferentialBackupIps(prefs.backupIps);
+    meta.removedSelfReferentialBackupIps = selfBackup.removed;
+    if (selfBackup.removed.length > 0) {
+      logWarn(
+        '[Preferences] Removed backup address(es) that resolve to this machine (prevents primary→self loops):',
+        selfBackup.removed.join(', ')
+      );
+    }
+    prefs.backupIps = selfBackup.kept;
     prefs.controllerIps = getControllerIpsFromPrefs(prefs);
     if (prefs.defaultNotesZoomSteps !== undefined && prefs.defaultNotesZoomSteps !== null) {
       prefs.defaultNotesZoomSteps = clampNotesZoomSteps(prefs.defaultNotesZoomSteps);
@@ -1202,7 +1229,8 @@ function savePreferences(prefs) {
     
     fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf8');
     logInfo('[Preferences] Preferences saved');
-    
+    invalidateLocalBackupTargetKeyCache();
+
     // Verify it was written
     if (fs.existsSync(prefsPath)) {
       const stats = fs.statSync(prefsPath);
@@ -1210,6 +1238,7 @@ function savePreferences(prefs) {
     } else {
       logError('[Preferences] ERROR: File was not created after write!');
     }
+    return meta;
   } catch (error) {
     logError('[Preferences] Error saving preferences:', error);
     logError('[Preferences] Error details:', {
@@ -1288,6 +1317,125 @@ function normalizeRemoteAddress(addr) {
 function isLocalhostAddress(addr) {
   const a = normalizeRemoteAddress(addr);
   return a === '127.0.0.1';
+}
+
+// --- Never use this machine as its own backup (avoids primary→self HTTP loops on open-presentation, etc.) ---
+let cachedLocalBackupTargetKeys = null;
+let cachedLocalBackupTargetKeysAt = 0;
+const LOCAL_BACKUP_TARGET_CACHE_MS = 15000;
+
+function stripIpv6ZoneIndex(addr) {
+  const s = String(addr || '').trim();
+  const i = s.indexOf('%');
+  if (i === -1) return s;
+  const base = s.slice(0, i);
+  return net.isIPv6(base) ? base : s;
+}
+
+function refreshLocalBackupTargetKeySet() {
+  const keys = new Set();
+  const addKey = (addr) => {
+    const raw = stripIpv6ZoneIndex(addr);
+    if (!raw) return;
+    const ipType = net.isIP(raw);
+    if (ipType === 4) {
+      keys.add(raw);
+      keys.add(`::ffff:${raw}`);
+      return;
+    }
+    if (ipType === 6) {
+      const low = raw.toLowerCase();
+      keys.add(low);
+      if (low.startsWith('::ffff:')) {
+        const v4 = low.slice(7);
+        if (net.isIP(v4) === 4) keys.add(v4);
+      }
+      const asLoop = normalizeRemoteAddress(low);
+      if (asLoop === '127.0.0.1') {
+        keys.add('127.0.0.1');
+        keys.add('::ffff:127.0.0.1');
+      }
+    }
+  };
+
+  addKey('127.0.0.1');
+  addKey('::1');
+
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces || {})) {
+      for (const info of ifaces[name] || []) {
+        if (!info || !info.address) continue;
+        addKey(info.address);
+      }
+    }
+  } catch (e) {
+    logDebug('[Backup] networkInterfaces() failed:', e.message);
+  }
+
+  cachedLocalBackupTargetKeys = keys;
+  cachedLocalBackupTargetKeysAt = Date.now();
+  return keys;
+}
+
+function getLocalBackupTargetKeySet() {
+  if (!cachedLocalBackupTargetKeys || (Date.now() - cachedLocalBackupTargetKeysAt) > LOCAL_BACKUP_TARGET_CACHE_MS) {
+    return refreshLocalBackupTargetKeySet();
+  }
+  return cachedLocalBackupTargetKeys;
+}
+
+function invalidateLocalBackupTargetKeyCache() {
+  cachedLocalBackupTargetKeys = null;
+  cachedLocalBackupTargetKeysAt = 0;
+}
+
+function hostMatchesLocalBackupKeys(host, keys) {
+  const h = String(host || '').trim();
+  if (!h) return false;
+  const bare = stripIpv6ZoneIndex(h);
+  const ipType = net.isIP(bare);
+  if (ipType === 4) {
+    return keys.has(bare) || keys.has(`::ffff:${bare}`);
+  }
+  if (ipType === 6) {
+    const low = bare.toLowerCase();
+    if (keys.has(low)) return true;
+    if (low.startsWith('::ffff:')) {
+      const tail = low.slice(7);
+      if (net.isIP(tail) === 4) return keys.has(tail) || keys.has(`::ffff:${tail}`);
+    }
+    if (normalizeRemoteAddress(low) === '127.0.0.1') return keys.has('127.0.0.1');
+    return false;
+  }
+  try {
+    const results = dns.lookupSync(h, { all: true });
+    for (const rec of results || []) {
+      if (rec && rec.address && hostMatchesLocalBackupKeys(rec.address, keys)) return true;
+    }
+  } catch (e) {
+    return false;
+  }
+  return false;
+}
+
+function isSelfReferentialBackupTarget(host) {
+  const keys = getLocalBackupTargetKeySet();
+  return hostMatchesLocalBackupKeys(host, keys);
+}
+
+function removeSelfReferentialBackupIps(ips) {
+  const list = normalizeBackupIps(Array.isArray(ips) ? ips : []);
+  const kept = [];
+  const removed = [];
+  for (const ip of list) {
+    if (isSelfReferentialBackupTarget(ip)) {
+      removed.push(ip);
+    } else {
+      kept.push(ip);
+    }
+  }
+  return { kept, removed };
 }
 
 function parseIpv4ToInt(ip) {
@@ -1665,18 +1813,15 @@ function buildTunnelUnlockHtml() {
 </html>`;
 }
 
-function getBackupIpsFromPrefs(prefs) {
-  // New format: prefs.backupIps: string[]
-  // Legacy format: prefs.backupIp1/2/3
+function mergeBackupIpsFromPrefsObject(prefs) {
   const fromArray = Array.isArray(prefs?.backupIps) ? prefs.backupIps : [];
-  const legacy = [
-    prefs?.backupIp1,
-    prefs?.backupIp2,
-    prefs?.backupIp3,
-  ];
-
-  // Merge both so upgrades keep working even if only legacy keys exist
+  const legacy = [prefs?.backupIp1, prefs?.backupIp2, prefs?.backupIp3];
   return normalizeBackupIps([...fromArray, ...legacy]);
+}
+
+function getBackupIpsFromPrefs(prefs) {
+  refreshLocalBackupTargetKeySet();
+  return removeSelfReferentialBackupIps(mergeBackupIpsFromPrefsObject(prefs)).kept;
 }
 
 // Get list of configured backup IP addresses (unlimited, user-configurable)
@@ -1717,9 +1862,13 @@ async function sendToBackups(endpoint, data = null) {
   const port = getOutboundBackupHttpPort(prefs);
   
   logDebug(`[Backup] Broadcasting ${endpoint} to ${backupIps.length} backup(s)`);
-  
+
   // Send to all backups in parallel (fire and forget - don't wait for responses)
-  backupIps.forEach(ip => {
+  backupIps.forEach((ip) => {
+    if (isSelfReferentialBackupTarget(ip)) {
+      logWarn(`[Backup] Skipping self-referential backup target ${ip} for ${endpoint}`);
+      return;
+    }
     const options = {
       hostname: ip,
       port: port,
@@ -2404,8 +2553,8 @@ ipcMain.handle('save-preferences', async (event, incoming) => {
   if (incoming && incoming.presentationNativeFullscreen !== undefined) {
     mergedPrefs.presentationNativeFullscreen = incoming.presentationNativeFullscreen === true;
   }
-  savePreferences(mergedPrefs);
-  return { success: true };
+  const saveMeta = savePreferences(mergedPrefs) || {};
+  return { success: true, ...saveMeta };
 });
 
 ipcMain.handle('relaunch-speaker-notes', async () => {
@@ -3467,10 +3616,10 @@ function startHttpServer() {
           
           // Merge new preferences with existing ones
           Object.assign(prefs, data);
-          savePreferences(prefs);
-          
+          const postSaveMeta = savePreferences(prefs) || {};
+
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, message: 'Preferences saved' }));
+          res.end(JSON.stringify({ success: true, message: 'Preferences saved', ...postSaveMeta }));
         } catch (error) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: error.message }));

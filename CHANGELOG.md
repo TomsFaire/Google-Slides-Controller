@@ -2,6 +2,11 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.0.1] - 2026-04-23
+
+### Fixed
+- **Web remote light theme – speaker notes stuck at "Loading notes..."** – In the light (minimalist) theme the speaker notes panel is always visible via CSS, so users never needed to click the toggle button. But notes polling only started on toggle click, leaving the panel permanently stuck at the placeholder text. Notes now auto-start on page load when the light theme is active.
+
 ## [2.0.0] - 2026-04-20
 
 ### Desktop app (Electron settings)

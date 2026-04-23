@@ -9544,6 +9544,17 @@ function startWebUiServer() {
     
     // Poll for slide updates every 2 seconds
     let slideUpdateInterval = setInterval(updateSlideButtons, 2000);
+
+    // In light theme the notes panel is always visible via CSS (no toggle needed),
+    // so auto-start polling immediately rather than waiting for a button click.
+    if (document.body.classList.contains('theme-light')) {
+      notesVisible = true;
+      const lightNotesBtn = document.getElementById('notes-toggle-btn');
+      if (lightNotesBtn) lightNotesBtn.classList.add('active');
+      loadSpeakerNotes();
+      if (window.notesRefreshInterval) clearInterval(window.notesRefreshInterval);
+      window.notesRefreshInterval = setInterval(loadSpeakerNotes, 2000);
+    }
     
     // Clear interval when page unloads
     window.addEventListener('beforeunload', () => {

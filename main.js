@@ -26,6 +26,7 @@ const net = require('net');
 const dns = require('dns');
 const util = require('util');
 const QRCode = require('qrcode');
+const { createPerfectCueServer } = require('./src/perfectcue-server');
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -1969,6 +1970,62 @@ async function checkBackupStatus() {
   return { backups };
 }
 
+// ─── PerfectCue Network Extender ───────────────────────────────────────────
+
+let perfectCueServer = null;
+let perfectCueStatus = 'disabled';
+let perfectCueRemoteIp = null;
+
+function dispatchPerfectCueSlide(endpoint) {
+  const options = {
+    hostname: '127.0.0.1',
+    port: 9595,
+    path: `/api/${endpoint}`,
+    method: 'POST',
+    headers: { 'Content-Length': 0 }
+  };
+  const req = http.request(options, res => {
+    logDebug(`[PerfectCue] dispatched ${endpoint} → HTTP ${res.statusCode}`);
+    res.resume();
+  });
+  req.on('error', err => logDebug(`[PerfectCue] dispatch error: ${err.message}`));
+  req.end();
+}
+
+function startPerfectCueListener(port) {
+  stopPerfectCueListener();
+  perfectCueServer = createPerfectCueServer({
+    dispatch: dispatchPerfectCueSlide,
+    log: (msg) => logDebug('[PerfectCue]', msg),
+    onStatus: (status, ip) => {
+      perfectCueStatus = status;
+      perfectCueRemoteIp = ip || null;
+    }
+  });
+  perfectCueServer.listen(port, '0.0.0.0', () => {
+    perfectCueStatus = 'listening';
+    logDebug('[PerfectCue] Listening on port', port);
+  });
+}
+
+function stopPerfectCueListener() {
+  if (perfectCueServer) {
+    perfectCueServer.close();
+    perfectCueServer = null;
+  }
+  perfectCueStatus = 'disabled';
+  perfectCueRemoteIp = null;
+}
+
+function applyPerfectCuePrefs(prefs) {
+  const port = Number(prefs.perfectCuePort) || 8899;
+  if (prefs.perfectCueEnabled === true) {
+    startPerfectCueListener(port);
+  } else {
+    stopPerfectCueListener();
+  }
+}
+
 // Start backup status polling (called when app starts in primary mode)
 let backupStatusInterval = null;
 
@@ -2554,6 +2611,7 @@ ipcMain.handle('save-preferences', async (event, incoming) => {
     mergedPrefs.presentationNativeFullscreen = incoming.presentationNativeFullscreen === true;
   }
   const saveMeta = savePreferences(mergedPrefs) || {};
+  applyPerfectCuePrefs(mergedPrefs);
   return { success: true, ...saveMeta };
 });
 
@@ -10974,6 +11032,8 @@ app.whenReady().then(() => {
   // Start backup status polling if in primary mode
   startBackupStatusPolling();
 
+  applyPerfectCuePrefs(loadPreferences());
+
   scheduleReadmeScreenshotCapture();
 
   app.on('activate', () => {
@@ -10990,6 +11050,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  stopPerfectCueListener();
   stopCloudflaredTunnel();
   if (httpServer) {
     console.log('[API] Shutting down HTTP server');

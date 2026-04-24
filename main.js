@@ -2021,7 +2021,7 @@ function applyPerfectCuePrefs(prefs) {
     stopPerfectCueListeners();
     return;
   }
-  startPerfectCueListeners(normalizePerfectCuePorts(prefs));
+  startPerfectCueListeners(prefs.perfectCuePorts || []);
 }
 
 /**

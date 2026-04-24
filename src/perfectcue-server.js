@@ -14,8 +14,8 @@ function createPerfectCueServer({ config = null, masterEnabled = null, dispatch,
       for (const byte of chunk) {
         const cmd = parsePerfectCueByte(byte);
         if (cmd !== 'next' && cmd !== 'previous') continue;
-        const globalEnabled = masterEnabled ? masterEnabled() : true;
-        const portEnabled = config ? config.enabled !== false : true;
+        const globalEnabled = masterEnabled === null || masterEnabled() === true;
+        const portEnabled = config === null || config.enabled !== false;
         if (globalEnabled && portEnabled) {
           dispatch(cmd === 'next' ? 'next-slide' : 'previous-slide');
         }

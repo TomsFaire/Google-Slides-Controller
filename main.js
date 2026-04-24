@@ -3635,6 +3635,37 @@ function startHttpServer() {
       return;
     }
 
+    // POST /api/set-perfectcue-enabled - Enable or disable all PerfectCue listeners globally
+    if (req.method === 'POST' && apiReqPath === '/api/set-perfectcue-enabled') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          if (typeof data.enabled !== 'boolean') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'enabled must be a boolean' }));
+            return;
+          }
+          const prefs = loadPreferences();
+          prefs.perfectCueEnabled = data.enabled;
+          savePreferences(prefs);
+          applyPerfectCuePrefs(prefs);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, enabled: data.enabled }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Invalid request' }));
+        }
+      });
+      return;
+    }
+
     // POST /api/tunnel-enable - Start the Cloudflare Quick Tunnel
     if (req.method === 'POST' && req.url === '/api/tunnel-enable') {
       if (!isControllerAllowedRequest(req, loadPreferences())) {

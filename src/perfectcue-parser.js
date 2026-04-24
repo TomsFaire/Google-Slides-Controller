@@ -1,17 +1,10 @@
-function parsePerfectCueCommand(line) {
-  if (line.includes('>FORWARD')) return 'next';
-  if (line.includes('>REVERSE')) return 'previous';
-  return null;
+const COMMAND_BYTES = {
+  0x0F: 'next',
+  0x1F: 'previous',
+};
+
+function parsePerfectCueByte(byte) {
+  return COMMAND_BYTES[byte] ?? null;
 }
 
-// Splits accumulated buffer on \r, returns completed lines and the leftover fragment.
-// Call with the full buffer each time; replace buffer with remainder.
-function splitOnCR(accumulated) {
-  const parts = accumulated.split('\r');
-  return {
-    lines: parts.slice(0, -1).filter(Boolean),
-    remainder: parts[parts.length - 1]
-  };
-}
-
-module.exports = { parsePerfectCueCommand, splitOnCR };
+module.exports = { parsePerfectCueByte };

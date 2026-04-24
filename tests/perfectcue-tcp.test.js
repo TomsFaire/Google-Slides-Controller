@@ -37,50 +37,41 @@ function withServer(port, overrides, fn) {
   });
 }
 
-test('>FORWARD CR dispatches next-slide', () =>
+test('0x0F byte dispatches next-slide', () =>
   withServer(18899, {}, async (dispatched) => {
-    await sendAndClose(18899, '>FORWARD 35\r');
+    await sendAndClose(18899, Buffer.from([0x0F]));
     await new Promise(r => setTimeout(r, 50));
     assert.deepEqual(dispatched, ['next-slide']);
   })
 );
 
-test('>REVERSE CR dispatches previous-slide', () =>
+test('0x1F byte dispatches previous-slide', () =>
   withServer(18900, {}, async (dispatched) => {
-    await sendAndClose(18900, '>REVERSE 3C\r');
+    await sendAndClose(18900, Buffer.from([0x1F]));
     await new Promise(r => setTimeout(r, 50));
     assert.deepEqual(dispatched, ['previous-slide']);
   })
 );
 
-test('unknown command does not dispatch', () =>
+test('0xFF keepalive does not dispatch', () =>
   withServer(18901, {}, async (dispatched) => {
-    await sendAndClose(18901, '>STATUS OK\r');
+    await sendAndClose(18901, Buffer.from([0xFF]));
     await new Promise(r => setTimeout(r, 50));
     assert.deepEqual(dispatched, []);
   })
 );
 
-test('multiple commands in one chunk all dispatch', () =>
+test('multiple bytes in one chunk all dispatch', () =>
   withServer(18902, {}, async (dispatched) => {
-    await sendAndClose(18902, '>FORWARD 35\r>REVERSE 3C\r');
+    await sendAndClose(18902, Buffer.from([0x0F, 0x1F]));
     await new Promise(r => setTimeout(r, 50));
     assert.deepEqual(dispatched, ['next-slide', 'previous-slide']);
   })
 );
 
-test('command split across two chunks dispatches once', () =>
+test('keepalive bytes between commands do not affect dispatch', () =>
   withServer(18903, {}, async (dispatched) => {
-    await new Promise((resolve, reject) => {
-      const client = net.createConnection(18903, '127.0.0.1', () => {
-        client.write('>FORW');
-        setTimeout(() => {
-          client.write('ARD 35\r');
-          setTimeout(() => { client.destroy(); resolve(); }, 30);
-        }, 20);
-      });
-      client.on('error', reject);
-    });
+    await sendAndClose(18903, Buffer.from([0xFF, 0x0F, 0xFF]));
     await new Promise(r => setTimeout(r, 50));
     assert.deepEqual(dispatched, ['next-slide']);
   })
@@ -88,7 +79,7 @@ test('command split across two chunks dispatches once', () =>
 
 test('onStatus transitions connected then listening on disconnect', () =>
   withServer(18904, {}, async (dispatched, statuses) => {
-    await sendAndClose(18904, '>FORWARD 35\r');
+    await sendAndClose(18904, Buffer.from([0x0F]));
     await new Promise(r => setTimeout(r, 80));
     assert.ok(statuses.includes('connected'), `expected connected in [${statuses}]`);
     assert.ok(statuses.includes('listening'), `expected listening in [${statuses}]`);

@@ -2059,9 +2059,13 @@ function normalizePerfectCuePorts(prefs) {
 function setPerfectCuePortEnabled(port, enabled) {
   const prefs = loadPreferences();
   const ports = prefs.perfectCuePorts || [];
-  const entry = ports.find(p => p.port === port);
-  if (!entry) return { success: false, error: 'Port not found' };
-  entry.enabled = enabled;
+  const idx = ports.findIndex(p => p.port === port);
+  if (idx === -1) return { success: false, error: 'Port not found' };
+  prefs.perfectCuePorts = [
+    ...ports.slice(0, idx),
+    { ...ports[idx], enabled },
+    ...ports.slice(idx + 1)
+  ];
   savePreferences(prefs);
   // Update in-memory server config immediately (no server restart needed)
   const live = perfectCueServers.find(s => s.config.port === port);
@@ -2659,7 +2663,7 @@ ipcMain.handle('save-preferences', async (event, incoming) => {
 });
 
 ipcMain.handle('toggle-perfectcue-port', async (_event, { port, enabled }) => {
-  if (typeof port !== 'number' || port < 1024 || port > 65535) {
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1024 || port > 65535) {
     return { success: false, error: 'Invalid port' };
   }
   if (typeof enabled !== 'boolean') {
@@ -3557,10 +3561,9 @@ function startHttpServer() {
         state.tunnelUrl = tunnelUrl || null;
         state.tunnelQrVisible = !!(tunnelQrWindow && !tunnelQrWindow.isDestroyed());
         // Add PerfectCue port state for Companion
-        const perfectCuePrefs = loadPreferences();
         state.perfectcue = {
-          enabled: perfectCuePrefs.perfectCueEnabled === true,
-          ports: (perfectCuePrefs.perfectCuePorts || []).map(({ port, name, enabled }) => ({ port, name, enabled }))
+          enabled: prefs.perfectCueEnabled === true,
+          ports: (prefs.perfectCuePorts || []).map(({ port, name, enabled }) => ({ port, name, enabled }))
         };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
@@ -3611,7 +3614,7 @@ function startHttpServer() {
       req.on('end', () => {
         try {
           const data = body ? JSON.parse(body) : {};
-          if (typeof data.port !== 'number' || data.port < 1024 || data.port > 65535) {
+          if (typeof data.port !== 'number' || !Number.isInteger(data.port) || data.port < 1024 || data.port > 65535) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'port must be a number between 1024 and 65535' }));
             return;

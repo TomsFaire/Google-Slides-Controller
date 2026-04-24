@@ -28,7 +28,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			backupControlsEnabled: true,
 			notesZoomSteps: null,
 			notesZoomDefault: null,
-			notesLayout: 'hide'
+			notesLayout: 'hide',
+			perfectcue: { enabled: false, ports: [] },
 		}
 		
 		// Polling interval
@@ -314,7 +315,15 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			{
 				variableId: 'notes_layout',
 				name: 'Notes Layout (hide / default)'
-			}
+			},
+			// PerfectCue global enable
+			{ variableId: 'perfectcue_enabled', name: 'PerfectCue Global Enabled (1/0)' },
+			// PerfectCue port slots (up to 10)
+			...Array.from({ length: 10 }, (_, i) => [
+				{ variableId: `perfectcue_port_${i+1}_port`, name: `PerfectCue Slot ${i+1} Port Number` },
+				{ variableId: `perfectcue_port_${i+1}_name`, name: `PerfectCue Slot ${i+1} Name` },
+				{ variableId: `perfectcue_port_${i+1}_enabled`, name: `PerfectCue Slot ${i+1} Enabled (1/0)` },
+			]).flat(),
 		]
 
 		this.setVariableDefinitions(variables)
@@ -507,7 +516,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			backupControlsEnabled: response.backupControlsEnabled === true,
 			notesZoomSteps: response.notesZoomSteps !== null && response.notesZoomSteps !== undefined ? response.notesZoomSteps : null,
 			notesZoomDefault: response.notesZoomDefault !== null && response.notesZoomDefault !== undefined ? response.notesZoomDefault : null,
-			notesLayout: response.notesLayout || 'hide'
+			notesLayout: response.notesLayout || 'hide',
+			perfectcue: response.perfectcue || { enabled: false, ports: [] },
 		}
 		
 		// Check if state changed (compare all fields)
@@ -531,7 +541,8 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.state.notesDisplayId !== newState.notesDisplayId ||
 			this.state.notesZoomSteps !== newState.notesZoomSteps ||
 			this.state.notesZoomDefault !== newState.notesZoomDefault ||
-			this.state.notesLayout !== newState.notesLayout
+			this.state.notesLayout !== newState.notesLayout ||
+			JSON.stringify(this.state.perfectcue) !== JSON.stringify(newState.perfectcue)
 		
 		if (stateChanged) {
 			this.state = newState
@@ -557,7 +568,18 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				backup_controls_enabled: this.state.backupControlsEnabled ? 'Yes' : 'No',
 				notes_zoom_steps: this.state.notesZoomSteps !== null && this.state.notesZoomSteps !== undefined ? String(this.state.notesZoomSteps) : '',
 				notes_zoom_default: this.state.notesZoomDefault !== null && this.state.notesZoomDefault !== undefined ? String(this.state.notesZoomDefault) : '',
-				notes_layout: this.state.notesLayout || 'hide'
+				notes_layout: this.state.notesLayout || 'hide',
+				perfectcue_enabled: newState.perfectcue.enabled ? '1' : '0',
+				...Object.fromEntries(
+					Array.from({ length: 10 }, (_, i) => {
+						const p = newState.perfectcue.ports[i]
+						return [
+							[`perfectcue_port_${i+1}_port`, p ? String(p.port) : ''],
+							[`perfectcue_port_${i+1}_name`, p ? (p.name || '') : ''],
+							[`perfectcue_port_${i+1}_enabled`, p ? (p.enabled ? '1' : '0') : ''],
+						]
+					}).flat()
+				),
 			})
 			
 			// Trigger feedback updates

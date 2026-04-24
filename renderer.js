@@ -617,12 +617,12 @@ async function initDisplays() {
     const controllerIps = Array.isArray(preferences.controllerIps) ? preferences.controllerIps : [];
     renderControllerIpList(controllerIps);
 
-    // Restore PerfectCue settings (migrate legacy single-port pref)
+    // Restore PerfectCue settings
     if (perfectCueEnabledCheckbox) {
       perfectCueEnabledCheckbox.checked = preferences.perfectCueEnabled === true;
     }
-    const legacyPort = preferences.perfectCuePort ? [preferences.perfectCuePort] : [];
-    const perfectCuePorts = Array.isArray(preferences.perfectCuePorts) ? preferences.perfectCuePorts : legacyPort;
+    // preferences.perfectCuePorts is already PortConfig[] after loadPreferences() normalization
+    const perfectCuePorts = Array.isArray(preferences.perfectCuePorts) ? preferences.perfectCuePorts : [];
     renderPerfectCuePortList(perfectCuePorts);
     
     // Save preferences when selections change
@@ -824,7 +824,7 @@ async function initDisplays() {
 
     if (addPerfectCuePortBtn) {
       addPerfectCuePortBtn.addEventListener('click', () => {
-        addPerfectCuePortRow('');
+        addPerfectCuePortRow({ port: '', name: '', enabled: true });
         const inputs = perfectCuePortList ? perfectCuePortList.querySelectorAll('input[data-perfectcue-port="true"]') : [];
         if (inputs.length) inputs[inputs.length - 1].focus();
       });
@@ -1101,66 +1101,125 @@ function renderBackupIpList(ips = []) {
   normalized.forEach((ip) => addBackupIpRow(ip));
 }
 
-function addPerfectCuePortRow(initialValue = '') {
+function addPerfectCuePortRow(config = {}) {
   if (!perfectCuePortList) return;
+  const { port = '', name = '', enabled = true } = config;
 
   const row = document.createElement('div');
   row.setAttribute('data-perfectcue-row', 'true');
-  row.style.display = 'flex';
-  row.style.gap = '10px';
-  row.style.alignItems = 'center';
-  row.style.width = '100%';
-  row.style.minWidth = '0';
+  row.style.cssText = 'display:flex;gap:8px;align-items:center;width:100%;min-width:0;flex-wrap:wrap;';
 
-  const input = document.createElement('input');
-  input.type = 'number';
-  input.className = 'input-field';
-  input.placeholder = '8899';
-  input.min = '1024';
-  input.max = '65535';
-  input.value = initialValue || '';
-  input.setAttribute('data-perfectcue-port', 'true');
-  input.style.flex = '1 1 0%';
-  input.style.width = '100%';
-  input.style.minWidth = '100px';
+  // Name input
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.className = 'input-field';
+  nameInput.placeholder = 'Name (optional)';
+  nameInput.maxLength = 40;
+  nameInput.value = name;
+  nameInput.setAttribute('data-perfectcue-name', 'true');
+  nameInput.style.cssText = 'flex:2 1 120px;min-width:100px;';
 
+  // Port number input
+  const portInput = document.createElement('input');
+  portInput.type = 'number';
+  portInput.className = 'input-field';
+  portInput.placeholder = '8899';
+  portInput.min = '1024';
+  portInput.max = '65535';
+  portInput.value = port || '';
+  portInput.setAttribute('data-perfectcue-port', 'true');
+  portInput.style.cssText = 'flex:1 1 90px;min-width:80px;';
+
+  // Enabled checkbox label
+  const enabledLabel = document.createElement('label');
+  enabledLabel.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;';
+
+  const enabledCheckbox = document.createElement('input');
+  enabledCheckbox.type = 'checkbox';
+  enabledCheckbox.checked = enabled !== false;
+  enabledCheckbox.setAttribute('data-perfectcue-enabled', 'true');
+
+  const enabledText = document.createElement('span');
+  enabledText.textContent = 'Enabled';
+  enabledText.style.fontSize = '13px';
+
+  enabledLabel.appendChild(enabledCheckbox);
+  enabledLabel.appendChild(enabledText);
+
+  // Disable checkbox if port value is not yet valid (unsaved new row)
+  const syncCheckboxToPort = () => {
+    const v = parseInt(portInput.value, 10);
+    enabledCheckbox.disabled = !(Number.isInteger(v) && v >= 1024 && v <= 65535);
+  };
+  syncCheckboxToPort();
+  portInput.addEventListener('input', syncCheckboxToPort);
+
+  // Immediate IPC on toggle
+  enabledCheckbox.addEventListener('change', async () => {
+    const portVal = parseInt(portInput.value, 10);
+    if (!Number.isInteger(portVal) || portVal < 1024 || portVal > 65535) return;
+    const newChecked = enabledCheckbox.checked;
+    try {
+      const result = await window.electronAPI.togglePerfectCuePort(portVal, newChecked);
+      if (result && !result.success) {
+        enabledCheckbox.checked = !newChecked; // revert
+        showStatus('Save PerfectCue settings first before toggling', 'error');
+      }
+    } catch (err) {
+      enabledCheckbox.checked = !newChecked; // revert
+      console.error('[PerfectCue] Failed to toggle port:', err);
+    }
+  });
+
+  // Remove button
   const removeBtn = document.createElement('button');
   removeBtn.type = 'button';
   removeBtn.className = 'btn btn-secondary';
   removeBtn.textContent = 'Remove';
-  removeBtn.style.padding = '8px 10px';
-  removeBtn.style.minWidth = '88px';
+  removeBtn.style.cssText = 'padding:8px 10px;min-width:80px;';
 
   removeBtn.addEventListener('click', () => {
     const rows = perfectCuePortList.querySelectorAll('[data-perfectcue-row="true"]');
     if (rows.length <= 1) {
-      input.value = '';
+      portInput.value = '';
+      nameInput.value = '';
+      enabledCheckbox.checked = true;
       return;
     }
     row.remove();
   });
 
-  row.appendChild(input);
+  row.appendChild(nameInput);
+  row.appendChild(portInput);
+  row.appendChild(enabledLabel);
   row.appendChild(removeBtn);
   perfectCuePortList.appendChild(row);
 }
 
-function renderPerfectCuePortList(ports = []) {
+function renderPerfectCuePortList(portConfigs = []) {
   if (!perfectCuePortList) return;
   perfectCuePortList.innerHTML = '';
-  const normalized = Array.isArray(ports) ? ports.map(Number).filter(p => p > 0) : [];
-  if (normalized.length === 0) {
-    addPerfectCuePortRow('8899');
+  const configs = Array.isArray(portConfigs) ? portConfigs : [];
+  if (configs.length === 0) {
+    addPerfectCuePortRow({ port: 8899, name: '', enabled: true });
     return;
   }
-  normalized.forEach(p => addPerfectCuePortRow(String(p)));
+  configs.forEach(c => addPerfectCuePortRow(c));
 }
 
 function getPerfectCuePortsFromUi() {
   if (!perfectCuePortList) return [];
-  return Array.from(perfectCuePortList.querySelectorAll('input[data-perfectcue-port="true"]'))
-    .map(el => Number(el.value))
-    .filter(p => p >= 1024 && p <= 65535);
+  return Array.from(perfectCuePortList.querySelectorAll('[data-perfectcue-row="true"]'))
+    .map(row => {
+      const portEl = row.querySelector('[data-perfectcue-port="true"]');
+      const nameEl = row.querySelector('[data-perfectcue-name="true"]');
+      const enabledEl = row.querySelector('[data-perfectcue-enabled="true"]');
+      const port = portEl ? parseInt(portEl.value, 10) : NaN;
+      const name = nameEl ? nameEl.value.trim() : '';
+      const enabled = enabledEl ? enabledEl.checked : true;
+      return { port, name, enabled };
+    })
+    .filter(c => Number.isInteger(c.port) && c.port >= 1024 && c.port <= 65535);
 }
 
 async function savePerfectCuePrefs() {

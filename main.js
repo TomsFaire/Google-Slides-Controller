@@ -1972,9 +1972,7 @@ async function checkBackupStatus() {
 
 // ─── PerfectCue Network Extender ───────────────────────────────────────────
 
-let perfectCueServer = null;
-let perfectCueStatus = 'disabled';
-let perfectCueRemoteIp = null;
+let perfectCueServers = [];
 
 function dispatchPerfectCueSlide(endpoint) {
   const options = {
@@ -1992,38 +1990,40 @@ function dispatchPerfectCueSlide(endpoint) {
   req.end();
 }
 
-function startPerfectCueListener(port) {
-  stopPerfectCueListener();
-  perfectCueServer = createPerfectCueServer({
-    dispatch: dispatchPerfectCueSlide,
-    log: (msg) => logDebug('[PerfectCue]', msg),
-    onStatus: (status, ip) => {
-      perfectCueStatus = status;
-      perfectCueRemoteIp = ip || null;
-    }
-  });
-  perfectCueServer.listen(port, '0.0.0.0', () => {
-    perfectCueStatus = 'listening';
-    logDebug('[PerfectCue] Listening on port', port);
-  });
+function startPerfectCueListeners(ports) {
+  stopPerfectCueListeners();
+  for (const port of ports) {
+    const server = createPerfectCueServer({
+      dispatch: dispatchPerfectCueSlide,
+      log: (msg) => logDebug('[PerfectCue]', msg),
+      onStatus: () => {}
+    });
+    server.listen(port, '0.0.0.0', () => {
+      logDebug('[PerfectCue] Listening on port', port);
+    });
+    server.on('error', err => logDebug(`[PerfectCue] port ${port} error: ${err.message}`));
+    perfectCueServers.push(server);
+  }
 }
 
-function stopPerfectCueListener() {
-  if (perfectCueServer) {
-    perfectCueServer.close();
-    perfectCueServer = null;
+function stopPerfectCueListeners() {
+  for (const server of perfectCueServers) {
+    server.close();
   }
-  perfectCueStatus = 'disabled';
-  perfectCueRemoteIp = null;
+  perfectCueServers = [];
 }
 
 function applyPerfectCuePrefs(prefs) {
-  const port = Number(prefs.perfectCuePort) || 8899;
-  if (prefs.perfectCueEnabled === true) {
-    startPerfectCueListener(port);
-  } else {
-    stopPerfectCueListener();
+  if (prefs.perfectCueEnabled !== true) {
+    stopPerfectCueListeners();
+    return;
   }
+  // Migrate legacy single-port pref
+  const legacyPort = prefs.perfectCuePort ? [Number(prefs.perfectCuePort)] : [];
+  const ports = Array.isArray(prefs.perfectCuePorts) && prefs.perfectCuePorts.length > 0
+    ? prefs.perfectCuePorts.map(Number).filter(p => p > 0)
+    : (legacyPort.length > 0 ? legacyPort : [8899]);
+  startPerfectCueListeners(ports);
 }
 
 // Start backup status polling (called when app starts in primary mode)
@@ -11050,7 +11050,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  stopPerfectCueListener();
+  stopPerfectCueListeners();
   stopCloudflaredTunnel();
   if (httpServer) {
     console.log('[API] Shutting down HTTP server');

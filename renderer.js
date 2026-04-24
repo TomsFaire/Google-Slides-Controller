@@ -24,6 +24,10 @@ const stagetimerEnabledCheckbox = document.getElementById('stagetimer-enabled');
 const stagetimerVisibleCheckbox = document.getElementById('stagetimer-visible');
 const saveStagetimerBtn = document.getElementById('save-stagetimer-btn');
 const loadStagetimerBtn = document.getElementById('load-stagetimer-btn');
+const perfectCueEnabledCheckbox = document.getElementById('perfectcue-enabled');
+const perfectCuePortList = document.getElementById('perfectcue-port-list');
+const addPerfectCuePortBtn = document.getElementById('add-perfectcue-port');
+const savePerfectCueBtn = document.getElementById('save-perfectcue-btn');
 const verboseLoggingCheckbox = document.getElementById('verbose-logging');
 const webUiDebugConsoleEnabledCheckbox = document.getElementById('web-ui-debug-console-enabled');
 const webUiThemeSelect = document.getElementById('web-ui-theme');
@@ -612,6 +616,14 @@ async function initDisplays() {
     // Restore controller allowlist (desktop-only)
     const controllerIps = Array.isArray(preferences.controllerIps) ? preferences.controllerIps : [];
     renderControllerIpList(controllerIps);
+
+    // Restore PerfectCue settings (migrate legacy single-port pref)
+    if (perfectCueEnabledCheckbox) {
+      perfectCueEnabledCheckbox.checked = preferences.perfectCueEnabled === true;
+    }
+    const legacyPort = preferences.perfectCuePort ? [preferences.perfectCuePort] : [];
+    const perfectCuePorts = Array.isArray(preferences.perfectCuePorts) ? preferences.perfectCuePorts : legacyPort;
+    renderPerfectCuePortList(perfectCuePorts);
     
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
@@ -808,6 +820,17 @@ async function initDisplays() {
         if (inputs.length) inputs[inputs.length - 1].focus();
         await saveControllerAllowlistPreferences();
       });
+    }
+
+    if (addPerfectCuePortBtn) {
+      addPerfectCuePortBtn.addEventListener('click', () => {
+        addPerfectCuePortRow('');
+        const inputs = perfectCuePortList ? perfectCuePortList.querySelectorAll('input[data-perfectcue-port="true"]') : [];
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      });
+    }
+    if (savePerfectCueBtn) {
+      savePerfectCueBtn.addEventListener('click', savePerfectCuePrefs);
     }
     
     // Load and display network info
@@ -1076,6 +1099,80 @@ function renderBackupIpList(ips = []) {
     return;
   }
   normalized.forEach((ip) => addBackupIpRow(ip));
+}
+
+function addPerfectCuePortRow(initialValue = '') {
+  if (!perfectCuePortList) return;
+
+  const row = document.createElement('div');
+  row.setAttribute('data-perfectcue-row', 'true');
+  row.style.display = 'flex';
+  row.style.gap = '10px';
+  row.style.alignItems = 'center';
+  row.style.width = '100%';
+  row.style.minWidth = '0';
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.className = 'input-field';
+  input.placeholder = '8899';
+  input.min = '1024';
+  input.max = '65535';
+  input.value = initialValue || '';
+  input.setAttribute('data-perfectcue-port', 'true');
+  input.style.flex = '1 1 0%';
+  input.style.width = '100%';
+  input.style.minWidth = '100px';
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn btn-secondary';
+  removeBtn.textContent = 'Remove';
+  removeBtn.style.padding = '8px 10px';
+  removeBtn.style.minWidth = '88px';
+
+  removeBtn.addEventListener('click', () => {
+    const rows = perfectCuePortList.querySelectorAll('[data-perfectcue-row="true"]');
+    if (rows.length <= 1) {
+      input.value = '';
+      return;
+    }
+    row.remove();
+  });
+
+  row.appendChild(input);
+  row.appendChild(removeBtn);
+  perfectCuePortList.appendChild(row);
+}
+
+function renderPerfectCuePortList(ports = []) {
+  if (!perfectCuePortList) return;
+  perfectCuePortList.innerHTML = '';
+  const normalized = Array.isArray(ports) ? ports.map(Number).filter(p => p > 0) : [];
+  if (normalized.length === 0) {
+    addPerfectCuePortRow('8899');
+    return;
+  }
+  normalized.forEach(p => addPerfectCuePortRow(String(p)));
+}
+
+function getPerfectCuePortsFromUi() {
+  if (!perfectCuePortList) return [];
+  return Array.from(perfectCuePortList.querySelectorAll('input[data-perfectcue-port="true"]'))
+    .map(el => Number(el.value))
+    .filter(p => p >= 1024 && p <= 65535);
+}
+
+async function savePerfectCuePrefs() {
+  try {
+    const enabled = perfectCueEnabledCheckbox ? perfectCueEnabledCheckbox.checked : false;
+    const ports = getPerfectCuePortsFromUi();
+    await window.electronAPI.savePreferences({ perfectCueEnabled: enabled, perfectCuePorts: ports });
+    showStatus('PerfectCue settings saved', 'info');
+  } catch (err) {
+    console.error('Failed to save PerfectCue preferences:', err);
+    showStatus('Failed to save PerfectCue settings', 'error');
+  }
 }
 
 async function loadTunnelStatus() {

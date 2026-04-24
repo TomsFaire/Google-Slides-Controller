@@ -497,6 +497,28 @@
             </div>
           </div>
 
+          <!-- PerfectCue Network Extender panel -->
+          <div class="panel">
+            <h2 class="panel-title">PerfectCue Network Extender</h2>
+            <p class="card-description">Accept slide advance/back commands from DSAN PerfectCue network extenders over TCP. Add one port per extender (or group).</p>
+
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="perfectcue-enabled" style="width: auto;" />
+                <span>Enable PerfectCue listener</span>
+              </label>
+            </div>
+
+            <div class="form-group" id="perfectcue-ports-group">
+              <label>Listener Ports</label>
+              <div id="perfectcue-port-list" style="display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0;"></div>
+              <button type="button" id="add-perfectcue-port" class="btn btn-secondary" style="margin-top: 10px;">+ Add port</button>
+              <small class="field-hint">Default port is 8899. Add one entry per network extender or subnet if they connect on different ports.</small>
+            </div>
+
+            <button type="button" id="save-perfectcue-btn" class="btn btn-primary" style="margin-top: 8px;">Save PerfectCue settings</button>
+          </div>
+
           <!-- Presentation rendering panel -->
           <div class="panel">
             <h2 class="panel-title">Presentation Rendering</h2>

@@ -3655,7 +3655,12 @@ function startHttpServer() {
           const prefs = loadPreferences();
           prefs.perfectCueEnabled = data.enabled;
           savePreferences(prefs);
-          applyPerfectCuePrefs(prefs);
+          // Only start servers if enabling and servers are not yet running.
+          // masterEnabled() closure reads perfectCueEnabled on every command,
+          // so simply saving the pref gates/ungates commands without a server restart.
+          if (data.enabled && perfectCueServers.length === 0) {
+            applyPerfectCuePrefs(prefs);
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, enabled: data.enabled }));
         } catch (error) {

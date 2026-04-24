@@ -1146,15 +1146,28 @@ function addPerfectCuePortRow(config = {}) {
   enabledLabel.appendChild(enabledCheckbox);
   enabledLabel.appendChild(enabledText);
 
+  // Disable checkbox if port value is not yet valid (unsaved new row)
+  const syncCheckboxToPort = () => {
+    const v = parseInt(portInput.value, 10);
+    enabledCheckbox.disabled = !(Number.isInteger(v) && v >= 1024 && v <= 65535);
+  };
+  syncCheckboxToPort();
+  portInput.addEventListener('input', syncCheckboxToPort);
+
   // Immediate IPC on toggle
   enabledCheckbox.addEventListener('change', async () => {
     const portVal = parseInt(portInput.value, 10);
-    if (Number.isInteger(portVal) && portVal >= 1024 && portVal <= 65535) {
-      try {
-        await window.electronAPI.togglePerfectCuePort(portVal, enabledCheckbox.checked);
-      } catch (err) {
-        console.error('[PerfectCue] Failed to toggle port:', err);
+    if (!Number.isInteger(portVal) || portVal < 1024 || portVal > 65535) return;
+    const newChecked = enabledCheckbox.checked;
+    try {
+      const result = await window.electronAPI.togglePerfectCuePort(portVal, newChecked);
+      if (result && !result.success) {
+        enabledCheckbox.checked = !newChecked; // revert
+        showStatus('Save PerfectCue settings first before toggling', 'error');
       }
+    } catch (err) {
+      enabledCheckbox.checked = !newChecked; // revert
+      console.error('[PerfectCue] Failed to toggle port:', err);
     }
   });
 

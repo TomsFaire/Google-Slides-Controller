@@ -1178,6 +1178,7 @@ function loadPreferences() {
       if (prefs.presentationNativeFullscreen !== undefined && prefs.presentationNativeFullscreen !== null) {
         prefs.presentationNativeFullscreen = prefs.presentationNativeFullscreen === true;
       }
+      prefs.perfectCuePorts = normalizePerfectCuePorts(prefs);
       logDebug('[Preferences] Loaded preferences:', safeStringify(prefs));
       return prefs;
     } else {
@@ -1972,7 +1973,7 @@ async function checkBackupStatus() {
 
 // ─── PerfectCue Network Extender ───────────────────────────────────────────
 
-let perfectCueServers = [];
+let perfectCueServers = []; // { server: net.Server, config: PortConfig }[]
 
 function dispatchPerfectCueSlide(endpoint) {
   const options = {
@@ -1990,24 +1991,26 @@ function dispatchPerfectCueSlide(endpoint) {
   req.end();
 }
 
-function startPerfectCueListeners(ports) {
+function startPerfectCueListeners(portConfigs) {
   stopPerfectCueListeners();
-  for (const port of ports) {
+  for (const config of portConfigs) {
     const server = createPerfectCueServer({
+      config,
+      masterEnabled: () => loadPreferences().perfectCueEnabled === true,
       dispatch: dispatchPerfectCueSlide,
       log: (msg) => logDebug('[PerfectCue]', msg),
       onStatus: () => {}
     });
-    server.listen(port, '0.0.0.0', () => {
-      logDebug('[PerfectCue] Listening on port', port);
+    server.listen(config.port, '0.0.0.0', () => {
+      logDebug('[PerfectCue] Listening on port', config.port, config.name ? `(${config.name})` : '');
     });
-    server.on('error', err => logDebug(`[PerfectCue] port ${port} error: ${err.message}`));
-    perfectCueServers.push(server);
+    server.on('error', err => logDebug(`[PerfectCue] port ${config.port} error: ${err.message}`));
+    perfectCueServers.push({ server, config });
   }
 }
 
 function stopPerfectCueListeners() {
-  for (const server of perfectCueServers) {
+  for (const { server } of perfectCueServers) {
     server.close();
   }
   perfectCueServers = [];
@@ -2018,12 +2021,39 @@ function applyPerfectCuePrefs(prefs) {
     stopPerfectCueListeners();
     return;
   }
-  // Migrate legacy single-port pref
-  const legacyPort = prefs.perfectCuePort ? [Number(prefs.perfectCuePort)] : [];
-  const ports = Array.isArray(prefs.perfectCuePorts) && prefs.perfectCuePorts.length > 0
-    ? prefs.perfectCuePorts.map(Number).filter(p => p > 0)
-    : (legacyPort.length > 0 ? legacyPort : [8899]);
-  startPerfectCueListeners(ports);
+  startPerfectCueListeners(normalizePerfectCuePorts(prefs));
+}
+
+/**
+ * Normalize perfectCuePorts to PortConfig[] regardless of the stored format.
+ * Handles:
+ *   - Legacy single number `perfectCuePort`
+ *   - Array of plain numbers (old multi-port format)
+ *   - Array of PortConfig objects (current format)
+ * Always returns a non-empty PortConfig[].
+ * @param {object} prefs
+ * @returns {{ port: number, name: string, enabled: boolean }[]}
+ */
+function normalizePerfectCuePorts(prefs) {
+  const raw = Array.isArray(prefs.perfectCuePorts) ? prefs.perfectCuePorts : [];
+  const configs = raw.map(entry => {
+    if (typeof entry === 'number') {
+      return { port: entry, name: '', enabled: true };
+    }
+    // Already an object — ensure all three fields are present
+    return {
+      port: Number(entry.port),
+      name: typeof entry.name === 'string' ? entry.name : '',
+      enabled: entry.enabled !== false
+    };
+  }).filter(c => c.port > 0);
+
+  if (configs.length === 0) {
+    // Fall back to legacy single-port pref, then hard default
+    const legacyPort = prefs.perfectCuePort ? Number(prefs.perfectCuePort) : 0;
+    return [{ port: legacyPort > 0 ? legacyPort : 8899, name: '', enabled: true }];
+  }
+  return configs;
 }
 
 // Start backup status polling (called when app starts in primary mode)

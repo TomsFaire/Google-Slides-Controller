@@ -2056,6 +2056,19 @@ function normalizePerfectCuePorts(prefs) {
   return configs;
 }
 
+function setPerfectCuePortEnabled(port, enabled) {
+  const prefs = loadPreferences();
+  const ports = prefs.perfectCuePorts || [];
+  const entry = ports.find(p => p.port === port);
+  if (!entry) return { success: false, error: 'Port not found' };
+  entry.enabled = enabled;
+  savePreferences(prefs);
+  // Update in-memory server config immediately (no server restart needed)
+  const live = perfectCueServers.find(s => s.config.port === port);
+  if (live) live.config.enabled = enabled;
+  return { success: true, port, enabled };
+}
+
 // Start backup status polling (called when app starts in primary mode)
 let backupStatusInterval = null;
 
@@ -2643,6 +2656,16 @@ ipcMain.handle('save-preferences', async (event, incoming) => {
   const saveMeta = savePreferences(mergedPrefs) || {};
   applyPerfectCuePrefs(mergedPrefs);
   return { success: true, ...saveMeta };
+});
+
+ipcMain.handle('toggle-perfectcue-port', async (_event, { port, enabled }) => {
+  if (typeof port !== 'number' || port < 1024 || port > 65535) {
+    return { success: false, error: 'Invalid port' };
+  }
+  if (typeof enabled !== 'boolean') {
+    return { success: false, error: 'enabled must be a boolean' };
+  }
+  return setPerfectCuePortEnabled(port, enabled);
 });
 
 ipcMain.handle('relaunch-speaker-notes', async () => {
@@ -3533,6 +3556,12 @@ function startHttpServer() {
         state.tunnelEnabled = !!prefs.cloudflaredEnabled;
         state.tunnelUrl = tunnelUrl || null;
         state.tunnelQrVisible = !!(tunnelQrWindow && !tunnelQrWindow.isDestroyed());
+        // Add PerfectCue port state for Companion
+        const perfectCuePrefs = loadPreferences();
+        state.perfectcue = {
+          enabled: perfectCuePrefs.perfectCueEnabled === true,
+          ports: (perfectCuePrefs.perfectCuePorts || []).map(({ port, name, enabled }) => ({ port, name, enabled }))
+        };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
       })().catch(err => {
@@ -3562,6 +3591,39 @@ function startHttpServer() {
           savePreferences(prefs);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ backupControlsEnabled: prefs.backupControlsEnabled, message: enabled ? 'Backup forwarding enabled' : 'Backup forwarding disabled' }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Invalid request' }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/toggle-perfectcue-port - Enable or disable a specific PerfectCue listener port
+    if (req.method === 'POST' && apiReqPath === '/api/toggle-perfectcue-port') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          if (typeof data.port !== 'number' || data.port < 1024 || data.port > 65535) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'port must be a number between 1024 and 65535' }));
+            return;
+          }
+          if (typeof data.enabled !== 'boolean') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'enabled must be a boolean' }));
+            return;
+          }
+          const result = setPerfectCuePortEnabled(data.port, data.enabled);
+          res.writeHead(result.success ? 200 : 404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
         } catch (error) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: error.message || 'Invalid request' }));

@@ -1,7 +1,7 @@
 const net = require('net');
 const { parsePerfectCueByte } = require('./perfectcue-parser');
 
-function createPerfectCueServer({ dispatch, log, onStatus }) {
+function createPerfectCueServer({ config = null, masterEnabled = null, dispatch, log, onStatus }) {
   const server = net.createServer(socket => {
     onStatus('connected', socket.remoteAddress);
     log(`DSAN connected from ${socket.remoteAddress}`);
@@ -13,8 +13,12 @@ function createPerfectCueServer({ dispatch, log, onStatus }) {
 
       for (const byte of chunk) {
         const cmd = parsePerfectCueByte(byte);
-        if (cmd === 'next') dispatch('next-slide');
-        else if (cmd === 'previous') dispatch('previous-slide');
+        if (cmd !== 'next' && cmd !== 'previous') continue;
+        const globalEnabled = masterEnabled ? masterEnabled() : true;
+        const portEnabled = config ? config.enabled !== false : true;
+        if (globalEnabled && portEnabled) {
+          dispatch(cmd === 'next' ? 'next-slide' : 'previous-slide');
+        }
       }
     });
 

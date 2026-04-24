@@ -14,7 +14,8 @@
     "build:icon:win": "node scripts/build-windows-icon.js",
     "download:cloudflared": "bash scripts/download-cloudflared.sh",
     "smoke:slides-gpu": "electron scripts/slides-presenter-gpu-smoke.cjs",
-    "capture:readme-screenshots": "cross-env GSO_README_CAPTURE=1 electron ."
+    "capture:readme-screenshots": "cross-env GSO_README_CAPTURE=1 electron .",
+    "test": "node --test 'tests/**/*.test.js'"
   },
   "keywords": [
     "electron",
@@ -43,6 +44,7 @@
       "renderer.js",
       "index.html",
       "styles.css",
+      "src/**/*",
       "BUILD-INFO.txt",
       "build/icon.icns",
       "build/icon.png",

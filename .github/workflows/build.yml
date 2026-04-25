@@ -120,22 +120,16 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout Companion Module
-        uses: actions/checkout@v4
-        with:
-          repository: bitfocus/companion-module-google-slidescontroller
-          path: companion-module-google-slidescontroller
-
       - name: Install Companion Module dependencies
         run: corepack enable && yarn install --immutable
-        working-directory: ./companion-module-google-slidescontroller
+        working-directory: ./companion-module-gslide-opener
 
       - name: Package Companion Module
         run: yarn run package
-        working-directory: ./companion-module-google-slidescontroller
+        working-directory: ./companion-module-gslide-opener
 
       - name: Move companion module package to root
-        run: mv companion-module-google-slidescontroller/*.tgz companion-module-gslide-opener.tgz || true
+        run: mv companion-module-gslide-opener/*.tgz companion-module-gslide-opener.tgz || true
 
       - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v4

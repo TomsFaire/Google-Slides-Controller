@@ -416,6 +416,69 @@ module.exports = function (self) {
 				}
 			},
 		},
+
+		perfectcue_enable_all: {
+			name: 'PerfectCue: Enable All Ports',
+			description: 'Enable all PerfectCue listener ports globally',
+			options: [],
+			callback: async () => {
+				try {
+					await self.apiRequest('POST', '/api/set-perfectcue-enabled', { enabled: true })
+					self.log('info', 'PerfectCue: all ports enabled')
+				} catch (error) {
+					self.log('error', `PerfectCue enable all failed: ${error.message}`)
+				}
+			},
+		},
+
+		perfectcue_disable_all: {
+			name: 'PerfectCue: Disable All Ports',
+			description: 'Disable all PerfectCue listener ports globally',
+			options: [],
+			callback: async () => {
+				try {
+					await self.apiRequest('POST', '/api/set-perfectcue-enabled', { enabled: false })
+					self.log('info', 'PerfectCue: all ports disabled')
+				} catch (error) {
+					self.log('error', `PerfectCue disable all failed: ${error.message}`)
+				}
+			},
+		},
+
+		perfectcue_set_port_enabled: {
+			name: 'PerfectCue: Enable/Disable Port',
+			description: 'Enable or disable a specific PerfectCue listener port by port number',
+			options: [
+				{
+					id: 'port',
+					type: 'number',
+					label: 'Port Number',
+					default: 8899,
+					min: 1024,
+					max: 65535,
+				},
+				{
+					id: 'enabled',
+					type: 'dropdown',
+					label: 'State',
+					default: 'true',
+					choices: [
+						{ id: 'true', label: 'Enable' },
+						{ id: 'false', label: 'Disable' },
+					],
+				},
+			],
+			callback: async (event) => {
+				try {
+					const port = Number(event.options.port)
+					const enabled = event.options.enabled === 'true'
+					await self.apiRequest('POST', '/api/toggle-perfectcue-port', { port, enabled })
+					self.log('info', `PerfectCue port ${port} ${enabled ? 'enabled' : 'disabled'}`)
+				} catch (error) {
+					self.log('error', `PerfectCue toggle port failed: ${error.message}`)
+				}
+			},
+		},
 	}
 
 	console.log('[gslide-opener] actions.js - Registering', Object.keys(actionDefinitions).length, 'actions')

@@ -1995,6 +1995,11 @@ function startPerfectCueListeners(ports) {
   for (const port of ports) {
     const server = createPerfectCueServer({
       dispatch: dispatchPerfectCueSlide,
+      isAllowed: (ip) => {
+        const allowlist = getControllerIpsFromPrefs(loadPreferences());
+        if (!allowlist || allowlist.length === 0) return true;
+        return allowlist.some(entry => isAllowedByControllerEntry(entry, normalizeRemoteAddress(ip)));
+      },
       log: (msg) => logDebug('[PerfectCue]', msg),
       onStatus: () => {}
     });

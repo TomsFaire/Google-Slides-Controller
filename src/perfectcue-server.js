@@ -1,10 +1,16 @@
 const net = require('net');
 const { parsePerfectCueByte } = require('./perfectcue-parser');
 
-function createPerfectCueServer({ dispatch, log, onStatus }) {
+function createPerfectCueServer({ dispatch, isAllowed, log, onStatus }) {
   const server = net.createServer(socket => {
-    onStatus('connected', socket.remoteAddress);
-    log(`DSAN connected from ${socket.remoteAddress}`);
+    const remoteIp = socket.remoteAddress;
+    if (isAllowed && !isAllowed(remoteIp)) {
+      log(`connection from ${remoteIp} rejected (not in allowlist)`);
+      socket.destroy();
+      return;
+    }
+    onStatus('connected', remoteIp);
+    log(`DSAN connected from ${remoteIp}`);
 
     socket.on('data', chunk => {
       const hex = [...chunk].map(b => b.toString(16).padStart(2, '0')).join(' ');

@@ -1998,6 +1998,11 @@ function startPerfectCueListeners(portConfigs) {
       config,
       masterEnabled: () => loadPreferences().perfectCueEnabled === true,
       dispatch: dispatchPerfectCueSlide,
+      isAllowed: (ip) => {
+        const allowlist = getControllerIpsFromPrefs(loadPreferences());
+        if (!allowlist || allowlist.length === 0) return true;
+        return allowlist.some(entry => isAllowedByControllerEntry(entry, normalizeRemoteAddress(ip)));
+      },
       log: (msg) => logDebug('[PerfectCue]', msg),
       onStatus: () => {}
     });

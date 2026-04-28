@@ -85,3 +85,36 @@ test('onStatus transitions connected then listening on disconnect', () =>
     assert.ok(statuses.includes('listening'), `expected listening in [${statuses}]`);
   })
 );
+
+test('config.enabled = false suppresses dispatch', () =>
+  withServer(18905, { config: { port: 18905, name: '', enabled: false } }, async (dispatched) => {
+    await sendAndClose(18905, Buffer.from([0x0F]));
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(dispatched, []);
+  })
+);
+
+test('config.enabled = true allows dispatch', () =>
+  withServer(18906, { config: { port: 18906, name: '', enabled: true } }, async (dispatched) => {
+    await sendAndClose(18906, Buffer.from([0x0F]));
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(dispatched, ['next-slide']);
+  })
+);
+
+test('masterEnabled = () => false suppresses dispatch', () =>
+  withServer(18907, { masterEnabled: () => false, config: { port: 18907, name: '', enabled: true } }, async (dispatched) => {
+    await sendAndClose(18907, Buffer.from([0x0F]));
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(dispatched, []);
+  })
+);
+
+test('disabled port keeps TCP connection open (no dispatch)', () =>
+  withServer(18908, { config: { port: 18908, name: '', enabled: false } }, async (dispatched, statuses) => {
+    await sendAndClose(18908, Buffer.from([0x0F, 0x1F]));
+    await new Promise(r => setTimeout(r, 80));
+    assert.deepEqual(dispatched, [], 'no commands dispatched when disabled');
+    assert.ok(statuses.includes('connected'), 'connection was accepted even though disabled');
+  })
+);

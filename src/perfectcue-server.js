@@ -1,10 +1,10 @@
 const net = require('net');
 const { parsePerfectCueByte } = require('./perfectcue-parser');
 
-function createPerfectCueServer({ dispatch, isAllowed, log, onStatus }) {
+function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed = null, dispatch, log, onStatus }) {
   const server = net.createServer(socket => {
     const remoteIp = socket.remoteAddress;
-    if (isAllowed && !isAllowed(remoteIp)) {
+    if (typeof isAllowed === 'function' && !isAllowed(remoteIp)) {
       log(`connection from ${remoteIp} rejected (not in allowlist)`);
       socket.destroy();
       return;
@@ -19,8 +19,12 @@ function createPerfectCueServer({ dispatch, isAllowed, log, onStatus }) {
 
       for (const byte of chunk) {
         const cmd = parsePerfectCueByte(byte);
-        if (cmd === 'next') dispatch('next-slide');
-        else if (cmd === 'previous') dispatch('previous-slide');
+        if (cmd !== 'next' && cmd !== 'previous') continue;
+        const globalEnabled = masterEnabled === null || masterEnabled() === true;
+        const portEnabled = config === null || config.enabled !== false;
+        if (globalEnabled && portEnabled) {
+          dispatch(cmd === 'next' ? 'next-slide' : 'previous-slide');
+        }
       }
     });
 

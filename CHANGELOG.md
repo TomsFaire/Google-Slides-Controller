@@ -18,6 +18,17 @@ All notable changes to Google Slides Opener are documented here.
 ### Build
 - **Version 2.2.0**, **build 71**.
 
+## [2.1.1] - 2026-04-28
+
+### Security / networking
+- **PerfectCue TCP** – Connections are allowed only if the client address passes the same controller IP allowlist used for the HTTP API (`src/perfectcue-server.js`).
+
+### Build / CI
+- **Companion module artifact** – Workflow packages **`companion-module-gslide-opener`** from this repository (not the upstream Bitfocus fork).
+
+### Tests
+- **PerfectCue** – Additional tests for port normalization and TCP dispatch gating.
+
 ## [2.0.1] - 2026-04-23
 
 ### Fixed

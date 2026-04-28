@@ -1,10 +1,10 @@
 const net = require('net');
 const { parsePerfectCueByte } = require('./perfectcue-parser');
 
-function createPerfectCueServer({ config = null, masterEnabled = null, dispatch, log, onStatus }) {
+function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed = null, dispatch, log, onStatus }) {
   const server = net.createServer(socket => {
     const remoteIp = socket.remoteAddress;
-    if (isAllowed && !isAllowed(remoteIp)) {
+    if (typeof isAllowed === 'function' && !isAllowed(remoteIp)) {
       log(`connection from ${remoteIp} rejected (not in allowlist)`);
       socket.destroy();
       return;

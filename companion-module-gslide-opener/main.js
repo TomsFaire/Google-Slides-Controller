@@ -25,6 +25,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			notesDisplayId: null,
 			loginState: false,
 			loggedInUser: null,
+			contentKind: 'slides',
 			backupControlsEnabled: true,
 			notesZoomSteps: null,
 			notesZoomDefault: null,
@@ -277,6 +278,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				name: 'Presentation URL'
 			},
 			{
+				variableId: 'content_kind',
+				name: 'Content Kind (slides / slido)'
+			},
+			{
 				variableId: 'presentation_title',
 				name: 'Presentation Title'
 			},
@@ -502,6 +507,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			currentSlide: response.currentSlide !== null && response.currentSlide !== undefined ? response.currentSlide : null,
 			totalSlides: response.totalSlides !== null && response.totalSlides !== undefined ? response.totalSlides : null,
 			presentationUrl: response.presentationUrl || null,
+			contentKind: response.contentKind || 'slides',
 			slideInfo: response.slideInfo || null,
 			isFirstSlide: response.isFirstSlide === true,
 			isLastSlide: response.isLastSlide === true,
@@ -527,6 +533,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.state.currentSlide !== newState.currentSlide ||
 			this.state.totalSlides !== newState.totalSlides ||
 			this.state.presentationUrl !== newState.presentationUrl ||
+			this.state.contentKind !== newState.contentKind ||
 			this.state.slideInfo !== newState.slideInfo ||
 			this.state.isFirstSlide !== newState.isFirstSlide ||
 			this.state.loginState !== newState.loginState ||
@@ -559,6 +566,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				is_first_slide: this.state.isFirstSlide ? 'Yes' : 'No',
 				is_last_slide: this.state.isLastSlide ? 'Yes' : 'No',
 				presentation_url: this.state.presentationUrl || '',
+				content_kind: this.state.contentKind || 'slides',
 				presentation_title: this.state.presentationTitle || '',
 				timer_elapsed: this.state.timerElapsed || '',
 				presentation_display_id: this.state.presentationDisplayId !== null ? String(this.state.presentationDisplayId) : '',

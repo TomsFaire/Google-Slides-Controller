@@ -306,6 +306,10 @@ let notesWindow = null;
 let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
+const CONTENT_KIND_SLIDES = 'slides';
+const CONTENT_KIND_SLIDO = 'slido';
+/** 'slides' | 'slido' — reload and crash recovery depend on this. */
+let lastContentKind = CONTENT_KIND_SLIDES;
 
 // Google Slides speaker notes zoom: discrete steps from native baseline (Zoom in / Zoom out toolbar; see /api/zoom-in-notes).
 const NOTES_ZOOM_MIN_STEPS = -10;
@@ -472,6 +476,8 @@ function toPresentUrl(inputUrl, slideNumber) {
 
 // Use a persistent session for Google authentication
 const GOOGLE_SESSION_PARTITION = 'persist:google';
+// Separate partition for Slido / Okta SSO so cookies do not mix with Google Slides
+const SLIDO_SESSION_PARTITION = 'persist:slido';
 
 // Build BrowserWindow options for the speaker notes popup so it opens at notes-display size.
 // Google Slides presenter view uses a responsive layout: wide viewport = narrow preview column + wide notes; small viewport = 50/50. Opening at full size avoids the 50/50 split.
@@ -506,6 +512,37 @@ function getPresentationBrowserWindowOptions(presentationBounds) {
       nodeIntegration: false,
       contextIsolation: true,
       partition: GOOGLE_SESSION_PARTITION
+    }
+  };
+}
+
+function isAllowedSlidoHostname(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return h === 'sli.do' || h.endsWith('.sli.do');
+}
+
+function isAllowedSlidoUrl(urlString) {
+  try {
+    const u = new URL(String(urlString || '').trim());
+    return u.protocol === 'https:' && isAllowedSlidoHostname(u.hostname);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Borderless presentation-area window using the Slido/Okta session partition (no speaker-notes popup overrides). */
+function getSlidoPresentationBrowserWindowOptions(presentationBounds) {
+  const b = presentationBounds && presentationBounds.width ? presentationBounds : screen.getPrimaryDisplay().bounds;
+  return {
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: SLIDO_SESSION_PARTITION
     }
   };
 }
@@ -2184,6 +2221,7 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
 
   const presentUrl = toPresentUrl(urlToReload, savedSlide);
   lastPresentationUrl = urlToReload;
+  lastContentKind = CONTENT_KIND_SLIDES;
   currentSlide = savedSlide;
   presentationWindow.loadURL(presentUrl);
   presentationWindow.show();
@@ -2235,6 +2273,65 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
   }
 }
 
+async function openSlidoPresentationDisplay(url) {
+  if (!isAllowedSlidoUrl(url)) {
+    throw new Error('Invalid Slido URL (must be https:// on *.sli.do)');
+  }
+  try {
+    if (notesWindow && !notesWindow.isDestroyed()) {
+      notesWindow.removeAllListeners('closed');
+      notesWindow.close();
+      notesWindow = null;
+    }
+    if (presentationWindow && !presentationWindow.isDestroyed()) {
+      presentationWindow.removeAllListeners('closed');
+      presentationWindow.close();
+      presentationWindow = null;
+    }
+    currentSlide = null;
+  } catch (e) {
+    console.error('[Slido] Error closing existing windows:', e.message);
+  }
+
+  const prefs = loadPreferences();
+  const displays = screen.getAllDisplays();
+  const presentationDisplayId = Number(prefs.presentationDisplayId);
+  const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+
+  presentationWindow = new BrowserWindow(getSlidoPresentationBrowserWindowOptions(presentationDisplay.bounds));
+  if (process.platform === 'darwin') {
+    applyPresentationFullscreenChrome(presentationWindow, prefs);
+  }
+  attachCrashHandlers(presentationWindow, 'presentation');
+
+  presentationWindow.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
+
+  presentationWindow.on('closed', () => {
+    presentationWindow = null;
+    currentSlide = null;
+  });
+
+  presentationWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      event.preventDefault();
+      if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+    }
+  });
+
+  lastPresentationUrl = url;
+  lastContentKind = CONTENT_KIND_SLIDO;
+  resetNotesZoomForNewPresentation();
+
+  console.log('[Slido] Loading URL:', url);
+  presentationWindow.loadURL(url);
+  presentationWindow.show();
+}
+
+async function reopenSlidoAtUrl(urlToReload) {
+  await new Promise(resolve => setTimeout(resolve, 200));
+  await openSlidoPresentationDisplay(urlToReload);
+}
+
 function attachCrashHandlers(win, label) {
   if (!win || !win.webContents) return;
   win.webContents.on('render-process-gone', (event, details) => {
@@ -2254,6 +2351,7 @@ function attachCrashHandlers(win, label) {
 
     if (label === 'presentation') {
       const url = lastPresentationUrl;
+      const reopenKind = lastContentKind;
       const slide = typeof currentSlide === 'number' ? currentSlide : 1;
       let notesWereOpen = false;
       let savedNotesBounds = null;
@@ -2277,7 +2375,10 @@ function attachCrashHandlers(win, label) {
           defaultId: 0,
           cancelId: 1
         }).then(({ response }) => {
-          if (response === 0) reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
+          if (response === 0) {
+            if (reopenKind === CONTENT_KIND_SLIDO) reopenSlidoAtUrl(url);
+            else reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
+          }
         }).catch(() => {});
       }
     } else if (label === 'notes') {
@@ -3156,6 +3257,7 @@ ipcMain.handle('open-test-presentation', async () => {
   }
 
   lastPresentationUrl = testUrl; // Store for reload
+  lastContentKind = CONTENT_KIND_SLIDES;
   currentSlide = 1;
   resetNotesZoomForNewPresentation();
   presentationWindow.loadURL(testUrl);
@@ -3265,6 +3367,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
 
   // Load presentation URL
   lastPresentationUrl = url; // Store for reload
+  lastContentKind = CONTENT_KIND_SLIDES;
   currentSlide = 1;
   resetNotesZoomForNewPresentation();
   presentationWindow.loadURL(url);
@@ -3435,6 +3538,7 @@ function startHttpServer() {
           currentSlide: currentSlide,
           totalSlides: null,
           presentationUrl: lastPresentationUrl || null,
+          contentKind: lastContentKind,
           slideInfo: null,
           isFirstSlide: null,
           isLastSlide: null,
@@ -3972,6 +4076,7 @@ function startHttpServer() {
           const presentUrl = toPresentUrl(url);
           console.log('[API] Loading PRESENT URL:', presentUrl);
           lastPresentationUrl = url; // Store original URL (not /present URL) for reload
+          lastContentKind = CONTENT_KIND_SLIDES;
           currentSlide = 1;
           resetNotesZoomForNewPresentation();
           presentationWindow.loadURL(presentUrl);
@@ -4184,6 +4289,7 @@ function startHttpServer() {
           const presentUrl = toPresentUrl(url);
           console.log('[API] Loading PRESENT URL:', presentUrl);
           lastPresentationUrl = url; // Store original URL (not /present URL) for reload
+          lastContentKind = CONTENT_KIND_SLIDES;
           currentSlide = 1;
           resetNotesZoomForNewPresentation();
           presentationWindow.loadURL(presentUrl);
@@ -4209,11 +4315,58 @@ function startHttpServer() {
       });
       return;
     }
-    
+
+    // POST /api/open-slido - Open a Slido wall URL on the presentation display (Okta/SSO uses persist:slido)
+    if (req.method === 'POST' && apiReqPath === '/api/open-slido') {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const url = (data.url || '').trim();
+
+          if (!url) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'URL is required' }));
+            return;
+          }
+
+          if (!isAllowedSlidoUrl(url)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid Slido URL (must be https:// on *.sli.do)' }));
+            return;
+          }
+
+          console.log('[API] Opening Slido:', url);
+
+          await openSlidoPresentationDisplay(url);
+
+          sendToBackups('/api/open-slido', { url }).catch(err => {
+            console.error('[Backup] Error broadcasting open-slido:', err);
+          });
+
+          if (!res.headersSent) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Slido opened' }));
+          }
+        } catch (error) {
+          console.error('[API] Error opening Slido:', error);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        }
+      });
+      return;
+    }
+
     // POST /api/close-presentation - Close current presentation
     if (req.method === 'POST' && req.url === '/api/close-presentation') {
       console.log('[API] Closing presentation');
-      
+
       // Broadcast to backups (async, don't wait)
       sendToBackups('/api/close-presentation', {}).catch(err => {
         console.error('[Backup] Error broadcasting close-presentation:', err);
@@ -4414,8 +4567,13 @@ function startHttpServer() {
           }
           const savedNotesZoomSteps = notesWereOpen ? notesZoomStepsFromDefault : getDefaultNotesZoomStepsFromPrefs();
           const urlToReload = lastPresentationUrl;
-          console.log('[API] Reload: Saving state - slide:', savedSlide, 'notes open:', notesWereOpen, 'notesZoomSteps:', savedNotesZoomSteps, 'URL:', urlToReload);
-          await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
+          const reloadKind = lastContentKind;
+          console.log('[API] Reload: Saving state - slide:', savedSlide, 'notes open:', notesWereOpen, 'notesZoomSteps:', savedNotesZoomSteps, 'URL:', urlToReload, 'kind:', reloadKind);
+          if (reloadKind === CONTENT_KIND_SLIDO) {
+            await reopenSlidoAtUrl(urlToReload);
+          } else {
+            await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
+          }
           console.log('[API] Reload: Complete');
         } catch (error) {
           console.error('[API] Error during reload:', error);
@@ -5558,6 +5716,7 @@ function startHttpServer() {
           const presentUrl = toPresentUrl(url);
           console.log('[API] Loading PRESENT URL:', presentUrl);
           lastPresentationUrl = url;
+          lastContentKind = CONTENT_KIND_SLIDES;
           currentSlide = 1;
           resetNotesZoomForNewPresentation();
           presentationWindow.loadURL(presentUrl);
@@ -7229,6 +7388,16 @@ function startWebUiServer() {
       flex: 1;
       width: auto;
     }
+    body.theme-light #tab-controls .controls-section:has(#btn-open-slido) > div:has(#btn-open-slido) {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    body.theme-light #tab-controls .controls-section:has(#btn-open-slido) > div:has(#btn-open-slido) > .btn {
+      margin-top: 0;
+      flex: 1;
+      width: auto;
+    }
     body.theme-light #tab-controls .btn-control {
       background: var(--faire-surface);
       border: 1px solid var(--faire-border);
@@ -8663,6 +8832,24 @@ function startWebUiServer() {
         </div>
       </div>
       
+      <!-- Open Slido -->
+      <div class="controls-section">
+        <h3>Open Slido</h3>
+        <div class="preset-group">
+          <label for="slido-url">Slido URL</label>
+          <input type="text" id="slido-url" name="slido-url" placeholder="https://wall.sli.do/event/..." autocomplete="off" />
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn" id="btn-open-slido" style="flex: 1;">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+            </svg>
+            Open Slido
+          </button>
+        </div>
+      </div>
+      
       <!-- Preset Presentations -->
       <div class="controls-section">
         <h3>Preset Presentations</h3>
@@ -9576,6 +9763,61 @@ function startWebUiServer() {
         });
     }
     
+    function openSlido(url) {
+      const trimmed = (url || '').trim();
+      if (!trimmed) {
+        showStatus('Please enter a Slido URL', true);
+        document.getElementById('slido-url').focus();
+        return;
+      }
+      let valid = false;
+      try {
+        const u = new URL(trimmed);
+        const h = u.hostname.toLowerCase();
+        valid = u.protocol === 'https:' && (h === 'sli.do' || h.endsWith('.sli.do'));
+      } catch (e) {
+        valid = false;
+      }
+      if (!valid) {
+        showStatus('Enter a valid https Slido URL (hostname must be *.sli.do)', true);
+        document.getElementById('slido-url').focus();
+        return;
+      }
+      const btn = document.getElementById('btn-open-slido');
+      const originalHtml = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>Open Slido';
+      btn.disabled = true;
+      btn.innerHTML = 'Opening...';
+      fetch(API_BASE + '/api/open-slido', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmed })
+      })
+        .then(function (res) {
+          if (!res.ok) {
+            return res.json().then(function (data) {
+              throw new Error(data.error || 'HTTP error! status: ' + res.status);
+            });
+          }
+          return res.json();
+        })
+        .then(function (result) {
+          if (result.success) {
+            showStatus(result.message || 'Slido opened successfully!', false);
+            document.getElementById('slido-url').value = '';
+          } else {
+            showStatus('Failed to open: ' + (result.error || 'Unknown error'), true);
+          }
+        })
+        .catch(function (err) {
+          console.error('Open Slido error:', err);
+          showStatus('Failed to open Slido: ' + err.message + ' (Make sure the app is running)', true);
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        });
+    }
+    
     // Open presentation button (without notes)
     document.getElementById('btn-open-presentation').addEventListener('click', () => {
       const url = document.getElementById('presentation-url').value.trim();
@@ -9586,6 +9828,11 @@ function startWebUiServer() {
     document.getElementById('btn-open-presentation-with-notes').addEventListener('click', () => {
       const url = document.getElementById('presentation-url').value.trim();
       openPresentation(url, true);
+    });
+    
+    document.getElementById('btn-open-slido').addEventListener('click', () => {
+      const url = document.getElementById('slido-url').value.trim();
+      openSlido(url);
     });
     
     // Start notes button
@@ -9605,6 +9852,12 @@ function startWebUiServer() {
     document.getElementById('presentation-url').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         document.getElementById('btn-open-presentation').click();
+      }
+    });
+    
+    document.getElementById('slido-url').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('btn-open-slido').click();
       }
     });
     

@@ -55,6 +55,32 @@ module.exports = function (self) {
 			},
 		},
 
+		open_slido: {
+			name: 'Open Slido',
+			description: 'Open a Slido wall URL on the presentation display (https://*.sli.do; uses dedicated session for Okta/SSO)',
+			options: [
+				{
+					id: 'url',
+					type: 'textinput',
+					label: 'Slido URL',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const url = await self.parseVariablesInString(event.options.url)
+					self.log('info', `Opening Slido: ${url}`)
+
+					const response = await self.apiRequest('POST', '/api/open-slido', { url })
+					self.log('info', response.message || 'Slido opened')
+				} catch (error) {
+					self.log('error', `Failed to open Slido: ${error.message}`)
+				}
+			},
+		},
+
 		open_preset_1: {
 			name: 'Open Presentation 1',
 			description: 'Open the preset presentation configured as "Presentation 1"',

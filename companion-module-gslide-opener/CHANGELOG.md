@@ -1,5 +1,11 @@
 # Companion Module Changelog
 
+## [1.5.0] - 2026-04-28
+
+### Added
+- **Open Slido** action – `POST /api/open-slido` for Slido wall URLs (`https://*.sli.do`).
+- **`content_kind` variable** – from app `GET /api/status` (`slides` / `slido`).
+
 ## [1.4.9] - 2026-04-10
 
 ### Added

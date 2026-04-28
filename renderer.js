@@ -1812,8 +1812,8 @@ async function checkSignInStatus() {
 async function displayBuildNumber() {
   try {
     const buildInfo = await window.electronAPI.getBuildInfo();
-    const version = buildInfo.version || '2.0.0';
-    const buildNumber = buildInfo.buildNumber || '70';
+    const version = buildInfo.version || '2.2.0';
+    const buildNumber = buildInfo.buildNumber || '71';
     const versionString = `v${version}.${buildNumber}`;
     
     const buildNumberEl = document.getElementById('build-number');
@@ -1825,7 +1825,7 @@ async function displayBuildNumber() {
     console.error('Failed to load build number:', error);
     const buildNumberEl = document.getElementById('build-number');
     if (buildNumberEl) {
-      buildNumberEl.textContent = 'v2.0.0.70';
+      buildNumberEl.textContent = 'v2.2.0.71';
     }
   }
 }

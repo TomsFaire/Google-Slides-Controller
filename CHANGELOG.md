@@ -2,6 +2,22 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.2.0] - 2026-04-28
+
+### Added
+- **Slido on the presentation display** – `POST /api/open-slido` opens an https `*.sli.do` URL (e.g. wall) in a dedicated Electron session partition (`persist:slido`) so Okta/SSO cookies stay separate from Google Slides. Popups use default window behavior (no speaker-notes overrides) for MFA. Controller allowlist and backup `sendToBackups('/api/open-slido')` match other mutating APIs.
+- **`contentKind` in `GET /api/status`** – `slides` or `slido` so automation knows what is showing.
+- **Web UI (Controls tab)** – Slido URL field and **Open Slido** button; Enter submits.
+
+### Changed
+- **`POST /api/reload-presentation`** – Reloads Slido by reopening the same URL when `contentKind` is Slido (Slides behavior unchanged).
+
+### Companion module
+- Ship **companion-module-gslide-opener v1.5.0** – **Open Slido** action and **`content_kind`** variable.
+
+### Build
+- **Version 2.2.0**, **build 71**.
+
 ## [2.0.1] - 2026-04-23
 
 ### Fixed

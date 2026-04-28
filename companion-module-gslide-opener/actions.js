@@ -55,6 +55,32 @@ module.exports = function (self) {
 			},
 		},
 
+		open_slido: {
+			name: 'Open Slido',
+			description: 'Open a Slido wall URL on the presentation display (https://*.sli.do; uses dedicated session for Okta/SSO)',
+			options: [
+				{
+					id: 'url',
+					type: 'textinput',
+					label: 'Slido URL',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const url = await self.parseVariablesInString(event.options.url)
+					self.log('info', `Opening Slido: ${url}`)
+
+					const response = await self.apiRequest('POST', '/api/open-slido', { url })
+					self.log('info', response.message || 'Slido opened')
+				} catch (error) {
+					self.log('error', `Failed to open Slido: ${error.message}`)
+				}
+			},
+		},
+
 		open_preset_1: {
 			name: 'Open Presentation 1',
 			description: 'Open the preset presentation configured as "Presentation 1"',
@@ -413,6 +439,69 @@ module.exports = function (self) {
 					self.log('info', response.message || 'Speaker notes relaunched')
 				} catch (error) {
 					self.log('error', `Failed to relaunch speaker notes: ${error.message}`)
+				}
+			},
+		},
+
+		perfectcue_enable_all: {
+			name: 'PerfectCue: Enable All Ports',
+			description: 'Enable all PerfectCue listener ports globally',
+			options: [],
+			callback: async () => {
+				try {
+					await self.apiRequest('POST', '/api/set-perfectcue-enabled', { enabled: true })
+					self.log('info', 'PerfectCue: all ports enabled')
+				} catch (error) {
+					self.log('error', `PerfectCue enable all failed: ${error.message}`)
+				}
+			},
+		},
+
+		perfectcue_disable_all: {
+			name: 'PerfectCue: Disable All Ports',
+			description: 'Disable all PerfectCue listener ports globally',
+			options: [],
+			callback: async () => {
+				try {
+					await self.apiRequest('POST', '/api/set-perfectcue-enabled', { enabled: false })
+					self.log('info', 'PerfectCue: all ports disabled')
+				} catch (error) {
+					self.log('error', `PerfectCue disable all failed: ${error.message}`)
+				}
+			},
+		},
+
+		perfectcue_set_port_enabled: {
+			name: 'PerfectCue: Enable/Disable Port',
+			description: 'Enable or disable a specific PerfectCue listener port by port number',
+			options: [
+				{
+					id: 'port',
+					type: 'number',
+					label: 'Port Number',
+					default: 8899,
+					min: 1024,
+					max: 65535,
+				},
+				{
+					id: 'enabled',
+					type: 'dropdown',
+					label: 'State',
+					default: 'true',
+					choices: [
+						{ id: 'true', label: 'Enable' },
+						{ id: 'false', label: 'Disable' },
+					],
+				},
+			],
+			callback: async (event) => {
+				try {
+					const port = Number(event.options.port)
+					const enabled = event.options.enabled === 'true'
+					await self.apiRequest('POST', '/api/toggle-perfectcue-port', { port, enabled })
+					self.log('info', `PerfectCue port ${port} ${enabled ? 'enabled' : 'disabled'}`)
+				} catch (error) {
+					self.log('error', `PerfectCue toggle port failed: ${error.message}`)
 				}
 			},
 		},

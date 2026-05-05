@@ -14,6 +14,22 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
     // Use OS default timing for probes (short initial delays upset some DSAN / PerfectCue links after idle periods).
     socket.setKeepAlive(true, 0);
 
+    // Send 0xFF every 15 s so the USR-TCP232's idle timer never fires.
+    // 0xFF is a recognised no-op by parsePerfectCueByte and is ignored by the PerfectCue receiver.
+    const PING_INTERVAL_MS = 15_000;
+    const pingTimer = setInterval(() => {
+      if (!socket.destroyed) socket.write(Buffer.from([0xff]));
+    }, PING_INTERVAL_MS);
+
+    // If no data arrives for 50 s (ping failed to get through → dead connection),
+    // destroy our side so the USR-TCP232 sees a RST and reconnects.
+    const IDLE_TIMEOUT_MS = 50_000;
+    socket.setTimeout(IDLE_TIMEOUT_MS);
+    socket.on('timeout', () => {
+      log('idle timeout — closing socket to force reconnect');
+      socket.destroy();
+    });
+
     socket.on('data', chunk => {
       const hex = [...chunk].map(b => b.toString(16).padStart(2, '0')).join(' ');
       const ascii = chunk.toString('ascii').replace(/[^\x20-\x7e]/g, '.');
@@ -31,11 +47,13 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
     });
 
     socket.on('close', () => {
+      clearInterval(pingTimer);
       onStatus('listening', null);
       log('DSAN disconnected, waiting for reconnect');
     });
 
     socket.on('error', err => {
+      clearInterval(pingTimer);
       log(`socket error: ${err.message}`);
     });
   });

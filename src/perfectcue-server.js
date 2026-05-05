@@ -11,6 +11,8 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
     }
     onStatus('connected', remoteIp);
     log(`DSAN connected from ${remoteIp}`);
+    // Use OS default timing for probes (short initial delays upset some DSAN / PerfectCue links after idle periods).
+    socket.setKeepAlive(true, 0);
 
     socket.on('data', chunk => {
       const hex = [...chunk].map(b => b.toString(16).padStart(2, '0')).join(' ');

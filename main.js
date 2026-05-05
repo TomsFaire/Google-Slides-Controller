@@ -1491,6 +1491,21 @@ function parseIpv4ToInt(ip) {
   return (((nums[0] << 24) >>> 0) | (nums[1] << 16) | (nums[2] << 8) | nums[3]) >>> 0;
 }
 
+/** LAN / link-local IPv4 (normalized string). PerfectCue DSAN boxes sit here; HTTP controller allowlist often lists only Companion/tablet IPs. */
+function isPrivateOrLocalLanIpv4(addr) {
+  const r = normalizeRemoteAddress(addr);
+  if (r === '127.0.0.1') return true;
+  const ipInt = parseIpv4ToInt(r);
+  if (ipInt === null) return false;
+  const o1 = (ipInt >>> 24) & 0xff;
+  const o2 = (ipInt >>> 16) & 0xff;
+  if (o1 === 10) return true;
+  if (o1 === 172 && o2 >= 16 && o2 <= 31) return true;
+  if (o1 === 192 && o2 === 168) return true;
+  if (o1 === 169 && o2 === 254) return true;
+  return false;
+}
+
 function parseCidr(cidr) {
   const s = String(cidr || '').trim();
   const idx = s.indexOf('/');
@@ -2022,9 +2037,12 @@ function dispatchPerfectCueSlide(endpoint) {
   };
   const req = http.request(options, res => {
     logDebug(`[PerfectCue] dispatched ${endpoint} → HTTP ${res.statusCode}`);
+    if (res.statusCode !== 200) {
+      logWarn(`[PerfectCue] slide cue HTTP ${res.statusCode} for ${endpoint} (check presentation is open)`);
+    }
     res.resume();
   });
-  req.on('error', err => logDebug(`[PerfectCue] dispatch error: ${err.message}`));
+  req.on('error', err => logWarn(`[PerfectCue] slide cue failed for ${endpoint}: ${err.message}`));
   req.end();
 }
 
@@ -2038,7 +2056,10 @@ function startPerfectCueListeners(portConfigs) {
       isAllowed: (ip) => {
         const allowlist = getControllerIpsFromPrefs(loadPreferences());
         if (!allowlist || allowlist.length === 0) return true;
-        return allowlist.some(entry => isAllowedByControllerEntry(entry, normalizeRemoteAddress(ip)));
+        const normalized = normalizeRemoteAddress(ip);
+        // Same allowlist as HTTP API would block DSAN hardware (LAN IP not listed). Still require a match for non-private IPs (WAN / routed).
+        if (isPrivateOrLocalLanIpv4(normalized)) return true;
+        return allowlist.some(entry => isAllowedByControllerEntry(entry, normalized));
       },
       log: (msg) => logDebug('[PerfectCue]', msg),
       onStatus: () => {}
@@ -4411,6 +4432,13 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
         currentSlide = (typeof currentSlide === 'number' ? currentSlide + 1 : 1);
+        try {
+          const from = normalizeRemoteAddress(req.socket && req.socket.remoteAddress);
+          const src = isLocalhostAddress(from) ? 'local' : from;
+          logInfo(`[Slide] next-slide cue OK${src ? ` (${src})` : ''}`);
+        } catch (e) {
+          logInfo('[Slide] next-slide cue OK');
+        }
         
         // Broadcast to backups (async, don't wait)
         sendToBackups('/api/next-slide', {}).catch(err => {
@@ -4439,6 +4467,13 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
         currentSlide = (typeof currentSlide === 'number' && currentSlide > 1 ? currentSlide - 1 : 1);
+        try {
+          const from = normalizeRemoteAddress(req.socket && req.socket.remoteAddress);
+          const src = isLocalhostAddress(from) ? 'local' : from;
+          logInfo(`[Slide] previous-slide cue OK${src ? ` (${src})` : ''}`);
+        } catch (e) {
+          logInfo('[Slide] previous-slide cue OK');
+        }
         
         // Broadcast to backups (async, don't wait)
         sendToBackups('/api/previous-slide', {}).catch(err => {
@@ -10085,13 +10120,8 @@ function startWebUiServer() {
     function updateStagetimerVisibility() {
       const container = document.getElementById('stagetimer-container');
       if (!container) return;
-      const keyEl = document.getElementById('stagetimer-api-key');
-      const roomEl = document.getElementById('stagetimer-room-id');
-      const hasApiKey = keyEl ? keyEl.value.trim().length > 0 : stagetimerApiKeyCached.length > 0;
-      const hasRoomId = roomEl ? roomEl.value.trim().length > 0 : stagetimerRoomIdCached.length > 0;
-      
-      // Hide if: not visible OR not enabled OR missing API key/room ID
-      if (!stagetimerVisible || !stagetimerEnabled || !hasApiKey || !hasRoomId) {
+      // Only show the widget once an API key has been saved; no key = no box
+      if (!stagetimerApiKeyCached) {
         container.style.display = 'none';
       } else {
         container.style.display = 'block';
@@ -10115,7 +10145,9 @@ function startWebUiServer() {
             showStatus('Stagetimer settings saved', false);
             stagetimerEnabled = enabled;
             stagetimerVisible = visible;
-            
+            stagetimerApiKeyCached = apiKey;
+            stagetimerRoomIdCached = roomId;
+
             // Update visibility
             updateStagetimerVisibility();
             
@@ -10150,18 +10182,15 @@ function startWebUiServer() {
       // Check visibility and configuration
       updateStagetimerVisibility();
       
-      // If not visible or not enabled, don't update content
-      if (!stagetimerVisible || !stagetimerEnabled) {
+      // If disabled, don't update content
+      if (!stagetimerEnabled) {
         return;
       }
-      
-      // If there's an error and no API key, hide it
-      if (errorMessage && errorMessage.includes('not configured')) {
-        container.style.display = 'none';
+
+      // Visibility is already set by updateStagetimerVisibility(); only proceed if box is shown
+      if (!stagetimerApiKeyCached) {
         return;
       }
-      
-      container.style.display = 'block';
       
       if (errorMessage || !data || !data.success) {
         container.className = 'stagetimer-container error';

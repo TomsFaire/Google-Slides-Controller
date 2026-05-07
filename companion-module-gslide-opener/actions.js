@@ -93,16 +93,93 @@ module.exports = function (self) {
 					required: true,
 					useVariables: true,
 				},
+				{
+					id: 'backgroundColor',
+					type: 'textinput',
+					label: 'Background color (hex, e.g. #000000)',
+					default: '#000000',
+					required: false,
+					useVariables: true,
+				},
 			],
 			callback: async (event) => {
 				try {
 					const url = await self.parseVariablesInString(event.options.url)
-					self.log('info', `Opening URL: ${url}`)
+					const backgroundColor = await self.parseVariablesInString(event.options.backgroundColor || '#000000')
+					self.log('info', `Opening URL: ${url} bg: ${backgroundColor}`)
 
-					const response = await self.apiRequest('POST', '/api/open-url', { url })
+					const response = await self.apiRequest('POST', '/api/open-url', { url, backgroundColor })
 					self.log('info', response.message || 'URL opened')
 				} catch (error) {
 					self.log('error', `Failed to open URL: ${error.message}`)
+				}
+			},
+		},
+
+		open_key_fill: {
+			name: 'Open Key/Fill URLs',
+			description: 'Open two URLs: fill (color) on slides output display, key (grayscale luminance key) on notes display',
+			options: [
+				{
+					id: 'fillUrl',
+					type: 'textinput',
+					label: 'Fill URL',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+				{
+					id: 'fillBgColor',
+					type: 'textinput',
+					label: 'Fill background color (hex, e.g. #000000)',
+					default: '#000000',
+					required: false,
+					useVariables: true,
+				},
+				{
+					id: 'keyUrl',
+					type: 'textinput',
+					label: 'Key URL',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+				{
+					id: 'keyBgColor',
+					type: 'textinput',
+					label: 'Key background color (hex, e.g. #000000)',
+					default: '#000000',
+					required: false,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const fillUrl = await self.parseVariablesInString(event.options.fillUrl)
+					const fillBgColor = await self.parseVariablesInString(event.options.fillBgColor || '#000000')
+					const keyUrl = await self.parseVariablesInString(event.options.keyUrl)
+					const keyBgColor = await self.parseVariablesInString(event.options.keyBgColor || '#000000')
+					self.log('info', `Opening key/fill — fill: ${fillUrl} (bg: ${fillBgColor}), key: ${keyUrl} (bg: ${keyBgColor})`)
+
+					const response = await self.apiRequest('POST', '/api/open-key-fill', { fillUrl, fillBgColor, keyUrl, keyBgColor })
+					self.log('info', response.message || 'Key/fill opened')
+				} catch (error) {
+					self.log('error', `Failed to open key/fill: ${error.message}`)
+				}
+			},
+		},
+
+		close_key_fill: {
+			name: 'Close Key/Fill',
+			description: 'Close key and fill windows, returning to idle state',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Closing key/fill')
+					const response = await self.apiRequest('POST', '/api/close-key-fill', {})
+					self.log('info', response.message || 'Key/fill closed')
+				} catch (error) {
+					self.log('error', `Failed to close key/fill: ${error.message}`)
 				}
 			},
 		},

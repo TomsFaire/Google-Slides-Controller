@@ -308,9 +308,14 @@ let currentSlide = null; // best-effort: we track on our next/prev; DOM can over
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
 const CONTENT_KIND_SLIDES = 'slides';
 const CONTENT_KIND_SLIDO = 'slido';
+const CONTENT_KIND_KEY_FILL = 'keyfill';
 const CONTENT_KIND_GENERIC_URL = 'generic-url';
-/** 'slides' | 'slido' | 'generic-url' — reload and crash recovery depend on this. */
+/** 'slides' | 'slido' | 'keyfill' | 'generic-url' — reload and crash recovery depend on this. */
 let lastContentKind = CONTENT_KIND_SLIDES;
+let lastKeyFillUrls = null; // { fillUrl, keyUrl, fillBgColor, keyBgColor } — stored for reload/reopen
+let lastGenericUrlBgColor = null; // stored for crash recovery reopen
+let keyFillFillWindow = null;
+let keyFillKeyWindow = null;
 
 // Google Slides speaker notes zoom: discrete steps from native baseline (Zoom in / Zoom out toolbar; see /api/zoom-in-notes).
 const NOTES_ZOOM_MIN_STEPS = -10;
@@ -479,6 +484,8 @@ function toPresentUrl(inputUrl, slideNumber) {
 const GOOGLE_SESSION_PARTITION = 'persist:google';
 // Separate partition for Slido / Okta SSO so cookies do not mix with Google Slides
 const SLIDO_SESSION_PARTITION = 'persist:slido';
+// Separate partition for key/fill arbitrary URL displays
+const KEY_FILL_SESSION_PARTITION = 'persist:keyfill';
 // Separate partition for arbitrary URL display so cookies do not mix with Google or Slido
 const GENERIC_SESSION_PARTITION = 'persist:generic';
 
@@ -550,6 +557,44 @@ function getSlidoPresentationBrowserWindowOptions(presentationBounds) {
   };
 }
 
+/** Borderless fill window for key/fill URL displays — color content on slides output display. */
+function getKeyFillFillWindowOptions(bounds, bgColor) {
+  const b = bounds && bounds.width ? bounds : screen.getPrimaryDisplay().bounds;
+  const bg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : '#000000';
+  return {
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    backgroundColor: bg,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: KEY_FILL_SESSION_PARTITION
+    }
+  };
+}
+
+/** Borderless key window for key/fill URL displays — grayscale luminance key on notes display. */
+function getKeyFillKeyWindowOptions(bounds, bgColor) {
+  const b = bounds && bounds.width ? bounds : screen.getPrimaryDisplay().bounds;
+  const bg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : '#000000';
+  return {
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    backgroundColor: bg,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: KEY_FILL_SESSION_PARTITION
+    }
+  };
+}
+
 /** Borderless presentation-area window using a neutral generic session partition for arbitrary URLs. */
 function getGenericUrlBrowserWindowOptions(presentationBounds, backgroundColor) {
   const b = presentationBounds && presentationBounds.width ? presentationBounds : screen.getPrimaryDisplay().bounds;
@@ -567,6 +612,15 @@ function getGenericUrlBrowserWindowOptions(presentationBounds, backgroundColor) 
       partition: GENERIC_SESSION_PARTITION
     }
   };
+}
+
+function isAllowedKeyFillUrl(urlString) {
+  try {
+    new URL(String(urlString || '').trim());
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function isAllowedGenericUrl(urlString) {
@@ -2384,7 +2438,85 @@ async function reopenSlidoAtUrl(urlToReload) {
   await openSlidoPresentationDisplay(urlToReload);
 }
 
-async function openGenericUrlDisplay(url) {
+async function openKeyFillDisplays(fillUrl, keyUrl, fillBgColor, keyBgColor) {
+  if (!isAllowedKeyFillUrl(fillUrl)) throw new Error('Fill URL is not a valid URL');
+  if (!isAllowedKeyFillUrl(keyUrl)) throw new Error('Key URL is not a valid URL');
+
+  const resolvedFillBg = /^#[0-9a-fA-F]{6}$/.test(fillBgColor) ? fillBgColor : '#000000';
+  const resolvedKeyBg = /^#[0-9a-fA-F]{6}$/.test(keyBgColor) ? keyBgColor : '#000000';
+
+  try {
+    for (const win of [notesWindow, presentationWindow, keyFillFillWindow, keyFillKeyWindow]) {
+      if (win && !win.isDestroyed()) { win.removeAllListeners('closed'); win.close(); }
+    }
+    notesWindow = null;
+    presentationWindow = null;
+    keyFillFillWindow = null;
+    keyFillKeyWindow = null;
+    currentSlide = null;
+  } catch (e) {
+    console.error('[KeyFill] Error closing existing windows:', e.message);
+  }
+
+  const prefs = loadPreferences();
+  const displays = screen.getAllDisplays();
+  const presentationDisplay = displays.find(d => d.id === Number(prefs.presentationDisplayId)) || displays[0];
+  const notesDisplay = displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
+
+  // Fill window — color content on slides output display
+  keyFillFillWindow = new BrowserWindow(getKeyFillFillWindowOptions(presentationDisplay.bounds, resolvedFillBg));
+  if (process.platform === 'darwin') applyPresentationFullscreenChrome(keyFillFillWindow, prefs);
+  attachCrashHandlers(keyFillFillWindow, 'keyfill-fill');
+  keyFillFillWindow.on('closed', () => { keyFillFillWindow = null; });
+  keyFillFillWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      event.preventDefault();
+      closeKeyFillDisplays();
+    }
+  });
+  console.log('[KeyFill] Loading fill URL:', fillUrl, 'bg:', resolvedFillBg);
+  keyFillFillWindow.loadURL(fillUrl);
+  keyFillFillWindow.show();
+
+  // Key window — grayscale luminance key on notes display
+  keyFillKeyWindow = new BrowserWindow(getKeyFillKeyWindowOptions(notesDisplay.bounds, resolvedKeyBg));
+  attachCrashHandlers(keyFillKeyWindow, 'keyfill-key');
+  keyFillKeyWindow.on('closed', () => { keyFillKeyWindow = null; });
+  keyFillKeyWindow.webContents.on('did-finish-load', () => {
+    const bgCss = resolvedKeyBg;
+    keyFillKeyWindow.webContents.insertCSS(`html,body,*{filter:grayscale(1)!important}html,body{background:${bgCss}!important}`);
+  });
+  console.log('[KeyFill] Loading key URL:', keyUrl, 'bg:', resolvedKeyBg);
+  keyFillKeyWindow.loadURL(keyUrl);
+  keyFillKeyWindow.show();
+
+  lastKeyFillUrls = { fillUrl, keyUrl, fillBgColor: resolvedFillBg, keyBgColor: resolvedKeyBg };
+  lastContentKind = CONTENT_KIND_KEY_FILL;
+}
+
+function closeKeyFillDisplays() {
+  try {
+    if (keyFillFillWindow && !keyFillFillWindow.isDestroyed()) {
+      keyFillFillWindow.removeAllListeners('closed');
+      keyFillFillWindow.close();
+    }
+    if (keyFillKeyWindow && !keyFillKeyWindow.isDestroyed()) {
+      keyFillKeyWindow.removeAllListeners('closed');
+      keyFillKeyWindow.close();
+    }
+  } catch (e) {
+    console.error('[KeyFill] Error closing windows:', e.message);
+  }
+  keyFillFillWindow = null;
+  keyFillKeyWindow = null;
+}
+
+async function reopenKeyFillAtUrls(urls) {
+  await new Promise(resolve => setTimeout(resolve, 200));
+  await openKeyFillDisplays(urls.fillUrl, urls.keyUrl, urls.fillBgColor, urls.keyBgColor);
+}
+
+async function openGenericUrlDisplay(url, bgColor) {
   if (!isAllowedGenericUrl(url)) {
     throw new Error('Invalid URL (must be http:// or https://)');
   }
@@ -2409,7 +2541,8 @@ async function openGenericUrlDisplay(url) {
   const presentationDisplayId = Number(prefs.presentationDisplayId);
   const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
 
-  presentationWindow = new BrowserWindow(getGenericUrlBrowserWindowOptions(presentationDisplay.bounds, prefs.genericUrlBackgroundColor));
+  const resolvedBg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : (prefs.genericUrlBackgroundColor || '#000000');
+  presentationWindow = new BrowserWindow(getGenericUrlBrowserWindowOptions(presentationDisplay.bounds, resolvedBg));
   if (process.platform === 'darwin') {
     applyPresentationFullscreenChrome(presentationWindow, prefs);
   }
@@ -2430,10 +2563,11 @@ async function openGenericUrlDisplay(url) {
   });
 
   lastPresentationUrl = url;
+  lastGenericUrlBgColor = resolvedBg;
   lastContentKind = CONTENT_KIND_GENERIC_URL;
   resetNotesZoomForNewPresentation();
 
-  console.log('[GenericURL] Loading URL:', url);
+  console.log('[GenericURL] Loading URL:', url, 'bg:', resolvedBg);
   presentationWindow.loadURL(url);
   presentationWindow.show();
 }
@@ -2483,7 +2617,8 @@ function attachCrashHandlers(win, label) {
         }).then(({ response }) => {
           if (response === 0) {
             if (reopenKind === CONTENT_KIND_SLIDO) reopenSlidoAtUrl(url);
-            else if (reopenKind === CONTENT_KIND_GENERIC_URL) openGenericUrlDisplay(url).catch(() => {});
+            else if (reopenKind === CONTENT_KIND_KEY_FILL && lastKeyFillUrls) reopenKeyFillAtUrls(lastKeyFillUrls);
+            else if (reopenKind === CONTENT_KIND_GENERIC_URL) openGenericUrlDisplay(url, lastGenericUrlBgColor).catch(() => {});
             else reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
           }
         }).catch(() => {});
@@ -3539,7 +3674,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   return { success: true };
 });
 
-ipcMain.handle('open-url', async (_event, { url }) => {
+ipcMain.handle('open-url', async (_event, { url, backgroundColor }) => {
   const prefs = loadPreferences();
   if (prefs.allowArbitraryUrl !== true) {
     return { success: false, error: 'Arbitrary URL display is not enabled. Enable it in the desktop app settings.' };
@@ -3547,7 +3682,7 @@ ipcMain.handle('open-url', async (_event, { url }) => {
   if (!isAllowedGenericUrl(url)) {
     return { success: false, error: 'Invalid URL (must be http:// or https://)' };
   }
-  await openGenericUrlDisplay(url);
+  await openGenericUrlDisplay(url, backgroundColor);
   return { success: true };
 });
 
@@ -4482,6 +4617,84 @@ function startHttpServer() {
       return;
     }
 
+    // POST /api/open-key-fill - Open key/fill URL pair: fill on slides display, key (grayscale) on notes display
+    if (req.method === 'POST' && apiReqPath === '/api/open-key-fill') {
+      if (!isControllerAllowedRequest(req)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden: not in IP allowlist' }));
+        return;
+      }
+
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const fillUrl = (data.fillUrl || '').trim();
+          const keyUrl = (data.keyUrl || '').trim();
+          const fillBgColor = (data.fillBgColor || '').trim() || '#000000';
+          const keyBgColor = (data.keyBgColor || '').trim() || '#000000';
+
+          if (!fillUrl || !keyUrl) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'fillUrl and keyUrl are required' }));
+            return;
+          }
+
+          if (!isAllowedKeyFillUrl(fillUrl)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'fillUrl must be a valid URL' }));
+            return;
+          }
+
+          if (!isAllowedKeyFillUrl(keyUrl)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'keyUrl must be a valid URL' }));
+            return;
+          }
+
+          console.log('[API] Opening key/fill — fill:', fillUrl, 'key:', keyUrl, 'fillBg:', fillBgColor, 'keyBg:', keyBgColor);
+          await openKeyFillDisplays(fillUrl, keyUrl, fillBgColor, keyBgColor);
+
+          sendToBackups('/api/open-key-fill', { fillUrl, keyUrl, fillBgColor, keyBgColor }).catch(err => {
+            console.error('[Backup] Error broadcasting open-key-fill:', err);
+          });
+
+          if (!res.headersSent) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Key/fill opened' }));
+          }
+        } catch (error) {
+          console.error('[API] Error opening key/fill:', error);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        }
+      });
+      return;
+    }
+
+    // POST /api/close-key-fill - Close key and fill windows
+    if (req.method === 'POST' && apiReqPath === '/api/close-key-fill') {
+      if (!isControllerAllowedRequest(req)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden: not in IP allowlist' }));
+        return;
+      }
+
+      console.log('[API] Closing key/fill');
+      sendToBackups('/api/close-key-fill', {}).catch(err => {
+        console.error('[Backup] Error broadcasting close-key-fill:', err);
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, message: 'Key/fill closed' }));
+
+      closeKeyFillDisplays();
+      return;
+    }
+
     // POST /api/open-url - Open an arbitrary http/https URL on the presentation display (LAN only, requires allowArbitraryUrl preference)
     if (req.method === 'POST' && apiReqPath === '/api/open-url') {
       const prefs = loadPreferences();
@@ -4501,6 +4714,7 @@ function startHttpServer() {
         try {
           const data = JSON.parse(body);
           const url = (data.url || '').trim();
+          const backgroundColor = (data.backgroundColor || '').trim() || '#000000';
 
           if (!url) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4514,11 +4728,11 @@ function startHttpServer() {
             return;
           }
 
-          console.log('[API] Opening generic URL:', url);
+          console.log('[API] Opening generic URL:', url, 'bg:', backgroundColor);
 
-          await openGenericUrlDisplay(url);
+          await openGenericUrlDisplay(url, backgroundColor);
 
-          sendToBackups('/api/open-url', { url }).catch(err => {
+          sendToBackups('/api/open-url', { url, backgroundColor }).catch(err => {
             console.error('[Backup] Error broadcasting open-url:', err);
           });
 
@@ -4759,8 +4973,10 @@ function startHttpServer() {
           console.log('[API] Reload: Saving state - slide:', savedSlide, 'notes open:', notesWereOpen, 'notesZoomSteps:', savedNotesZoomSteps, 'URL:', urlToReload, 'kind:', reloadKind);
           if (reloadKind === CONTENT_KIND_SLIDO) {
             await reopenSlidoAtUrl(urlToReload);
+          } else if (reloadKind === CONTENT_KIND_KEY_FILL && lastKeyFillUrls) {
+            await reopenKeyFillAtUrls(lastKeyFillUrls);
           } else if (reloadKind === CONTENT_KIND_GENERIC_URL) {
-            await openGenericUrlDisplay(urlToReload);
+            await openGenericUrlDisplay(urlToReload, lastGenericUrlBgColor);
           } else {
             await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
           }
@@ -9041,13 +9257,45 @@ function startWebUiServer() {
         </div>
       </div>
 
+      <!-- Key / Fill URLs -->
+      <div class="controls-section">
+        <h3>Key / Fill</h3>
+        <div class="preset-group">
+          <label for="keyfill-fill-url">Fill URL <small style="font-weight:normal;opacity:0.7;">(slides display — color)</small></label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="keyfill-fill-url" name="keyfill-fill-url" placeholder="https://…" autocomplete="off" style="flex: 1;" />
+            <input type="color" id="keyfill-fill-bg" value="#000000" title="Fill background color" style="width: 40px; height: 32px; padding: 2px; border-radius: 4px; cursor: pointer; flex: none;" />
+          </div>
+        </div>
+        <div class="preset-group">
+          <label for="keyfill-key-url">Key URL <small style="font-weight:normal;opacity:0.7;">(notes display — grayscale)</small></label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="keyfill-key-url" name="keyfill-key-url" placeholder="https://…" autocomplete="off" style="flex: 1;" />
+            <input type="color" id="keyfill-key-bg" value="#000000" title="Key background color" style="width: 40px; height: 32px; padding: 2px; border-radius: 4px; cursor: pointer; flex: none;" />
+          </div>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn" id="btn-open-keyfill" style="flex: 1;">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;">
+              <circle cx="12" cy="12" r="10"></circle>
+              <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"></circle>
+            </svg>
+            Open Key/Fill
+          </button>
+          <button type="button" class="btn" id="btn-close-keyfill" style="flex: none; width: auto; padding-left: 18px; padding-right: 18px;">Close</button>
+        </div>
+      </div>
+
       ${showOpenUrlSection ? `
       <!-- Open URL (LAN only, enabled by allowArbitraryUrl preference) -->
       <div class="controls-section">
         <h3>Open URL</h3>
         <div class="preset-group">
           <label for="generic-url">Any http/https URL</label>
-          <input type="text" id="generic-url" name="generic-url" placeholder="https://..." autocomplete="off" />
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="generic-url" name="generic-url" placeholder="https://..." autocomplete="off" style="flex: 1;" />
+            <input type="color" id="generic-url-bg" value="#000000" title="Background color" style="width: 40px; height: 32px; padding: 2px; border-radius: 4px; cursor: pointer; flex: none;" />
+          </div>
         </div>
         <div style="display: flex; gap: 10px;">
           <button type="button" class="btn" id="btn-open-url" style="flex: 1;">
@@ -10030,8 +10278,69 @@ function startWebUiServer() {
         });
     }
     
+    function openKeyFill() {
+      const fillUrl = (document.getElementById('keyfill-fill-url').value || '').trim();
+      const keyUrl = (document.getElementById('keyfill-key-url').value || '').trim();
+      const fillBgColor = document.getElementById('keyfill-fill-bg').value || '#000000';
+      const keyBgColor = document.getElementById('keyfill-key-bg').value || '#000000';
+      if (!fillUrl) {
+        showStatus('Please enter a Fill URL', true);
+        document.getElementById('keyfill-fill-url').focus();
+        return;
+      }
+      if (!keyUrl) {
+        showStatus('Please enter a Key URL', true);
+        document.getElementById('keyfill-key-url').focus();
+        return;
+      }
+      const isValidUrl = (u) => { try { new URL(u); return true; } catch (e) { return false; } };
+      if (!isValidUrl(fillUrl)) {
+        showStatus('Fill URL is not a valid URL', true);
+        document.getElementById('keyfill-fill-url').focus();
+        return;
+      }
+      if (!isValidUrl(keyUrl)) {
+        showStatus('Key URL is not a valid URL', true);
+        document.getElementById('keyfill-key-url').focus();
+        return;
+      }
+      const btn = document.getElementById('btn-open-keyfill');
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = 'Opening...';
+      fetch(API_BASE + '/api/open-key-fill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fillUrl, keyUrl, fillBgColor, keyBgColor })
+      })
+        .then(function (res) {
+          if (!res.ok) {
+            return res.json().then(function (data) {
+              throw new Error(data.error || 'HTTP error! status: ' + res.status);
+            });
+          }
+          return res.json();
+        })
+        .then(function (result) {
+          if (result.success) {
+            showStatus(result.message || 'Key/Fill opened!', false);
+          } else {
+            showStatus('Failed to open: ' + (result.error || 'Unknown error'), true);
+          }
+        })
+        .catch(function (err) {
+          showStatus('Failed to open Key/Fill: ' + err.message, true);
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        });
+    }
+
     function openUrl(url) {
       const trimmed = (url || '').trim();
+      const bgEl = document.getElementById('generic-url-bg');
+      const backgroundColor = bgEl ? bgEl.value || '#000000' : '#000000';
       if (!trimmed) {
         showStatus('Please enter a URL', true);
         const el = document.getElementById('generic-url');
@@ -10058,7 +10367,7 @@ function startWebUiServer() {
       fetch(API_BASE + '/api/open-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmed })
+        body: JSON.stringify({ url: trimmed, backgroundColor })
       })
         .then(function (res) {
           if (!res.ok) {
@@ -10128,6 +10437,25 @@ function startWebUiServer() {
       if (e.key === 'Enter') {
         document.getElementById('btn-open-slido').click();
       }
+    });
+
+    document.getElementById('btn-open-keyfill').addEventListener('click', () => {
+      openKeyFill();
+    });
+
+    document.getElementById('btn-close-keyfill').addEventListener('click', () => {
+      fetch(API_BASE + '/api/close-key-fill', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(res => res.json())
+        .then(result => showStatus(result.message || 'Key/Fill closed', false))
+        .catch(err => showStatus('Failed to close Key/Fill: ' + err.message, true));
+    });
+
+    document.getElementById('keyfill-fill-url').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('keyfill-key-url').focus();
+    });
+
+    document.getElementById('keyfill-key-url').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') document.getElementById('btn-open-keyfill').click();
     });
 
     if (document.getElementById('btn-open-url')) {

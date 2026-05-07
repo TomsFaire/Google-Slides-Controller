@@ -30,6 +30,9 @@ const addPerfectCuePortBtn = document.getElementById('add-perfectcue-port');
 const savePerfectCueBtn = document.getElementById('save-perfectcue-btn');
 const verboseLoggingCheckbox = document.getElementById('verbose-logging');
 const webUiDebugConsoleEnabledCheckbox = document.getElementById('web-ui-debug-console-enabled');
+const allowArbitraryUrlCheckbox = document.getElementById('allow-arbitrary-url');
+const genericUrlBgColorPicker = document.getElementById('generic-url-background-color');
+const genericUrlBgColorHex = document.getElementById('generic-url-background-color-hex');
 const webUiThemeSelect = document.getElementById('web-ui-theme');
 const webUiLogoPathInput = document.getElementById('web-ui-logo-path');
 const webUiLogoChooseBtn = document.getElementById('web-ui-logo-choose');
@@ -572,6 +575,13 @@ async function initDisplays() {
     if (webUiDebugConsoleEnabledCheckbox) {
       webUiDebugConsoleEnabledCheckbox.checked = preferences.webUiDebugConsoleEnabled === true;
     }
+    if (allowArbitraryUrlCheckbox) {
+      allowArbitraryUrlCheckbox.checked = preferences.allowArbitraryUrl === true;
+    }
+    const savedBgColor = /^#[0-9a-fA-F]{6}$/.test(preferences.genericUrlBackgroundColor)
+      ? preferences.genericUrlBackgroundColor : '#000000';
+    if (genericUrlBgColorPicker) genericUrlBgColorPicker.value = savedBgColor;
+    if (genericUrlBgColorHex) genericUrlBgColorHex.value = savedBgColor;
 
     // Restore Web UI appearance (theme + logo + custom CSS path)
     if (webUiThemeSelect) {
@@ -717,6 +727,24 @@ async function initDisplays() {
     }
     if (webUiDebugConsoleEnabledCheckbox) {
       webUiDebugConsoleEnabledCheckbox.addEventListener('change', saveWebUiDebugConsolePreference);
+    }
+    if (allowArbitraryUrlCheckbox) {
+      allowArbitraryUrlCheckbox.addEventListener('change', saveAllowArbitraryUrlPreference);
+    }
+    if (genericUrlBgColorPicker) {
+      genericUrlBgColorPicker.addEventListener('input', () => {
+        if (genericUrlBgColorHex) genericUrlBgColorHex.value = genericUrlBgColorPicker.value;
+      });
+      genericUrlBgColorPicker.addEventListener('change', saveGenericUrlBackgroundColor);
+    }
+    if (genericUrlBgColorHex) {
+      genericUrlBgColorHex.addEventListener('change', () => {
+        const v = genericUrlBgColorHex.value.trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) {
+          if (genericUrlBgColorPicker) genericUrlBgColorPicker.value = v;
+          saveGenericUrlBackgroundColor();
+        }
+      });
     }
 
     // Web UI appearance: logo and CSS file pickers, save
@@ -1442,6 +1470,29 @@ async function saveWebUiDebugConsolePreference() {
   } catch (error) {
     console.error('Failed to save Web UI debug console preference:', error);
     showStatus('Failed to save Web UI debug console preference', 'error');
+  }
+}
+
+async function saveAllowArbitraryUrlPreference() {
+  try {
+    await window.electronAPI.savePreferences({
+      allowArbitraryUrl: allowArbitraryUrlCheckbox && allowArbitraryUrlCheckbox.checked === true
+    });
+    showStatus('Web remote features saved', 'info');
+  } catch (error) {
+    console.error('Failed to save allow arbitrary URL preference:', error);
+    showStatus('Failed to save web remote features setting', 'error');
+  }
+}
+
+async function saveGenericUrlBackgroundColor() {
+  const color = genericUrlBgColorPicker ? genericUrlBgColorPicker.value : '#000000';
+  try {
+    await window.electronAPI.savePreferences({ genericUrlBackgroundColor: color });
+    showStatus('Background color saved', 'info');
+  } catch (error) {
+    console.error('Failed to save background color:', error);
+    showStatus('Failed to save background color', 'error');
   }
 }
 

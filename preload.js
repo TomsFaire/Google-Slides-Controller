@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkSignInStatus: () => ipcRenderer.invoke('check-signin-status'),
   openTestPresentation: () => ipcRenderer.invoke('open-test-presentation'),
   openPresentation: (data) => ipcRenderer.invoke('open-presentation', data),
+  openUrl: (data) => ipcRenderer.invoke('open-url', data),
   getPreferences: () => ipcRenderer.invoke('get-preferences'),
   getSpeakerNotes: () => ipcRenderer.invoke('get-speaker-notes'),
   savePreferences: (prefs) => ipcRenderer.invoke('save-preferences', prefs),

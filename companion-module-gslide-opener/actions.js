@@ -81,6 +81,32 @@ module.exports = function (self) {
 			},
 		},
 
+		open_url: {
+			name: 'Open URL',
+			description: 'Open any http/https URL on the presentation display (requires "Allow arbitrary URLs" enabled in desktop app settings)',
+			options: [
+				{
+					id: 'url',
+					type: 'textinput',
+					label: 'URL',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const url = await self.parseVariablesInString(event.options.url)
+					self.log('info', `Opening URL: ${url}`)
+
+					const response = await self.apiRequest('POST', '/api/open-url', { url })
+					self.log('info', response.message || 'URL opened')
+				} catch (error) {
+					self.log('error', `Failed to open URL: ${error.message}`)
+				}
+			},
+		},
+
 		open_key_fill: {
 			name: 'Open Key/Fill URLs',
 			description: 'Open two URLs: fill (color) on slides output display, key (grayscale luminance key) on notes display',
@@ -88,7 +114,7 @@ module.exports = function (self) {
 				{
 					id: 'fillUrl',
 					type: 'textinput',
-					label: 'Fill URL (https://)',
+					label: 'Fill URL',
 					default: '',
 					required: true,
 					useVariables: true,
@@ -96,7 +122,7 @@ module.exports = function (self) {
 				{
 					id: 'keyUrl',
 					type: 'textinput',
-					label: 'Key URL (https://)',
+					label: 'Key URL',
 					default: '',
 					required: true,
 					useVariables: true,

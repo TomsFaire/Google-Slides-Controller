@@ -548,6 +548,29 @@
 
           <!-- Controller allowlist panel -->
           <div class="panel">
+            <h2 class="panel-title">Web Remote Features</h2>
+            <p class="card-description">Control which features are available to web remote users. Features marked LAN-only are never shown when connecting over the WAN tunnel.</p>
+
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="allow-arbitrary-url" style="width: auto;" />
+                <span>Allow opening arbitrary URLs <span style="font-size: 11px; opacity: 0.6;">(LAN only)</span></span>
+              </label>
+              <small class="field-hint">Exposes an "Open URL" control on the web remote for LAN clients. Use this to display live graphics, custom web apps, or other web content on the presentation display. Disabled by default for security.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="generic-url-background-color">URL window background color</label>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <input type="color" id="generic-url-background-color" value="#000000" style="width: 48px; height: 32px; padding: 2px; border-radius: var(--radius); cursor: pointer;" />
+                <input type="text" id="generic-url-background-color-hex" class="input-field" maxlength="7" placeholder="#000000" style="width: 100px;" />
+              </div>
+              <small class="field-hint">Background color shown before a page loads or if the page has a transparent background. Default: #000000 (black).</small>
+            </div>
+          </div>
+
+          <!-- Controller Allowlist panel -->
+          <div class="panel">
             <h2 class="panel-title">Controller Allowlist</h2>
             <p class="card-description">Restrict which IP addresses can control this app via the Web UI and HTTP API. If left empty, any device on your network can control the app.</p>
 

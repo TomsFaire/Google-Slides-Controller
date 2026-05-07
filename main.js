@@ -309,7 +309,8 @@ let lastPresentationUrl = null; // Store the last-opened presentation URL for re
 const CONTENT_KIND_SLIDES = 'slides';
 const CONTENT_KIND_SLIDO = 'slido';
 const CONTENT_KIND_KEY_FILL = 'keyfill';
-/** 'slides' | 'slido' | 'keyfill' — reload and crash recovery depend on this. */
+const CONTENT_KIND_GENERIC_URL = 'generic-url';
+/** 'slides' | 'slido' | 'keyfill' | 'generic-url' — reload and crash recovery depend on this. */
 let lastContentKind = CONTENT_KIND_SLIDES;
 let lastKeyFillUrls = null; // { fillUrl, keyUrl } — stored for reload/reopen
 let keyFillFillWindow = null;
@@ -484,6 +485,8 @@ const GOOGLE_SESSION_PARTITION = 'persist:google';
 const SLIDO_SESSION_PARTITION = 'persist:slido';
 // Separate partition for key/fill arbitrary URL displays
 const KEY_FILL_SESSION_PARTITION = 'persist:keyfill';
+// Separate partition for arbitrary URL display so cookies do not mix with Google or Slido
+const GENERIC_SESSION_PARTITION = 'persist:generic';
 
 // Build BrowserWindow options for the speaker notes popup so it opens at notes-display size.
 // Google Slides presenter view uses a responsive layout: wide viewport = narrow preview column + wide notes; small viewport = 50/50. Opening at full size avoids the 50/50 split.
@@ -588,10 +591,38 @@ function getKeyFillKeyWindowOptions(bounds) {
   };
 }
 
+/** Borderless presentation-area window using a neutral generic session partition for arbitrary URLs. */
+function getGenericUrlBrowserWindowOptions(presentationBounds, backgroundColor) {
+  const b = presentationBounds && presentationBounds.width ? presentationBounds : screen.getPrimaryDisplay().bounds;
+  const bg = /^#[0-9a-fA-F]{6}$/.test(backgroundColor) ? backgroundColor : '#000000';
+  return {
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    backgroundColor: bg,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      partition: GENERIC_SESSION_PARTITION
+    }
+  };
+}
+
 function isAllowedKeyFillUrl(urlString) {
   try {
     new URL(String(urlString || '').trim());
     return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function isAllowedGenericUrl(urlString) {
+  try {
+    const u = new URL(String(urlString || '').trim());
+    return u.protocol === 'http:' || u.protocol === 'https:';
   } catch (e) {
     return false;
   }
@@ -1541,6 +1572,21 @@ function parseIpv4ToInt(ip) {
   return (((nums[0] << 24) >>> 0) | (nums[1] << 16) | (nums[2] << 8) | nums[3]) >>> 0;
 }
 
+/** LAN / link-local IPv4 (normalized string). PerfectCue DSAN boxes sit here; HTTP controller allowlist often lists only Companion/tablet IPs. */
+function isPrivateOrLocalLanIpv4(addr) {
+  const r = normalizeRemoteAddress(addr);
+  if (r === '127.0.0.1') return true;
+  const ipInt = parseIpv4ToInt(r);
+  if (ipInt === null) return false;
+  const o1 = (ipInt >>> 24) & 0xff;
+  const o2 = (ipInt >>> 16) & 0xff;
+  if (o1 === 10) return true;
+  if (o1 === 172 && o2 >= 16 && o2 <= 31) return true;
+  if (o1 === 192 && o2 === 168) return true;
+  if (o1 === 169 && o2 === 254) return true;
+  return false;
+}
+
 function parseCidr(cidr) {
   const s = String(cidr || '').trim();
   const idx = s.indexOf('/');
@@ -2072,9 +2118,12 @@ function dispatchPerfectCueSlide(endpoint) {
   };
   const req = http.request(options, res => {
     logDebug(`[PerfectCue] dispatched ${endpoint} → HTTP ${res.statusCode}`);
+    if (res.statusCode !== 200) {
+      logWarn(`[PerfectCue] slide cue HTTP ${res.statusCode} for ${endpoint} (check presentation is open)`);
+    }
     res.resume();
   });
-  req.on('error', err => logDebug(`[PerfectCue] dispatch error: ${err.message}`));
+  req.on('error', err => logWarn(`[PerfectCue] slide cue failed for ${endpoint}: ${err.message}`));
   req.end();
 }
 
@@ -2088,7 +2137,10 @@ function startPerfectCueListeners(portConfigs) {
       isAllowed: (ip) => {
         const allowlist = getControllerIpsFromPrefs(loadPreferences());
         if (!allowlist || allowlist.length === 0) return true;
-        return allowlist.some(entry => isAllowedByControllerEntry(entry, normalizeRemoteAddress(ip)));
+        const normalized = normalizeRemoteAddress(ip);
+        // Same allowlist as HTTP API would block DSAN hardware (LAN IP not listed). Still require a match for non-private IPs (WAN / routed).
+        if (isPrivateOrLocalLanIpv4(normalized)) return true;
+        return allowlist.some(entry => isAllowedByControllerEntry(entry, normalized));
       },
       log: (msg) => logDebug('[PerfectCue]', msg),
       onStatus: () => {}
@@ -2456,6 +2508,60 @@ async function reopenKeyFillAtUrls(urls) {
   await openKeyFillDisplays(urls.fillUrl, urls.keyUrl);
 }
 
+async function openGenericUrlDisplay(url) {
+  if (!isAllowedGenericUrl(url)) {
+    throw new Error('Invalid URL (must be http:// or https://)');
+  }
+  try {
+    if (notesWindow && !notesWindow.isDestroyed()) {
+      notesWindow.removeAllListeners('closed');
+      notesWindow.close();
+      notesWindow = null;
+    }
+    if (presentationWindow && !presentationWindow.isDestroyed()) {
+      presentationWindow.removeAllListeners('closed');
+      presentationWindow.close();
+      presentationWindow = null;
+    }
+    currentSlide = null;
+  } catch (e) {
+    console.error('[GenericURL] Error closing existing windows:', e.message);
+  }
+
+  const prefs = loadPreferences();
+  const displays = screen.getAllDisplays();
+  const presentationDisplayId = Number(prefs.presentationDisplayId);
+  const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
+
+  presentationWindow = new BrowserWindow(getGenericUrlBrowserWindowOptions(presentationDisplay.bounds, prefs.genericUrlBackgroundColor));
+  if (process.platform === 'darwin') {
+    applyPresentationFullscreenChrome(presentationWindow, prefs);
+  }
+  attachCrashHandlers(presentationWindow, 'presentation');
+
+  presentationWindow.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
+
+  presentationWindow.on('closed', () => {
+    presentationWindow = null;
+    currentSlide = null;
+  });
+
+  presentationWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      event.preventDefault();
+      if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+    }
+  });
+
+  lastPresentationUrl = url;
+  lastContentKind = CONTENT_KIND_GENERIC_URL;
+  resetNotesZoomForNewPresentation();
+
+  console.log('[GenericURL] Loading URL:', url);
+  presentationWindow.loadURL(url);
+  presentationWindow.show();
+}
+
 function attachCrashHandlers(win, label) {
   if (!win || !win.webContents) return;
   win.webContents.on('render-process-gone', (event, details) => {
@@ -2502,6 +2608,7 @@ function attachCrashHandlers(win, label) {
           if (response === 0) {
             if (reopenKind === CONTENT_KIND_SLIDO) reopenSlidoAtUrl(url);
             else if (reopenKind === CONTENT_KIND_KEY_FILL && lastKeyFillUrls) reopenKeyFillAtUrls(lastKeyFillUrls);
+            else if (reopenKind === CONTENT_KIND_GENERIC_URL) openGenericUrlDisplay(url).catch(() => {});
             else reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
           }
         }).catch(() => {});
@@ -3557,6 +3664,18 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   return { success: true };
 });
 
+ipcMain.handle('open-url', async (_event, { url }) => {
+  const prefs = loadPreferences();
+  if (prefs.allowArbitraryUrl !== true) {
+    return { success: false, error: 'Arbitrary URL display is not enabled. Enable it in the desktop app settings.' };
+  }
+  if (!isAllowedGenericUrl(url)) {
+    return { success: false, error: 'Invalid URL (must be http:// or https://)' };
+  }
+  await openGenericUrlDisplay(url);
+  return { success: true };
+});
+
 // HTTP API for Bitfocus Companion integration
 // Ports are configurable via preferences, defaults below
 const DEFAULT_API_PORT = 9595;
@@ -4564,6 +4683,61 @@ function startHttpServer() {
       return;
     }
 
+    // POST /api/open-url - Open an arbitrary http/https URL on the presentation display (LAN only, requires allowArbitraryUrl preference)
+    if (req.method === 'POST' && apiReqPath === '/api/open-url') {
+      const prefs = loadPreferences();
+
+      if (prefs.allowArbitraryUrl !== true) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Arbitrary URL display is not enabled. Enable it in the desktop app settings.' }));
+        return;
+      }
+
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+
+      req.on('end', async () => {
+        try {
+          const data = JSON.parse(body);
+          const url = (data.url || '').trim();
+
+          if (!url) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'URL is required' }));
+            return;
+          }
+
+          if (!isAllowedGenericUrl(url)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid URL (must be http:// or https://)' }));
+            return;
+          }
+
+          console.log('[API] Opening generic URL:', url);
+
+          await openGenericUrlDisplay(url);
+
+          sendToBackups('/api/open-url', { url }).catch(err => {
+            console.error('[Backup] Error broadcasting open-url:', err);
+          });
+
+          if (!res.headersSent) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'URL opened' }));
+          }
+        } catch (error) {
+          console.error('[API] Error opening URL:', error);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+          }
+        }
+      });
+      return;
+    }
+
     // POST /api/close-presentation - Close current presentation
     if (req.method === 'POST' && req.url === '/api/close-presentation') {
       console.log('[API] Closing presentation');
@@ -4612,6 +4786,13 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
         currentSlide = (typeof currentSlide === 'number' ? currentSlide + 1 : 1);
+        try {
+          const from = normalizeRemoteAddress(req.socket && req.socket.remoteAddress);
+          const src = isLocalhostAddress(from) ? 'local' : from;
+          logInfo(`[Slide] next-slide cue OK${src ? ` (${src})` : ''}`);
+        } catch (e) {
+          logInfo('[Slide] next-slide cue OK');
+        }
         
         // Broadcast to backups (async, don't wait)
         sendToBackups('/api/next-slide', {}).catch(err => {
@@ -4640,6 +4821,13 @@ function startHttpServer() {
         presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
         presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
         currentSlide = (typeof currentSlide === 'number' && currentSlide > 1 ? currentSlide - 1 : 1);
+        try {
+          const from = normalizeRemoteAddress(req.socket && req.socket.remoteAddress);
+          const src = isLocalhostAddress(from) ? 'local' : from;
+          logInfo(`[Slide] previous-slide cue OK${src ? ` (${src})` : ''}`);
+        } catch (e) {
+          logInfo('[Slide] previous-slide cue OK');
+        }
         
         // Broadcast to backups (async, don't wait)
         sendToBackups('/api/previous-slide', {}).catch(err => {
@@ -4774,6 +4962,8 @@ function startHttpServer() {
             await reopenSlidoAtUrl(urlToReload);
           } else if (reloadKind === CONTENT_KIND_KEY_FILL && lastKeyFillUrls) {
             await reopenKeyFillAtUrls(lastKeyFillUrls);
+          } else if (reloadKind === CONTENT_KIND_GENERIC_URL) {
+            await openGenericUrlDisplay(urlToReload);
           } else {
             await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
           }
@@ -6428,7 +6618,8 @@ function startWebUiServer() {
       const webUiLogoPath = prefs.webUiLogoPath || '';
       const showLogo = webUiTheme !== 'max' && webUiLogoPath && fs.existsSync(webUiLogoPath);
       const webUiRestrictedTunnelClient = isWebUiRestrictedTunnelClient(req, prefs);
-      
+      const showOpenUrlSection = prefs.allowArbitraryUrl === true && !webUiRestrictedTunnelClient;
+
       // Get version and build number
       const versionString = `v${appBuildInfo.version}.${appBuildInfo.buildNumber}`;
       
@@ -9052,7 +9243,7 @@ function startWebUiServer() {
           </button>
         </div>
       </div>
-      
+
       <!-- Key / Fill URLs -->
       <div class="controls-section">
         <h3>Key / Fill</h3>
@@ -9075,6 +9266,27 @@ function startWebUiServer() {
           <button type="button" class="btn" id="btn-close-keyfill" style="flex: none; width: auto; padding-left: 18px; padding-right: 18px;">Close</button>
         </div>
       </div>
+
+      ${showOpenUrlSection ? `
+      <!-- Open URL (LAN only, enabled by allowArbitraryUrl preference) -->
+      <div class="controls-section">
+        <h3>Open URL</h3>
+        <div class="preset-group">
+          <label for="generic-url">Any http/https URL</label>
+          <input type="text" id="generic-url" name="generic-url" placeholder="https://..." autocomplete="off" />
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="button" class="btn" id="btn-open-url" style="flex: 1;">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+              <circle cx="12" cy="12" r="10"></circle>
+            </svg>
+            Open URL
+          </button>
+        </div>
+      </div>
+      ` : ''}
 
       <!-- Preset Presentations -->
       <div class="controls-section">
@@ -10101,18 +10313,75 @@ function startWebUiServer() {
         });
     }
 
+    function openUrl(url) {
+      const trimmed = (url || '').trim();
+      if (!trimmed) {
+        showStatus('Please enter a URL', true);
+        const el = document.getElementById('generic-url');
+        if (el) el.focus();
+        return;
+      }
+      let valid = false;
+      try {
+        const u = new URL(trimmed);
+        valid = u.protocol === 'http:' || u.protocol === 'https:';
+      } catch (e) {
+        valid = false;
+      }
+      if (!valid) {
+        showStatus('Enter a valid http:// or https:// URL', true);
+        const el = document.getElementById('generic-url');
+        if (el) el.focus();
+        return;
+      }
+      const btn = document.getElementById('btn-open-url');
+      const originalHtml = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 8px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path><circle cx="12" cy="12" r="10"></circle></svg>Open URL';
+      btn.disabled = true;
+      btn.innerHTML = 'Opening...';
+      fetch(API_BASE + '/api/open-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmed })
+      })
+        .then(function (res) {
+          if (!res.ok) {
+            return res.json().then(function (data) {
+              throw new Error(data.error || 'HTTP error! status: ' + res.status);
+            });
+          }
+          return res.json();
+        })
+        .then(function (result) {
+          if (result.success) {
+            showStatus(result.message || 'URL opened successfully!', false);
+            const el = document.getElementById('generic-url');
+            if (el) el.value = '';
+          } else {
+            showStatus('Failed to open: ' + (result.error || 'Unknown error'), true);
+          }
+        })
+        .catch(function (err) {
+          console.error('Open URL error:', err);
+          showStatus('Failed to open URL: ' + err.message + ' (Make sure the app is running)', true);
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        });
+    }
+
     // Open presentation button (without notes)
     document.getElementById('btn-open-presentation').addEventListener('click', () => {
       const url = document.getElementById('presentation-url').value.trim();
       openPresentation(url, false);
     });
-    
+
     // Open presentation with notes button
     document.getElementById('btn-open-presentation-with-notes').addEventListener('click', () => {
       const url = document.getElementById('presentation-url').value.trim();
       openPresentation(url, true);
     });
-    
+
     document.getElementById('btn-open-slido').addEventListener('click', () => {
       const url = document.getElementById('slido-url').value.trim();
       openSlido(url);
@@ -10162,6 +10431,18 @@ function startWebUiServer() {
     document.getElementById('keyfill-key-url').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') document.getElementById('btn-open-keyfill').click();
     });
+
+    if (document.getElementById('btn-open-url')) {
+      document.getElementById('btn-open-url').addEventListener('click', () => {
+        const url = document.getElementById('generic-url').value.trim();
+        openUrl(url);
+      });
+      document.getElementById('generic-url').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          document.getElementById('btn-open-url').click();
+        }
+      });
+    }
 
     // Speaker notes controls removed from default Controls tab - moved to Settings if needed later
     
@@ -10387,13 +10668,8 @@ function startWebUiServer() {
     function updateStagetimerVisibility() {
       const container = document.getElementById('stagetimer-container');
       if (!container) return;
-      const keyEl = document.getElementById('stagetimer-api-key');
-      const roomEl = document.getElementById('stagetimer-room-id');
-      const hasApiKey = keyEl ? keyEl.value.trim().length > 0 : stagetimerApiKeyCached.length > 0;
-      const hasRoomId = roomEl ? roomEl.value.trim().length > 0 : stagetimerRoomIdCached.length > 0;
-      
-      // Hide if: not visible OR not enabled OR missing API key/room ID
-      if (!stagetimerVisible || !stagetimerEnabled || !hasApiKey || !hasRoomId) {
+      // Only show the widget once an API key has been saved; no key = no box
+      if (!stagetimerApiKeyCached) {
         container.style.display = 'none';
       } else {
         container.style.display = 'block';
@@ -10417,7 +10693,9 @@ function startWebUiServer() {
             showStatus('Stagetimer settings saved', false);
             stagetimerEnabled = enabled;
             stagetimerVisible = visible;
-            
+            stagetimerApiKeyCached = apiKey;
+            stagetimerRoomIdCached = roomId;
+
             // Update visibility
             updateStagetimerVisibility();
             
@@ -10452,18 +10730,15 @@ function startWebUiServer() {
       // Check visibility and configuration
       updateStagetimerVisibility();
       
-      // If not visible or not enabled, don't update content
-      if (!stagetimerVisible || !stagetimerEnabled) {
+      // If disabled, don't update content
+      if (!stagetimerEnabled) {
         return;
       }
-      
-      // If there's an error and no API key, hide it
-      if (errorMessage && errorMessage.includes('not configured')) {
-        container.style.display = 'none';
+
+      // Visibility is already set by updateStagetimerVisibility(); only proceed if box is shown
+      if (!stagetimerApiKeyCached) {
         return;
       }
-      
-      container.style.display = 'block';
       
       if (errorMessage || !data || !data.success) {
         container.className = 'stagetimer-container error';
@@ -11608,7 +11883,8 @@ function startWebUiServer() {
           apiReqPath === '/api/displays' ||
           apiReqPath === '/api/debug/preferences' ||
           (apiReqPath === '/api/stagetimer-settings' && apiMethod === 'POST') ||
-          (apiReqPath === '/api/presets' && apiMethod === 'POST');
+          (apiReqPath === '/api/presets' && apiMethod === 'POST') ||
+          apiReqPath === '/api/open-url';
         if (proxyForbidden) {
           res.writeHead(403, {
             'Content-Type': 'application/json',

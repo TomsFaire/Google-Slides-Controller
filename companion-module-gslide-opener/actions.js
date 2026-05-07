@@ -81,6 +81,56 @@ module.exports = function (self) {
 			},
 		},
 
+		open_key_fill: {
+			name: 'Open Key/Fill URLs',
+			description: 'Open two URLs: fill (color) on slides output display, key (grayscale luminance key) on notes display',
+			options: [
+				{
+					id: 'fillUrl',
+					type: 'textinput',
+					label: 'Fill URL (https://)',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+				{
+					id: 'keyUrl',
+					type: 'textinput',
+					label: 'Key URL (https://)',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const fillUrl = await self.parseVariablesInString(event.options.fillUrl)
+					const keyUrl = await self.parseVariablesInString(event.options.keyUrl)
+					self.log('info', `Opening key/fill — fill: ${fillUrl}, key: ${keyUrl}`)
+
+					const response = await self.apiRequest('POST', '/api/open-key-fill', { fillUrl, keyUrl })
+					self.log('info', response.message || 'Key/fill opened')
+				} catch (error) {
+					self.log('error', `Failed to open key/fill: ${error.message}`)
+				}
+			},
+		},
+
+		close_key_fill: {
+			name: 'Close Key/Fill',
+			description: 'Close key and fill windows, returning to idle state',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Closing key/fill')
+					const response = await self.apiRequest('POST', '/api/close-key-fill', {})
+					self.log('info', response.message || 'Key/fill closed')
+				} catch (error) {
+					self.log('error', `Failed to close key/fill: ${error.message}`)
+				}
+			},
+		},
+
 		open_preset_1: {
 			name: 'Open Presentation 1',
 			description: 'Open the preset presentation configured as "Presentation 1"',

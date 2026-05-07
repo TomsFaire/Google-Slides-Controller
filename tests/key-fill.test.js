@@ -12,14 +12,16 @@ function isAllowedKeyFillUrl(urlString) {
   }
 }
 
-function getKeyFillFillWindowOptions(bounds, primaryBounds) {
+function getKeyFillFillWindowOptions(bounds, bgColor, primaryBounds) {
   const b = bounds && bounds.width ? bounds : primaryBounds;
+  const bg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : '#000000';
   return {
     x: b.x,
     y: b.y,
     width: b.width,
     height: b.height,
     frame: false,
+    backgroundColor: bg,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -28,15 +30,16 @@ function getKeyFillFillWindowOptions(bounds, primaryBounds) {
   };
 }
 
-function getKeyFillKeyWindowOptions(bounds, primaryBounds) {
+function getKeyFillKeyWindowOptions(bounds, bgColor, primaryBounds) {
   const b = bounds && bounds.width ? bounds : primaryBounds;
+  const bg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : '#000000';
   return {
     x: b.x,
     y: b.y,
     width: b.width,
     height: b.height,
     frame: false,
-    backgroundColor: '#000000',
+    backgroundColor: bg,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -80,46 +83,56 @@ const PRIMARY = { x: 0, y: 0, width: 1920, height: 1080 };
 const SECONDARY = { x: 1920, y: 0, width: 2560, height: 1440 };
 
 test('getKeyFillFillWindowOptions: uses provided bounds', () => {
-  const opts = getKeyFillFillWindowOptions(SECONDARY, PRIMARY);
+  const opts = getKeyFillFillWindowOptions(SECONDARY, null, PRIMARY);
   assert.equal(opts.x, 1920);
   assert.equal(opts.width, 2560);
   assert.equal(opts.height, 1440);
 });
 
 test('getKeyFillFillWindowOptions: falls back to primary when bounds missing', () => {
-  const opts = getKeyFillFillWindowOptions(null, PRIMARY);
+  const opts = getKeyFillFillWindowOptions(null, null, PRIMARY);
   assert.equal(opts.x, 0);
   assert.equal(opts.width, 1920);
 });
 
 test('getKeyFillFillWindowOptions: is frameless with keyfill partition', () => {
-  const opts = getKeyFillFillWindowOptions(SECONDARY, PRIMARY);
+  const opts = getKeyFillFillWindowOptions(SECONDARY, null, PRIMARY);
   assert.equal(opts.frame, false);
   assert.equal(opts.webPreferences.partition, 'persist:keyfill');
   assert.equal(opts.webPreferences.nodeIntegration, false);
   assert.equal(opts.webPreferences.contextIsolation, true);
 });
 
-test('getKeyFillFillWindowOptions: does NOT set black backgroundColor (color fill)', () => {
-  const opts = getKeyFillFillWindowOptions(SECONDARY, PRIMARY);
-  assert.equal(opts.backgroundColor, undefined);
+test('getKeyFillFillWindowOptions: defaults backgroundColor to #000000', () => {
+  const opts = getKeyFillFillWindowOptions(SECONDARY, null, PRIMARY);
+  assert.equal(opts.backgroundColor, '#000000');
+});
+
+test('getKeyFillFillWindowOptions: accepts custom backgroundColor', () => {
+  const opts = getKeyFillFillWindowOptions(SECONDARY, '#ffffff', PRIMARY);
+  assert.equal(opts.backgroundColor, '#ffffff');
 });
 
 // ── Window options: key ────────────────────────────────────────────────────────
 
 test('getKeyFillKeyWindowOptions: uses provided bounds', () => {
-  const opts = getKeyFillKeyWindowOptions(SECONDARY, PRIMARY);
+  const opts = getKeyFillKeyWindowOptions(SECONDARY, null, PRIMARY);
   assert.equal(opts.x, 1920);
   assert.equal(opts.width, 2560);
 });
 
-test('getKeyFillKeyWindowOptions: has black backgroundColor for luminance key', () => {
-  const opts = getKeyFillKeyWindowOptions(SECONDARY, PRIMARY);
+test('getKeyFillKeyWindowOptions: has black backgroundColor by default for luminance key', () => {
+  const opts = getKeyFillKeyWindowOptions(SECONDARY, null, PRIMARY);
   assert.equal(opts.backgroundColor, '#000000');
 });
 
+test('getKeyFillKeyWindowOptions: accepts custom backgroundColor', () => {
+  const opts = getKeyFillKeyWindowOptions(SECONDARY, '#111111', PRIMARY);
+  assert.equal(opts.backgroundColor, '#111111');
+});
+
 test('getKeyFillKeyWindowOptions: is frameless with keyfill partition', () => {
-  const opts = getKeyFillKeyWindowOptions(SECONDARY, PRIMARY);
+  const opts = getKeyFillKeyWindowOptions(SECONDARY, null, PRIMARY);
   assert.equal(opts.frame, false);
   assert.equal(opts.webPreferences.partition, 'persist:keyfill');
 });
@@ -127,8 +140,8 @@ test('getKeyFillKeyWindowOptions: is frameless with keyfill partition', () => {
 // ── Key and fill use independent sessions (not Google or Slido partitions) ─────
 
 test('key and fill windows both use persist:keyfill, not persist:google', () => {
-  const fill = getKeyFillFillWindowOptions(SECONDARY, PRIMARY);
-  const key = getKeyFillKeyWindowOptions(SECONDARY, PRIMARY);
+  const fill = getKeyFillFillWindowOptions(SECONDARY, null, PRIMARY);
+  const key = getKeyFillKeyWindowOptions(SECONDARY, null, PRIMARY);
   assert.equal(fill.webPreferences.partition, 'persist:keyfill');
   assert.equal(key.webPreferences.partition, 'persist:keyfill');
   assert.notEqual(fill.webPreferences.partition, 'persist:google');

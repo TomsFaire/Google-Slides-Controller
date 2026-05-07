@@ -312,7 +312,8 @@ const CONTENT_KIND_KEY_FILL = 'keyfill';
 const CONTENT_KIND_GENERIC_URL = 'generic-url';
 /** 'slides' | 'slido' | 'keyfill' | 'generic-url' — reload and crash recovery depend on this. */
 let lastContentKind = CONTENT_KIND_SLIDES;
-let lastKeyFillUrls = null; // { fillUrl, keyUrl } — stored for reload/reopen
+let lastKeyFillUrls = null; // { fillUrl, keyUrl, fillBgColor, keyBgColor } — stored for reload/reopen
+let lastGenericUrlBgColor = null; // stored for crash recovery reopen
 let keyFillFillWindow = null;
 let keyFillKeyWindow = null;
 
@@ -557,14 +558,16 @@ function getSlidoPresentationBrowserWindowOptions(presentationBounds) {
 }
 
 /** Borderless fill window for key/fill URL displays — color content on slides output display. */
-function getKeyFillFillWindowOptions(bounds) {
+function getKeyFillFillWindowOptions(bounds, bgColor) {
   const b = bounds && bounds.width ? bounds : screen.getPrimaryDisplay().bounds;
+  const bg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : '#000000';
   return {
     x: b.x,
     y: b.y,
     width: b.width,
     height: b.height,
     frame: false,
+    backgroundColor: bg,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -574,15 +577,16 @@ function getKeyFillFillWindowOptions(bounds) {
 }
 
 /** Borderless key window for key/fill URL displays — grayscale luminance key on notes display. */
-function getKeyFillKeyWindowOptions(bounds) {
+function getKeyFillKeyWindowOptions(bounds, bgColor) {
   const b = bounds && bounds.width ? bounds : screen.getPrimaryDisplay().bounds;
+  const bg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : '#000000';
   return {
     x: b.x,
     y: b.y,
     width: b.width,
     height: b.height,
     frame: false,
-    backgroundColor: '#000000',
+    backgroundColor: bg,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -2434,9 +2438,12 @@ async function reopenSlidoAtUrl(urlToReload) {
   await openSlidoPresentationDisplay(urlToReload);
 }
 
-async function openKeyFillDisplays(fillUrl, keyUrl) {
+async function openKeyFillDisplays(fillUrl, keyUrl, fillBgColor, keyBgColor) {
   if (!isAllowedKeyFillUrl(fillUrl)) throw new Error('Fill URL is not a valid URL');
   if (!isAllowedKeyFillUrl(keyUrl)) throw new Error('Key URL is not a valid URL');
+
+  const resolvedFillBg = /^#[0-9a-fA-F]{6}$/.test(fillBgColor) ? fillBgColor : '#000000';
+  const resolvedKeyBg = /^#[0-9a-fA-F]{6}$/.test(keyBgColor) ? keyBgColor : '#000000';
 
   try {
     for (const win of [notesWindow, presentationWindow, keyFillFillWindow, keyFillKeyWindow]) {
@@ -2457,7 +2464,7 @@ async function openKeyFillDisplays(fillUrl, keyUrl) {
   const notesDisplay = displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
 
   // Fill window — color content on slides output display
-  keyFillFillWindow = new BrowserWindow(getKeyFillFillWindowOptions(presentationDisplay.bounds));
+  keyFillFillWindow = new BrowserWindow(getKeyFillFillWindowOptions(presentationDisplay.bounds, resolvedFillBg));
   if (process.platform === 'darwin') applyPresentationFullscreenChrome(keyFillFillWindow, prefs);
   attachCrashHandlers(keyFillFillWindow, 'keyfill-fill');
   keyFillFillWindow.on('closed', () => { keyFillFillWindow = null; });
@@ -2467,22 +2474,23 @@ async function openKeyFillDisplays(fillUrl, keyUrl) {
       closeKeyFillDisplays();
     }
   });
-  console.log('[KeyFill] Loading fill URL:', fillUrl);
+  console.log('[KeyFill] Loading fill URL:', fillUrl, 'bg:', resolvedFillBg);
   keyFillFillWindow.loadURL(fillUrl);
   keyFillFillWindow.show();
 
   // Key window — grayscale luminance key on notes display
-  keyFillKeyWindow = new BrowserWindow(getKeyFillKeyWindowOptions(notesDisplay.bounds));
+  keyFillKeyWindow = new BrowserWindow(getKeyFillKeyWindowOptions(notesDisplay.bounds, resolvedKeyBg));
   attachCrashHandlers(keyFillKeyWindow, 'keyfill-key');
   keyFillKeyWindow.on('closed', () => { keyFillKeyWindow = null; });
   keyFillKeyWindow.webContents.on('did-finish-load', () => {
-    keyFillKeyWindow.webContents.insertCSS('html,body,*{filter:grayscale(1)!important}html,body{background:#000!important}');
+    const bgCss = resolvedKeyBg;
+    keyFillKeyWindow.webContents.insertCSS(`html,body,*{filter:grayscale(1)!important}html,body{background:${bgCss}!important}`);
   });
-  console.log('[KeyFill] Loading key URL:', keyUrl);
+  console.log('[KeyFill] Loading key URL:', keyUrl, 'bg:', resolvedKeyBg);
   keyFillKeyWindow.loadURL(keyUrl);
   keyFillKeyWindow.show();
 
-  lastKeyFillUrls = { fillUrl, keyUrl };
+  lastKeyFillUrls = { fillUrl, keyUrl, fillBgColor: resolvedFillBg, keyBgColor: resolvedKeyBg };
   lastContentKind = CONTENT_KIND_KEY_FILL;
 }
 
@@ -2505,10 +2513,10 @@ function closeKeyFillDisplays() {
 
 async function reopenKeyFillAtUrls(urls) {
   await new Promise(resolve => setTimeout(resolve, 200));
-  await openKeyFillDisplays(urls.fillUrl, urls.keyUrl);
+  await openKeyFillDisplays(urls.fillUrl, urls.keyUrl, urls.fillBgColor, urls.keyBgColor);
 }
 
-async function openGenericUrlDisplay(url) {
+async function openGenericUrlDisplay(url, bgColor) {
   if (!isAllowedGenericUrl(url)) {
     throw new Error('Invalid URL (must be http:// or https://)');
   }
@@ -2533,7 +2541,8 @@ async function openGenericUrlDisplay(url) {
   const presentationDisplayId = Number(prefs.presentationDisplayId);
   const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
 
-  presentationWindow = new BrowserWindow(getGenericUrlBrowserWindowOptions(presentationDisplay.bounds, prefs.genericUrlBackgroundColor));
+  const resolvedBg = /^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : (prefs.genericUrlBackgroundColor || '#000000');
+  presentationWindow = new BrowserWindow(getGenericUrlBrowserWindowOptions(presentationDisplay.bounds, resolvedBg));
   if (process.platform === 'darwin') {
     applyPresentationFullscreenChrome(presentationWindow, prefs);
   }
@@ -2554,10 +2563,11 @@ async function openGenericUrlDisplay(url) {
   });
 
   lastPresentationUrl = url;
+  lastGenericUrlBgColor = resolvedBg;
   lastContentKind = CONTENT_KIND_GENERIC_URL;
   resetNotesZoomForNewPresentation();
 
-  console.log('[GenericURL] Loading URL:', url);
+  console.log('[GenericURL] Loading URL:', url, 'bg:', resolvedBg);
   presentationWindow.loadURL(url);
   presentationWindow.show();
 }
@@ -2608,7 +2618,7 @@ function attachCrashHandlers(win, label) {
           if (response === 0) {
             if (reopenKind === CONTENT_KIND_SLIDO) reopenSlidoAtUrl(url);
             else if (reopenKind === CONTENT_KIND_KEY_FILL && lastKeyFillUrls) reopenKeyFillAtUrls(lastKeyFillUrls);
-            else if (reopenKind === CONTENT_KIND_GENERIC_URL) openGenericUrlDisplay(url).catch(() => {});
+            else if (reopenKind === CONTENT_KIND_GENERIC_URL) openGenericUrlDisplay(url, lastGenericUrlBgColor).catch(() => {});
             else reopenPresentationAtSlide(url, slide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
           }
         }).catch(() => {});
@@ -3664,7 +3674,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   return { success: true };
 });
 
-ipcMain.handle('open-url', async (_event, { url }) => {
+ipcMain.handle('open-url', async (_event, { url, backgroundColor }) => {
   const prefs = loadPreferences();
   if (prefs.allowArbitraryUrl !== true) {
     return { success: false, error: 'Arbitrary URL display is not enabled. Enable it in the desktop app settings.' };
@@ -3672,7 +3682,7 @@ ipcMain.handle('open-url', async (_event, { url }) => {
   if (!isAllowedGenericUrl(url)) {
     return { success: false, error: 'Invalid URL (must be http:// or https://)' };
   }
-  await openGenericUrlDisplay(url);
+  await openGenericUrlDisplay(url, backgroundColor);
   return { success: true };
 });
 
@@ -4622,6 +4632,8 @@ function startHttpServer() {
           const data = JSON.parse(body);
           const fillUrl = (data.fillUrl || '').trim();
           const keyUrl = (data.keyUrl || '').trim();
+          const fillBgColor = (data.fillBgColor || '').trim() || '#000000';
+          const keyBgColor = (data.keyBgColor || '').trim() || '#000000';
 
           if (!fillUrl || !keyUrl) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4641,10 +4653,10 @@ function startHttpServer() {
             return;
           }
 
-          console.log('[API] Opening key/fill — fill:', fillUrl, 'key:', keyUrl);
-          await openKeyFillDisplays(fillUrl, keyUrl);
+          console.log('[API] Opening key/fill — fill:', fillUrl, 'key:', keyUrl, 'fillBg:', fillBgColor, 'keyBg:', keyBgColor);
+          await openKeyFillDisplays(fillUrl, keyUrl, fillBgColor, keyBgColor);
 
-          sendToBackups('/api/open-key-fill', { fillUrl, keyUrl }).catch(err => {
+          sendToBackups('/api/open-key-fill', { fillUrl, keyUrl, fillBgColor, keyBgColor }).catch(err => {
             console.error('[Backup] Error broadcasting open-key-fill:', err);
           });
 
@@ -4702,6 +4714,7 @@ function startHttpServer() {
         try {
           const data = JSON.parse(body);
           const url = (data.url || '').trim();
+          const backgroundColor = (data.backgroundColor || '').trim() || '#000000';
 
           if (!url) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -4715,11 +4728,11 @@ function startHttpServer() {
             return;
           }
 
-          console.log('[API] Opening generic URL:', url);
+          console.log('[API] Opening generic URL:', url, 'bg:', backgroundColor);
 
-          await openGenericUrlDisplay(url);
+          await openGenericUrlDisplay(url, backgroundColor);
 
-          sendToBackups('/api/open-url', { url }).catch(err => {
+          sendToBackups('/api/open-url', { url, backgroundColor }).catch(err => {
             console.error('[Backup] Error broadcasting open-url:', err);
           });
 
@@ -4963,7 +4976,7 @@ function startHttpServer() {
           } else if (reloadKind === CONTENT_KIND_KEY_FILL && lastKeyFillUrls) {
             await reopenKeyFillAtUrls(lastKeyFillUrls);
           } else if (reloadKind === CONTENT_KIND_GENERIC_URL) {
-            await openGenericUrlDisplay(urlToReload);
+            await openGenericUrlDisplay(urlToReload, lastGenericUrlBgColor);
           } else {
             await reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen, savedNotesBounds, savedNotesZoomSteps);
           }
@@ -9249,11 +9262,17 @@ function startWebUiServer() {
         <h3>Key / Fill</h3>
         <div class="preset-group">
           <label for="keyfill-fill-url">Fill URL <small style="font-weight:normal;opacity:0.7;">(slides display — color)</small></label>
-          <input type="text" id="keyfill-fill-url" name="keyfill-fill-url" placeholder="https://…" autocomplete="off" />
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="keyfill-fill-url" name="keyfill-fill-url" placeholder="https://…" autocomplete="off" style="flex: 1;" />
+            <input type="color" id="keyfill-fill-bg" value="#000000" title="Fill background color" style="width: 40px; height: 32px; padding: 2px; border-radius: 4px; cursor: pointer; flex: none;" />
+          </div>
         </div>
         <div class="preset-group">
           <label for="keyfill-key-url">Key URL <small style="font-weight:normal;opacity:0.7;">(notes display — grayscale)</small></label>
-          <input type="text" id="keyfill-key-url" name="keyfill-key-url" placeholder="https://…" autocomplete="off" />
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="keyfill-key-url" name="keyfill-key-url" placeholder="https://…" autocomplete="off" style="flex: 1;" />
+            <input type="color" id="keyfill-key-bg" value="#000000" title="Key background color" style="width: 40px; height: 32px; padding: 2px; border-radius: 4px; cursor: pointer; flex: none;" />
+          </div>
         </div>
         <div style="display: flex; gap: 10px;">
           <button type="button" class="btn" id="btn-open-keyfill" style="flex: 1;">
@@ -9273,7 +9292,10 @@ function startWebUiServer() {
         <h3>Open URL</h3>
         <div class="preset-group">
           <label for="generic-url">Any http/https URL</label>
-          <input type="text" id="generic-url" name="generic-url" placeholder="https://..." autocomplete="off" />
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="generic-url" name="generic-url" placeholder="https://..." autocomplete="off" style="flex: 1;" />
+            <input type="color" id="generic-url-bg" value="#000000" title="Background color" style="width: 40px; height: 32px; padding: 2px; border-radius: 4px; cursor: pointer; flex: none;" />
+          </div>
         </div>
         <div style="display: flex; gap: 10px;">
           <button type="button" class="btn" id="btn-open-url" style="flex: 1;">
@@ -10259,6 +10281,8 @@ function startWebUiServer() {
     function openKeyFill() {
       const fillUrl = (document.getElementById('keyfill-fill-url').value || '').trim();
       const keyUrl = (document.getElementById('keyfill-key-url').value || '').trim();
+      const fillBgColor = document.getElementById('keyfill-fill-bg').value || '#000000';
+      const keyBgColor = document.getElementById('keyfill-key-bg').value || '#000000';
       if (!fillUrl) {
         showStatus('Please enter a Fill URL', true);
         document.getElementById('keyfill-fill-url').focus();
@@ -10287,7 +10311,7 @@ function startWebUiServer() {
       fetch(API_BASE + '/api/open-key-fill', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fillUrl, keyUrl })
+        body: JSON.stringify({ fillUrl, keyUrl, fillBgColor, keyBgColor })
       })
         .then(function (res) {
           if (!res.ok) {
@@ -10315,6 +10339,8 @@ function startWebUiServer() {
 
     function openUrl(url) {
       const trimmed = (url || '').trim();
+      const bgEl = document.getElementById('generic-url-bg');
+      const backgroundColor = bgEl ? bgEl.value || '#000000' : '#000000';
       if (!trimmed) {
         showStatus('Please enter a URL', true);
         const el = document.getElementById('generic-url');
@@ -10341,7 +10367,7 @@ function startWebUiServer() {
       fetch(API_BASE + '/api/open-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmed })
+        body: JSON.stringify({ url: trimmed, backgroundColor })
       })
         .then(function (res) {
           if (!res.ok) {

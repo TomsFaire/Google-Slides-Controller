@@ -81,6 +81,32 @@ module.exports = function (self) {
 			},
 		},
 
+		open_url: {
+			name: 'Open URL',
+			description: 'Open any http/https URL on the presentation display (requires "Allow arbitrary URLs" enabled in desktop app settings)',
+			options: [
+				{
+					id: 'url',
+					type: 'textinput',
+					label: 'URL',
+					default: '',
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const url = await self.parseVariablesInString(event.options.url)
+					self.log('info', `Opening URL: ${url}`)
+
+					const response = await self.apiRequest('POST', '/api/open-url', { url })
+					self.log('info', response.message || 'URL opened')
+				} catch (error) {
+					self.log('error', `Failed to open URL: ${error.message}`)
+				}
+			},
+		},
+
 		open_preset_1: {
 			name: 'Open Presentation 1',
 			description: 'Open the preset presentation configured as "Presentation 1"',

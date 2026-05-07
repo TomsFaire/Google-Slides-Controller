@@ -2,6 +2,22 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.0] - 2026-05-06
+
+### Added
+- **Open arbitrary URLs on the presentation display** – `POST /api/open-url` opens any `http`/`https` URL in a dedicated Electron session partition (`persist:generic`) so cookies stay isolated from Google Slides and Slido. Requires `allowArbitraryUrl` preference to be enabled.
+- **LAN-only enforcement** – The "Open URL" section in the web remote is server-side rendered only for LAN clients (hidden when connecting over the WAN/Cloudflare tunnel). The web UI proxy blocks tunnel clients from calling `/api/open-url` before the request reaches the API server.
+- **Configurable background color** – `genericUrlBackgroundColor` preference (hex, default `#000000`) sets the BrowserWindow background shown before a page loads or behind transparent content.
+- **Desktop app toggle** – Advanced → Web Remote Features panel: "Allow opening arbitrary URLs (LAN only)" checkbox and background color picker (with live hex input sync).
+- **`contentKind` value `generic-url`** – `GET /api/status` returns `generic-url` when an arbitrary URL is showing; crash recovery and `/api/reload-presentation` handle the new kind.
+- **Web remote "Open URL" section** – URL input + button with Enter-key support; only visible when the feature is enabled and the client is on LAN.
+
+### Companion module
+- Ship **companion-module-gslide-opener v1.6.0** – **Open URL** action (`open_url`) with variable support. Companion connects directly to the API on port 9595 (LAN-only by network topology) so the proxy-layer tunnel gate does not apply.
+
+### Build
+- **Version 2.3.0**, **build 76**.
+
 ## [2.2.0] - 2026-04-28
 
 ### Added

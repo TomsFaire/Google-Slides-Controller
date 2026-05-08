@@ -10962,14 +10962,12 @@ function startWebUiServer() {
     document.querySelector('[data-tab="settings"]').addEventListener('click', () => {
       if (!settingsLoaded) {
         loadAllSettings();
-        settingsLoaded = true;
       }
     });
-    
+
     // Load settings immediately if Settings tab is already active
     if (document.getElementById('tab-settings').classList.contains('active')) {
       loadAllSettings();
-      settingsLoaded = true;
     }
     
     // Function to load all settings
@@ -11133,7 +11131,10 @@ function startWebUiServer() {
         // Load displays
         const displaysRes = await fetch(API_BASE + '/api/displays');
         const displays = await displaysRes.json();
-        
+        if (!Array.isArray(displays)) {
+          throw new Error('Unexpected response from /api/displays: ' + JSON.stringify(displays).slice(0, 120));
+        }
+
         const presentationSelect = document.getElementById('web-presentation-display');
         const notesSelect = document.getElementById('web-notes-display');
         
@@ -11230,9 +11231,15 @@ function startWebUiServer() {
         if (mode === 'primary') {
           startWebBackupStatusPolling();
         }
+        settingsLoaded = true;
       } catch (error) {
         console.error('Failed to load settings:', error);
-        showStatus('Failed to load settings: ' + error.message, true);
+        showStatus('Failed to load settings: ' + error.message + ' — click Settings to retry', true);
+        settingsLoaded = false;
+        const s1 = document.getElementById('web-presentation-display');
+        const s2 = document.getElementById('web-notes-display');
+        if (s1 && !s1.options.length) s1.innerHTML = '<option value="">Could not load displays</option>';
+        if (s2 && !s2.options.length) s2.innerHTML = '<option value="">Could not load displays</option>';
       }
     }
     

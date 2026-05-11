@@ -45,6 +45,13 @@ This is the **signal-only** link: **no** RJ45 **12 V** (pins **1–2**) at the W
 
 WaveShare RS422/485 terminals (left → right from DIN side): **RB, TA, TA, TB, PE**, then **DC: GND, VCC**. Only **RB … PE** carry RS485/shield; **GND/VCC** are **DC power in** for the module—not RS485 data.
 
+**PE vs the DC `GND` next to `VCC` (not the same job):**
+
+- **`GND` beside `VCC`:** This is the **DC power return** (negative) for the **6–36 V** input that **powers the WaveShare** (with `VCC` = positive). Use it only for your **barrel / screw-terminal power supply** leads—not as a stand-in for RS485 “signal ground” unless the **manual or schematic** says the interface reference is tied there.
+- **`PE`:** **Protective earth**—safety / chassis / **cable shield** drain. Field RS485 wiring often brings the cable shield (and sometimes the partner’s signal reference) to **PE** per manufacturer guidance.
+
+So: **`GND` = power supply ground reference**; **`PE` = protective earth / shield path** (and often where DSAN **RJ45 4–5** land **if** the manual agrees). On some boards **PE** and internal signal reference are related; on others isolation separates them—**follow WaveShare’s doc** and don’t assume **`GND` (power)** and **`PE`** are interchangeable without checking.
+
 ### End-to-end connections
 
 | DSAN RJ45 pin(s) | Name (DSAN) | Connect to WaveShare terminal | Notes |

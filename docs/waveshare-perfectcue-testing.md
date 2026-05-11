@@ -156,6 +156,16 @@ Configure via **web UI** (`http://<device-ip>/`) and/or **Vircom** so they match
 
 Apply / submit settings and **restart the device** if the UI requires it.
 
+### Transparent serial (required for PerfectCue)
+
+PerfectCue sends **arbitrary binary bytes** over RS485 (not Modbus). For raw bytes to appear on TCP unchanged:
+
+- In VirCom **Device Settings** → **Function of the device**, **uncheck** **Modbus TCP to RTU**. With Modbus enabled, the gateway expects **Modbus TCP** on Ethernet and **Modbus RTU** framing on serial—PerfectCue traffic will **not** pass through as transparent payloads (you may see “TCP connected” in VirCom but **no useful bytes** with **`nc`** or the Slides app).
+- Set **Transfer Protocol** / conversion mode to **None** (transparent) wherever it appears.
+- The web UI note (*Multi-host is always enabled when Protocol is Modbus TCP to RTU*) is another hint to **leave Modbus off** for this use case.
+
+After disabling Modbus, **Modify Setting** / reboot the WaveShare and retest **`nc`** / PerfectCue buttons.
+
 ### App-side listener
 
 - In **Settings → PerfectCue**, set the row’s **Converter** dropdown to **WaveShare** for longer keep-alive presets (vs **DSAN**).
@@ -176,7 +186,7 @@ You care about **three links**: RS485 **PerfectCue → WaveShare**, **WaveShare 
    Enable **PerfectCue**, open the **debug console**, press **forward/back** on the remote. You want **`client connected (waveshare)`** and lines like **`[PerfectCue] raw:`** with hex (e.g. **`0f`** / **`1f`** for next/previous). That proves bytes left PerfectCue, entered WaveShare on RS485, were forwarded over TCP, and reached the app. **Garbage hex** usually means **baud/format** mismatch on WaveShare serial settings, not “no data.”
 
 4. **Optional: raw TCP without the full app**  
-   On the controller Mac, run **`nc -l 8899`** (or your chosen port). Point WaveShare **destination IP:port** at that machine and press the remote—you should see **binary bytes** in the terminal when events fire. Stop `nc` before running the real app again (same port).
+   On the PC/Mac running **`nc`**, listen on the **same port** WaveShare uses as **Destination Port** (e.g. **`nc -lk 4196`** or **`nc -l 0.0.0.0 4196`** so you bind IPv4). Press forward/back on the remote—you should see **binary bytes**. If the TCP session shows up but **no bytes**, fix **transparent mode** (above) and **serial baud** (try **115200** if **9600** shows nothing). Stop **`nc`** before the real app listens on that port.
 
 ---
 

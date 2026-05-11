@@ -28,14 +28,53 @@ This guide covers bench validation of the Google Slides Controller PerfectCue pa
 
 ## DSAN RJ45 pinout (support email — cue-light RS485)
 
-RJ45 numbering is **T568-A/B standard pin numbers** (tab down, contacts numbered 1–8 left to right). Confirm with DSAN for your **exact** model before soldering.
+RJ45 numbering uses **standard Ethernet jack numbering**: hold the plug **latch tab facing down / away from you**, pins **1–8** left to right (metal contacts visible toward you). Confirm with DSAN for your **exact** model before soldering.
 
 - **Pins 1, 2:** **12 V** (inter-unit power — usually **not** wired to WaveShare; see **Power** section).
-- **Pins 3 + 6:** **Data+** (differential; often tied together at DSAN).
-- **Pins 7, 8:** **Data−**.
+- **Pins 3 + 6:** **Data+** (same polarity; often tied together at DSAN—you may wire **one** conductor or both).
+- **Pins 7, 8:** **Data−** (same polarity; tie together at your pigtail if you use both).
 - **Pins 4, 5:** **Ground**.
 
 **Serial bytes** on that link (match Google Slides Controller parser): **0x0F** forward, **0x1F** back; DSAN also lists **0x2F** blank on, **0x3F** blank off (not used by the app unless extended).
+
+---
+
+## Signal-only cable pairing chart (DSAN RJ45 ↔ WaveShare block)
+
+This is the **signal-only** link: **no** RJ45 **12 V** (pins **1–2**) at the WaveShare end. Power each box separately (PerfectCue via DSAN/adapters; WaveShare via PoE / barrel / **VCC+GND**).
+
+WaveShare RS422/485 terminals (left → right from DIN side): **RB, TA, TA, TB, PE**, then **DC: GND, VCC**. Only **RB … PE** carry RS485/shield; **GND/VCC** are **DC power in** for the module—not RS485 data.
+
+### End-to-end connections
+
+| DSAN RJ45 pin(s) | Name (DSAN) | Connect to WaveShare terminal | Notes |
+|-------------------|-------------|-------------------------------|--------|
+| **1** | 12 V | **(none)** | Leave **open** at WaveShare—do not tie to **VCC/GND**. |
+| **2** | 12 V | **(none)** | Same as pin 1. |
+| **3** and **6** | **Data+** | **RS485 “A” / non-inverting / D+** | On many WaveShare boards this is one of **TA** or **TB**—read the manual for **RS485 two-wire** which screw is **A** (+). Tie RJ45 **3** and **6** together at your cable if you run one wire. |
+| **7** and **8** | **Data−** | **RS485 “B” / inverting / D−** | Usually the other of **TA/TB** or **RB**—manual will label **B** (−). Tie RJ45 **7** and **8** together at your cable if you run one wire. |
+| **4** and **5** | **Ground** | **PE** (and/or signal reference per manual) | Tie RJ45 **4** and **5** together at your cable. **PE** is for protective earth / shield; follow WaveShare doc for whether signal ref ties here vs another terminal. |
+
+If you have **no bytes** or garbage after baud checks, **swap** only the two differential wires (swap which WaveShare terminals get **Data+** vs **Data−**).
+
+### Which TA vs TB vs RB?
+
+Silkscreen varies by SKU and **RS422 vs RS485** mode. Your block shows **RB**, **TA**, **TA**, **TB**, **PE**:
+
+- Use the WaveShare wiki/manual for **RS232 RS485 TO POE ETH (B)** (or your exact model) to see which screws are **RS485 A** and **RS485 B** in **half-duplex RS485**.
+- The **duplicate “TA”** may be two adjacent pads both marked TA, or TX/RX legs—**confirm** whether one is **no-connect** in RS485 mode.
+
+Until the manual is checked, treat the table above as **nets**: **Data+**, **Data−**, **GND/shield**—assign them to the physical screws your documentation calls **A**, **B**, and earth.
+
+### One-line summary
+
+```
+RJ45 3+6 (Data+)  ──►  WaveShare RS485 A / (+) terminal (TA or TB per manual)
+RJ45 7+8 (Data−)  ──►  WaveShare RS485 B / (−) terminal (RB or TB per manual)
+RJ45 4+5 (GND)    ──►  PE (and reference rules per manual)
+
+RJ45 1+2 (12 V)   ──►  not connected at WaveShare
+```
 
 ---
 
@@ -50,8 +89,8 @@ RJ45 numbering is **T568-A/B standard pin numbers** (tab down, contacts numbered
 
 ### Wiring steps (procedure)
 
-1. From the table above, identify **Data+**, **Data−**, and **Ground** on the RJ45 pigtail.
-2. Connect **Data+** and **Data−** to the WaveShare terminals your manual assigns to **RS485 A/B** (half-duplex). Connect **Ground** (RJ45 4–5) to **GND** on the signal block if the manual ties RS485 reference there—use **PE** only per shield/earth guidance in the manual.
+1. Follow **[Signal-only cable pairing chart](#signal-only-cable-pairing-chart-dsan-rj45--waveshare-block)** above for pin-to-terminal mapping.
+2. Connect **Data+** and **Data−** to the WaveShare terminals your manual assigns to **RS485 A/B** (half-duplex). Connect **Ground** (RJ45 **4–5**) per the chart (**PE** / shield rules).
 3. **Do not** connect RJ45 **12 V** (pins 1–2) to **VCC/GND** unless a qualified doc says so (default: **floating / not wired** at WaveShare).
 4. If raw data looks wrong but polarity is unsure, **swap** the two differential wires once (RS485 A/B swap).
 5. **First power-on:** Power WaveShare normally; power PerfectCue normally; then check the app debug console for `[PerfectCue] raw:` when pressing forward/back.

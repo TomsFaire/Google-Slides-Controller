@@ -130,19 +130,30 @@ Apply / submit settings and **restart the device** if the UI requires it.
 
 ## 3. WaveShare keep-alive / idle timers
 
-Goal: the converter must stay connected through idle periods **without** requiring you to poll manually; values should be **consistent** with the app’s adapter preset (see `src/perfectcue-adapter-presets.js` on the **WaveShare** branch).
+Goal: the converter must stay connected through idle periods **without** requiring you to poll manually. App presets live in `src/perfectcue-adapter-presets.js` (**WaveShare:** `0xFF` ping about every **45 s**, Node read-idle **120 s**).
 
-### Web UI (example labels)
+### Which setting is “TCP keep-alive”? (you may not see it in the browser)
 
-- **Reconnect time:** A modest value (e.g. **12 s**) helps recover after the Electron app restarts without power-cycling hardware.
-- **No-data restart:** Prefer **Disabled** for long presentations with no button presses.
-- **Keep-alive / TCP idle** (wording varies): Set so the firmware does **not** drop the TCP session **before** the app’s next application ping. For **WaveShare** preset the app sends **`0xFF` about every 45 s** and uses a longer read-idle timeout than DSAN—your device **keep-alive** should be **≥ ~60 s** or aligned with WaveShare’s docs so it does not fight the app (see project plan: avoid firmware closing at 30 s while the app pings every 45 s).
+On many WaveShare units the **simple web page** (`http://<ip>/…`) shows **Reconnect-time** and **No-data restart**, but **does not show** a separate **TCP keep-alive interval** field. That parameter is often available only in **Vircom**:
 
-After changes, **submit** and reboot the converter if required.
+1. Install/open **Vircom** (WaveShare’s Windows config tool—see [WaveShare wiki](https://www.waveshare.com/wiki/RS232_RS485_TO_POE_ETH_(B)) → Software → Vircom).
+2. **Device Management** → select your device → open **Device Settings** (double-click).
+3. Go to **Advanced Settings** (or **More Advanced Settings…** if present).
+4. Look for **Keep Alive Time** (seconds)—this is the firmware field that controls how often the module treats the TCP link as “still alive” from its side. Set it to **≥ 60 s** (e.g. **60**) so it does **not** tear down the session *before* the app’s next **`0xFF`** ping at **45 s**. If it were **30 s** while the app pings every **45 s**, you could see idle drops.
 
-### Vircom
+If you **only** use the browser and **never** see “Keep Alive Time,” that’s normal for the stripped-down UI—use Vircom on a PC on the same LAN, or skip tuning this if your link **already stays up** (the app’s **`0xFF`** traffic often keeps the session alive anyway).
 
-If you use **Vircom** instead of the browser: open the device → **Advanced Settings** → adjust **Keep Alive Time**, **Reconnect Time**, and disable **Restart for no data** if present → **Modify Setting** / restart as prompted.
+### Settings you *do* usually see (web or Vircom)
+
+- **Reconnect time** (~**12 s**): How soon the **TCP client** retries **after** a disconnect—not the same as keep-alive. Helps after the controller app restarts.
+- **No-data restart** / **Restart for no data**: Prefer **Disabled** so the bridge does not reset during long idle periods with no cues.
+- **Keep Alive Time** (often **Vircom → Advanced Settings** only): Target **≥ 60 s** so the firmware does not drop TCP *before* the app’s **45 s** `0xFF` ping; avoid **30 s** if the app pings every **45 s**.
+
+After changes, **Modify Setting** / **Submit** and reboot the device if prompted.
+
+### Vircom shortcut
+
+**Vircom:** Device → **Advanced Settings** → **Keep Alive Time**, **Reconnect Time**, turn off **Restart for no data** when possible → **Modify Setting** → restart if asked.
 
 ---
 

@@ -31,8 +31,8 @@ This guide covers bench validation of the Google Slides Controller PerfectCue pa
 RJ45 numbering uses **standard Ethernet jack numbering**: hold the plug **latch tab facing down / away from you**, pins **1–8** left to right (metal contacts visible toward you). Confirm with DSAN for your **exact** model before soldering.
 
 - **Pins 1, 2:** **12 V** (inter-unit power — usually **not** wired to WaveShare; see **Power** section).
-- **Pins 3 + 6:** **Data+** (same polarity; often tied together at DSAN—you may wire **one** conductor or both).
-- **Pins 7, 8:** **Data−** (same polarity; tie together at your pigtail if you use both).
+- **Pins 3 + 6:** **Data+** (DSAN may run both to the same net **inside** their gear—details below on **not** jumpering them at **your** RJ45).
+- **Pins 7, 8:** **Data−**.
 - **Pins 4, 5:** **Ground**.
 
 **Serial bytes** on that link (match Google Slides Controller parser): **0x0F** forward, **0x1F** back; DSAN also lists **0x2F** blank on, **0x3F** blank off (not used by the app unless extended).
@@ -52,78 +52,72 @@ WaveShare RS422/485 terminals (left → right from DIN side): **RB, TA, TA, TB, 
 
 So: **`GND` = power supply ground reference**; **`PE` = protective earth / shield path** (and often where DSAN **RJ45 4–5** land **if** the manual agrees). On some boards **PE** and internal signal reference are related; on others isolation separates them—**follow WaveShare’s doc** and don’t assume **`GND` (power)** and **`PE`** are interchangeable without checking.
 
-### How many wires? (read this first)
+### Do **not** strap 3+6, 7+8, or 4+5 together at the RJ45 (unless DSAN says so)
 
-At the WaveShare **RS422/485** row you land **exactly three conductors** for this job:
+DSAN’s email describes **parallel** roles (**3** and **6** both “Data+”, etc.). That does **not** mean **your** pigtail must **electrically short** those pins inside the RJ45 plug.
 
-1. **One wire** = DSAN **Data+** (RJ45 pins **3** and **6** strapped together **at the RJ45 plug** so they share **one** copper leaving toward WaveShare).
-2. **One wire** = DSAN **Data−** (RJ45 pins **7** and **8** strapped together the same way).
-3. **One wire** = DSAN **ground** (RJ45 pins **4** and **5** strapped together).
+On some PerfectCue / network-extender jacks, **externally jumpering** pin **3** to **6**, **7** to **8**, or **4** to **5** can:
 
-Pins **1** and **2** do **not** connect to anything at the WaveShare end.
+- Pull together PCB nets that are **not** meant to be tied **at the connector**, or  
+- Present an abnormal load that trips **overcurrent / foldback** (unit **powers off** when plugged in).
 
-**Important:** **Data+** goes to **exactly one** screw on the block. **Data−** goes to **exactly one other** screw. You do **not** fan out one signal onto multiple terminals.
+Field fix that often works: use **one pin per function**—**no straps** between pins at the plug:
+
+| Function | Prefer **one** RJ45 pin first | WaveShare |
+|----------|-------------------------------|-----------|
+| Data+ | **Pin 3 only** → TA (leave **pin 6** **not** jumpered to pin 3) | **TA** |
+| Data− | **Pin 7 only** → TB (leave **pin 8** open on pigtail) | **TB** |
+| Ground | **Pin 4 only** → PE (leave **pin 5** open) — add pin 5 later only if needed | **PE** |
+
+If RS485 is unreliable with single-pin taps, ask DSAN whether **your** jack allows paralleling **3+6** / **7+8** / **4+5** **externally**—then try straps **only** after written OK.
+
+**Important:** **Data+** / **Data−** each go to **exactly one** WaveShare screw (**TA** / **TB**). Pins **1–2** stay **unconnected**.
 
 ### Official RS485 pairing ([RS232/485/422 TO POE ETH (B)](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)))
 
-WaveShare’s wiki (*Hardware Connection*) states for **RS485**:
+WaveShare’s wiki states for **RS485**: **positive → TA**, **negative → TB**.
 
-> … connect the **positive pole to the TA**, the **negative pole to the TB** …
+Map DSAN **Data+** → **TA**, **Data−** → **TB**, reference/shield → **PE** as above.
 
-So for **this product family**, **two-wire RS485** uses **only TA and TB** for the differential pair:
+**RB** and the **extra TA** stay empty for simple half-duplex RS485.
 
-| DSAN side (after strapping in the RJ45) | WaveShare terminal |
-|----------------------------------------|--------------------|
-| **Data+** (RJ45 **3** + **6** → one wire) | **TA** |
-| **Data−** (RJ45 **7** + **8** → one wire) | **TB** |
-| **GND** (RJ45 **4** + **5** → one wire) | **PE** (protective earth / shield—follow manual if ref differs) |
-
-**RB** and the **extra TA** on the silkscreen are used for **RS422** (and related modes)—for simple **half-duplex RS485** to PerfectCue they stay **empty** unless your manual says otherwise.
-
-If bytes look wrong after baud is correct, **swap TA and TB once** (exchange Data+ and Data−).
-
-Other WaveShare SKUs may label differently—always cross-check the wiki page for **your** model string.
+If bytes look wrong after baud is correct, **swap TA ↔ TB** once.
 
 ### End-to-end checklist
 
 | Step | What to do |
 |------|------------|
-| DSAN plug | Strap **3+6** → **one** conductor (**Data+**). Strap **7+8** → **one** (**Data−**). Strap **4+5** → **one** (**GND**). Leave **1–2** unconnected at WaveShare. |
-| WaveShare ([wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B))) | **Data+** → **TA**. **Data−** → **TB**. **GND** → **PE** (unless manual differs). |
-| Wrong data? | Swap **TA** ↔ **TB** (swap the two differential wires only). |
+| DSAN plug | **Prefer:** **Pin 3** → TA, **pin 7** → TB, **pin 4** → PE — **no** 3+6 / 7+8 / 4+5 straps until DSAN confirms. Pins **1–2** unused. |
+| WaveShare | **TA** / **TB** / **PE** per [wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)). |
+| Wrong data? | Swap **TA** ↔ **TB**. |
 
-### Diagram (RS232/485/422 TO POE ETH (B) — RS485)
+### Diagram (single-pin taps — recommended if straps trip protection)
 
 ```
-RJ45 (strapped)                          WaveShare RS485
+RJ45                                    WaveShare RS485
 
-  pin 3 ─┬── ONE wire "Data+" ──────────► TA
-  pin 6 ─┘
+  pin 3 only ── ONE wire ─────────────► TA     (pin 6 not jumpered to 3)
+  pin 7 only ── ONE wire ─────────────► TB     (pin 8 not jumpered to 7)
+  pin 4 only ── ONE wire ─────────────► PE     (pin 5 not jumpered to 4)
 
-  pin 7 ─┬── ONE wire "Data−" ──────────► TB
-  pin 8 ─┘
+  pins 1,2   not connected
 
-  pin 4 ─┬── ONE wire "GND" ─────────────► PE
-  pin 5 ─┘
-
-  pin 1,2   (not connected at WaveShare)
-
-  RB, extra TA    (leave empty for RS485-only link)
+  pin 6,8,5  left unterminated on pigtail unless DSAN approves straps
 ```
 
 ### Troubleshooting: PerfectCue shuts off when the cable is plugged in
 
-That behavior usually means the DSAN side sees a **short on the 12 V path** (RJ45 **pins 1–2**) or **12 V shorted to ground**—often **before** any RS485 signaling matters.
+**If shutdown happens even with WaveShare disconnected** and only your RJ45 pigtail inserted, the fault is **entirely** at the **RJ45**—almost always **straps or wrong pins**.
 
-1. **Verify RJ45 pin numbers with a multimeter**, not only wire colors. **T568A vs T568B** swaps which **color** lands on pin 3 vs pin 1. **Pins 1–2** are often **solid orange / white-orange** (T568B)—those pairs must go **nowhere** on the WaveShare pigtail. If orange conductors accidentally touch **TA**, **TB**, **PE**, or each other at the crimp, you can short **12 V** and trip protection.
+1. **Identify which strap causes it** (you reported one of **3+6**, **7+8**, **4+5**): **remove that strap first**. Preferred fix: **stop strapping**—use **single-pin** taps (pin **3**, **7**, **4** only) as in the diagram above.
 
-2. **Inspect the RJ45 crimp**: stray copper strands bridging adjacent pins are a common cause.
+2. **Verify pin numbers** with a meter from **each gold contact** to its wire—**tab-down** pin **1…8**—don’t rely on **ethernet pair colors** until verified (**T568A vs B** swaps colors vs pin numbers).
 
-3. **First retest with only two wires** (no PE): DSAN **3+6 → TA**, **7+8 → TB** only; leave **4–5** and **PE** disconnected temporarily. If it **still** dies, the fault is almost certainly **wrong pins on the plug** or **12 V involved**—not the PE link alone.
+3. **Orange pair** (often pins **1–2**, **12 V** on DSAN cue wiring) must have **no** copper reaching TA/TB/PE and **no** stray strands bridging into pins **3–6**.
 
-4. **Terminal positions:** Count screws from the same reference as the silkscreen (**RB**, **TA**, **TA**, **TB**, **PE**). **Data+** must land on **a** terminal marked **TA** (use the **first TA** next to **RB** if there are two); **Data−** on **TB**; **PE** last in that group. If **Data+** was wired to the wrong screw (e.g. **RB**), behavior depends on the board—fix per wiki (**TA** / **TB**).
+4. **Bad crimp**: strands shorting **adjacent** pins (e.g. **2** touching **3**) put **12 V** into RS485—same shutdown symptom.
 
-5. **Do not power-loop** through this cable: this harness must **not** carry DSAN **12 V** to WaveShare **VCC/GND**.
+5. **Ask DSAN** whether **your** RJ45 port matches the cue-light pinout email **exactly** for **network extender** vs **cue interconnect**—if paralleling **3+6** is invalid on **your** PCB, single-pin pickup is correct.
 
 ---
 
@@ -138,8 +132,8 @@ That behavior usually means the DSAN side sees a **short on the 12 V path** (RJ4
 
 ### Wiring steps (procedure)
 
-1. Follow **[Signal-only cable pairing chart](#signal-only-cable-pairing-chart-dsan-rj45--waveshare-block)** above for pin-to-terminal mapping.
-2. Connect **Data+** and **Data−** to the WaveShare terminals your manual assigns to **RS485 A/B** (half-duplex). Connect **Ground** (RJ45 **4–5**) per the chart (**PE** / shield rules).
+1. Follow **[Signal-only cable pairing chart](#signal-only-cable-pairing-chart-dsan-rj45--waveshare-block)** — prefer **single-pin** DSAN taps (**3**, **7**, **4**) without strapping pairs at the RJ45 unless DSAN confirms.
+2. Connect **TA** / **TB** / **PE** per wiki; do **not** fan multiple RJ45 pins onto one screw without DSAN approval.
 3. **Do not** connect RJ45 **12 V** (pins 1–2) to **VCC/GND** unless a qualified doc says so (default: **floating / not wired** at WaveShare).
 4. If raw data looks wrong but polarity is unsure, **swap** the two differential wires once (RS485 A/B swap).
 5. **First power-on:** Power WaveShare normally; power PerfectCue normally; then check the app debug console for `[PerfectCue] raw:` when pressing forward/back.
@@ -244,7 +238,7 @@ If `identity` is null in `package.json` **mac** section, builds may be **ad-hoc*
 
 ## Quick pass / fail checklist
 
-- [ ] Cable: **three** wires to RS485 block (**Data+**, **Data−**, **GND→PE**) to **exactly two** RS485 screws + **PE** per manual—not split across every TA/TB/RB; DB9 unused; RJ45 **12 V** not tied to **VCC**.
+- [ ] Cable: **three** wires (**TA**, **TB**, **PE**); prefer **pin 3 / 7 / 4 only**—**no** RJ45 straps (**3+6**, **7+8**, **4+5**) if they trip PerfectCue; DB9 unused; RJ45 **12 V** unused.
 - [ ] WaveShare serial **8N1** baud matches PerfectCue output (adjust if raw data is garbage).
 - [ ] TCP **Client** → controller IP + **same** port as PerfectCue row.
 - [ ] App row set to **WaveShare**; settings saved.

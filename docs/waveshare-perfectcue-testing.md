@@ -156,6 +156,14 @@ Configure via **web UI** (`http://<device-ip>/`) and/or **Vircom** so they match
 
 Apply / submit settings and **restart the device** if the UI requires it.
 
+### Work mode (TCP Client vs TCP Server / UDP)
+
+Google Slides Controller opens a **TCP server** on each PerfectCue listener port (`createServer` in [`src/perfectcue-server.js`](../src/perfectcue-server.js)). The WaveShare must **connect out** to that machine—use **TCP Client** with **Destination IP** = controller host and **Destination Port** = the same listener port (e.g. **8899**).
+
+- **TCP Client:** **Yes** — WaveShare connects **out** to the PC’s PerfectCue listener port.
+- **TCP Server:** **No** for the stock setup — that would make WaveShare the listener and require the PC to dial **in** to it (opposite of how [`perfectcue-server.js`](../src/perfectcue-server.js) works).
+- **UDP** / **UDP Group:** **No** — the app listens on **TCP** only.
+
 ### Transparent serial (required for PerfectCue)
 
 PerfectCue sends **arbitrary binary bytes** over RS485 (not Modbus). For raw bytes to appear on TCP unchanged:

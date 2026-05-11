@@ -39,6 +39,7 @@ const VERBOSE_ENV_ENABLED =
   String(process.env.DEBUG || '').toLowerCase() === '1';
 
 let verboseLoggingEnabled = VERBOSE_ENV_ENABLED;
+let _lastLoggedPrefsJson = null;
 
 // Redact common secret fields in ANY logs (even verbose).
 const SECRET_KEY_RE = /(api[\-_]?key|token|secret|password|passphrase|authorization)/i;
@@ -1301,7 +1302,11 @@ function loadPreferences() {
         prefs.presentationNativeFullscreen = prefs.presentationNativeFullscreen === true;
       }
       prefs.perfectCuePorts = normalizePerfectCuePorts(prefs);
-      logDebug('[Preferences] Loaded preferences:', safeStringify(prefs));
+      const _prefsJson = safeStringify(prefs);
+      if (_prefsJson !== _lastLoggedPrefsJson) {
+        logDebug('[Preferences] Loaded preferences:', _prefsJson);
+        _lastLoggedPrefsJson = _prefsJson;
+      }
       return prefs;
     } else {
       logDebug('[Preferences] Preferences file does not exist, returning empty object');

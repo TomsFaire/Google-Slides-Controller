@@ -10,28 +10,53 @@ This guide covers bench validation of the Google Slides Controller PerfectCue pa
 
 1. **PerfectCue RJ45 ports are model-specific.** Some DSAN ports carry **inter-unit cue data and/or power** (see DSAN PerfectCue / cue-light documentation). **Do not** assume “standard Ethernet” T568A/B pinout or plug an unknown homemade cable into audio gear or a switch.
 2. **Confirm the exact jack you use.** Your integration uses the **RS485 / network extender path** as discussed with DSAN—verify in the **manual for your PerfectCue model** which RJ45 pins are **RS485 A/B** (and whether **GND** or **shield** is required). If documentation is unclear, contact DSAN support with your model number before applying DC or long cables.
-3. **WaveShare connectors.** On this hardware the **DE-9 (DB9) is labeled RS-232**—do **not** use it for PerfectCue RS485. Use the **screw-terminal block** labeled for **RS485** (`A` / `B` / `GND`): land your RJ45 pigtail conductors there (ferrules recommended).
+3. **WaveShare connectors.** On this hardware the **DE-9 (DB9) is labeled RS-232**—do **not** use it for PerfectCue RS485. Use the **left-hand screw terminals** labeled **RS422/RS485** (silkscreen order from the DIN rail side: **RB, TA, TA, TB, PE, GND**, then **VCC**). Land RS485 + reference/shield per the WaveShare manual’s meaning of **TA/TB/RB** for **half-duplex RS485** (ferrules recommended). The **last two** terminals (**GND**, **VCC**) are the **DC power input** for the module—see **Power (VCC/GND) vs DSAN 12 V** below.
 
 ---
 
-## 1. Building the cable (RJ45 on PerfectCue → WaveShare)
+## Power (VCC/GND) vs DSAN 12 V on RJ45
+
+**What WaveShare `VCC` / `GND` are:** Those two terminals are **DC power supplied into the WaveShare** (**6–36 V** per silkscreen), same role as the barrel jack / PoE options—**inbound** power for **this** converter. They are **not** a 12 V **output** designed to power a PerfectCue.
+
+**Can WaveShare power the PerfectCue?** **No**, not through these terminals in normal use. Do **not** wire DSAN RJ45 **pins 1–2 (12 V)** into WaveShare **VCC/GND** hoping to “feed” one box from the other without a written compatibility check—polarity, current, and regulation differ from consumer interconnects, and **mis-wiring can damage hardware**.
+
+**Should DSAN 12 V be connected for this link?** For a **signal-only** bridge to the WaveShare, **leave RJ45 pins 1–2 unconnected** at the WaveShare end. Power **PerfectCue** the usual way (its own adapter or DSAN **RJ45 power between DSAN devices**). Power **WaveShare** with **PoE**, **barrel**, or **VCC/GND** as its manual specifies.
+
+**RS232 vs RS485 voltage:** DSAN’s note about “voltage differences” vs RS232 is why we use the **RS485 block**, not the RS-232 DB9.
+
+---
+
+## DSAN RJ45 pinout (support email — cue-light RS485)
+
+RJ45 numbering is **T568-A/B standard pin numbers** (tab down, contacts numbered 1–8 left to right). Confirm with DSAN for your **exact** model before soldering.
+
+- **Pins 1, 2:** **12 V** (inter-unit power — usually **not** wired to WaveShare; see **Power** section).
+- **Pins 3 + 6:** **Data+** (differential; often tied together at DSAN).
+- **Pins 7, 8:** **Data−**.
+- **Pins 4, 5:** **Ground**.
+
+**Serial bytes** on that link (match Google Slides Controller parser): **0x0F** forward, **0x1F** back; DSAN also lists **0x2F** blank on, **0x3F** blank off (not used by the app unless extended).
+
+---
+
+## 1. Building the cable (RJ45 on PerfectCue → WaveShare RS485 block)
 
 ### What you need
 
-- DSAN documentation for **your** RJ45 RS485 pin assignment (A, B, optional GND).
-- Multi-conductor cable: preferably **one twisted pair** for RS485 (plus drain/GND if specified), length as short as practical for first tests.
-- **WaveShare side:** terminate only on the **RS485 screw-terminal block** (not the RS-232 DB9).
-- Optional: **120 Ω** termination resistor across A–B **only if** the DSAN / WaveShare documentation calls for it at this segment (many short bench links do not need it).
+- Cable suitable for **RS485 + ground** (and optional shield to **PE** if your manual recommends it).
+- **Do not** connect RJ45 **pins 1–2** to WaveShare unless DSAN and WaveShare documentation explicitly define a safe shared-power arrangement (default: **leave open**).
+- **WaveShare side:** terminate only on the **RS422/RS485** terminals (**RB / TA / TA / TB / PE**), not the RS-232 DB9; **GND/VCC** at the right end of the block are **device power**, not RS485 data.
+- Map **Data+ / Data− / Ground** from the RJ45 to the correct **RS485 differential pair** on **TA/TB/RB** per **WaveShare’s manual** for **RS485 two-wire** mode (labels vary by firmware revision).
 
 ### Wiring steps (procedure)
 
-1. **Write down** from the DSAN doc: which RJ45 pin numbers are **RS485+ / A**, **RS485− / B**, and **reference/GND** (if required).
-2. On the WaveShare, wire to the **RS485 screw-terminal block** (**A** / **B** / **GND** as required)—not the DB9 (**RS-232**).
-3. Connect **A ↔ A** and **B ↔ B** between PerfectCue and WaveShare (polarity swap will prevent reliable data—swap one pair if you see garbage in logs after baud checks).
-4. **GND / shield:** Bond signal ground only as specified by both vendors; avoid creating ground loops between unrelated racks.
-5. **First power-on:** With the WaveShare powered and PerfectCue on, use the app **debug console** (see section 4) and press **forward/back** on the remote—look for `[PerfectCue] raw:` lines with plausible hex (not all `ff` or repeating noise).
+1. From the table above, identify **Data+**, **Data−**, and **Ground** on the RJ45 pigtail.
+2. Connect **Data+** and **Data−** to the WaveShare terminals your manual assigns to **RS485 A/B** (half-duplex). Connect **Ground** (RJ45 4–5) to **GND** on the signal block if the manual ties RS485 reference there—use **PE** only per shield/earth guidance in the manual.
+3. **Do not** connect RJ45 **12 V** (pins 1–2) to **VCC/GND** unless a qualified doc says so (default: **floating / not wired** at WaveShare).
+4. If raw data looks wrong but polarity is unsure, **swap** the two differential wires once (RS485 A/B swap).
+5. **First power-on:** Power WaveShare normally; power PerfectCue normally; then check the app debug console for `[PerfectCue] raw:` when pressing forward/back.
 
-If you cannot obtain a definitive DSAN pinout, stop and obtain it from DSAN; guessing RJ45 assignments risks equipment damage where **12 V or custom signaling** is present on some products.
+If anything is ambiguous, stop and confirm **TA/TB/RB** roles for **RS485** in the WaveShare wiki/manual for your exact SKU—RS422 labeling can differ from two-wire RS485.
 
 ---
 
@@ -120,7 +145,7 @@ If `identity` is null in `package.json` **mac** section, builds may be **ad-hoc*
 
 ## Quick pass / fail checklist
 
-- [ ] Cable pinout verified against **DSAN + WaveShare** docs (not guessed); RS485 on **terminal block** only (DB9 is RS-232).
+- [ ] Cable pinout verified against **DSAN + WaveShare** docs (not guessed); RS485 on **RB/TA/TB/PE** block only (DB9 is RS-232); RJ45 **12 V** pins **not** tied to WaveShare **VCC** unless documented.
 - [ ] WaveShare serial **8N1** baud matches PerfectCue output (adjust if raw data is garbage).
 - [ ] TCP **Client** → controller IP + **same** port as PerfectCue row.
 - [ ] App row set to **WaveShare**; settings saved.

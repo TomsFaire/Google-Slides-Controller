@@ -111,6 +111,20 @@ RJ45 (strapped)                          WaveShare RS485
   RB, extra TA    (leave empty for RS485-only link)
 ```
 
+### Troubleshooting: PerfectCue shuts off when the cable is plugged in
+
+That behavior usually means the DSAN side sees a **short on the 12 V path** (RJ45 **pins 1–2**) or **12 V shorted to ground**—often **before** any RS485 signaling matters.
+
+1. **Verify RJ45 pin numbers with a multimeter**, not only wire colors. **T568A vs T568B** swaps which **color** lands on pin 3 vs pin 1. **Pins 1–2** are often **solid orange / white-orange** (T568B)—those pairs must go **nowhere** on the WaveShare pigtail. If orange conductors accidentally touch **TA**, **TB**, **PE**, or each other at the crimp, you can short **12 V** and trip protection.
+
+2. **Inspect the RJ45 crimp**: stray copper strands bridging adjacent pins are a common cause.
+
+3. **First retest with only two wires** (no PE): DSAN **3+6 → TA**, **7+8 → TB** only; leave **4–5** and **PE** disconnected temporarily. If it **still** dies, the fault is almost certainly **wrong pins on the plug** or **12 V involved**—not the PE link alone.
+
+4. **Terminal positions:** Count screws from the same reference as the silkscreen (**RB**, **TA**, **TA**, **TB**, **PE**). **Data+** must land on **a** terminal marked **TA** (use the **first TA** next to **RB** if there are two); **Data−** on **TB**; **PE** last in that group. If **Data+** was wired to the wrong screw (e.g. **RB**), behavior depends on the board—fix per wiki (**TA** / **TB**).
+
+5. **Do not power-loop** through this cable: this harness must **not** carry DSAN **12 V** to WaveShare **VCC/GND**.
+
 ---
 
 ## 1. Building the cable (RJ45 on PerfectCue → WaveShare RS485 block)

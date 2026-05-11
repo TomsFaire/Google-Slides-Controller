@@ -27,6 +27,7 @@ const dns = require('dns');
 const util = require('util');
 const QRCode = require('qrcode');
 const { createPerfectCueServer } = require('./src/perfectcue-server');
+const { normalizePerfectCuePorts } = require('./src/perfectcue-port-config');
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -1287,6 +1288,9 @@ function savePreferences(prefs) {
       prefs.defaultNotesZoomSteps = clampNotesZoomSteps(prefs.defaultNotesZoomSteps);
     }
     if (prefs.notesLayout === 'narrow') prefs.notesLayout = 'default';
+    if (prefs.perfectCuePorts !== undefined) {
+      prefs.perfectCuePorts = normalizePerfectCuePorts(prefs);
+    }
     logDebug('[Preferences] Saving to:', prefsPath);
     logDebug('[Preferences] Data to save (sanitized):', safeStringify(prefs, 2));
     
@@ -2096,7 +2100,8 @@ function startPerfectCueListeners(portConfigs) {
       onStatus: () => {}
     });
     server.listen(config.port, '0.0.0.0', () => {
-      logDebug('[PerfectCue] Listening on port', config.port, config.name ? `(${config.name})` : '');
+      const tag = config.adapter ? ` [${config.adapter}]` : '';
+      logDebug('[PerfectCue] Listening on port', config.port, config.name ? `(${config.name})` : '', tag);
     });
     server.on('error', err => logDebug(`[PerfectCue] port ${config.port} error: ${err.message}`));
     perfectCueServers.push({ server, config });
@@ -2116,38 +2121,6 @@ function applyPerfectCuePrefs(prefs) {
     return;
   }
   startPerfectCueListeners(prefs.perfectCuePorts || []);
-}
-
-/**
- * Normalize perfectCuePorts to PortConfig[] regardless of the stored format.
- * Handles:
- *   - Legacy single number `perfectCuePort`
- *   - Array of plain numbers (old multi-port format)
- *   - Array of PortConfig objects (current format)
- * Always returns a non-empty PortConfig[].
- * @param {object} prefs
- * @returns {{ port: number, name: string, enabled: boolean }[]}
- */
-function normalizePerfectCuePorts(prefs) {
-  const raw = Array.isArray(prefs.perfectCuePorts) ? prefs.perfectCuePorts : [];
-  const configs = raw.map(entry => {
-    if (typeof entry === 'number') {
-      return { port: entry, name: '', enabled: true };
-    }
-    // Already an object — ensure all three fields are present
-    return {
-      port: Number(entry.port),
-      name: typeof entry.name === 'string' ? entry.name : '',
-      enabled: entry.enabled !== false
-    };
-  }).filter(c => c.port > 0);
-
-  if (configs.length === 0) {
-    // Fall back to legacy single-port pref, then hard default
-    const legacyPort = prefs.perfectCuePort ? Number(prefs.perfectCuePort) : 0;
-    return [{ port: legacyPort > 0 ? legacyPort : 8899, name: '', enabled: true }];
-  }
-  return configs;
 }
 
 function setPerfectCuePortEnabled(port, enabled) {
@@ -3791,7 +3764,12 @@ function startHttpServer() {
         // Add PerfectCue port state for Companion
         state.perfectcue = {
           enabled: prefs.perfectCueEnabled === true,
-          ports: (prefs.perfectCuePorts || []).map(({ port, name, enabled }) => ({ port, name, enabled }))
+          ports: (prefs.perfectCuePorts || []).map(({ port, name, enabled, adapter }) => ({
+            port,
+            name,
+            enabled,
+            adapter: adapter || 'dsan'
+          }))
         };
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));

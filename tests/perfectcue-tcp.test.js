@@ -118,3 +118,11 @@ test('disabled port keeps TCP connection open (no dispatch)', () =>
     assert.ok(statuses.includes('connected'), 'connection was accepted even though disabled');
   })
 );
+
+test('waveshare adapter still dispatches commands', () =>
+  withServer(18909, { config: { port: 18909, name: '', enabled: true, adapter: 'waveshare' } }, async (dispatched) => {
+    await sendAndClose(18909, Buffer.from([0x0F]));
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(dispatched, ['next-slide']);
+  })
+);

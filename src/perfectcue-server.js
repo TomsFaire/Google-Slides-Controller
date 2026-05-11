@@ -39,6 +39,10 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
 
       for (const byte of chunk) {
         const cmd = parsePerfectCueByte(byte);
+        if (cmd === 'blackout') {
+          log('blackout cue received (not yet implemented)');
+          continue;
+        }
         if (cmd !== 'next' && cmd !== 'previous') continue;
         const globalEnabled = masterEnabled === null || masterEnabled() === true;
         const portEnabled = config === null || config.enabled !== false;

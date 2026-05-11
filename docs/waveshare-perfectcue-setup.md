@@ -10,6 +10,7 @@ Use this with the **WaveShare** branch settings: each PerfectCue listener row ca
 
 ## Serial / RS485
 
+- The WaveShare **DB9 is RS-232**—use the **screw-terminal block** for **RS485** (A/B/GND per silkscreen).
 - Match **baud and framing** to the PerfectCue output on that link (often **115200 8N1** on WaveShare deployments; DSAN USR modules may differ—confirm with hardware).
 - Wire **RS485** per WaveShare and PerfectCue documentation (A/B, termination if required).
 

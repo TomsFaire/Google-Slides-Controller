@@ -166,6 +166,20 @@ PerfectCue sends **arbitrary binary bytes** over RS485 (not Modbus). For raw byt
 
 After disabling Modbus, **Modify Setting** / reboot the WaveShare and retest **`nc`** / PerfectCue buttons.
 
+### If **Modbus TCP to RTU** is checked and **grayed out**
+
+VirCom locks that checkbox when **another setting forces gateway / Modbus behavior**. Clear the dependency first—then Modbus can be turned off.
+
+1. **Advanced Settings / protocol fields** — Look for **Conversion protocol**, **Transfer Protocol**, **Gateway type**, **Protocol**, or **Serial port mode** set to **Modbus** (any variant). Set to **None**, **Transparent**, **Direct**, or **TCP/IP transparent transmission** (exact wording varies). Apply / reboot, then reopen **Function of the device** and try Modbus again.
+
+2. **RS485 Multi-Host / Modbus Gateway** dialog — If **Modbus Gateway Type** is set to **Simple Modbus TCP to RTU**, **Pre-configurable Modbus GW**, etc., change it to an option that **disables** gateway behavior, or close the dialog after clearing **Enable** options—depending on firmware. Some builds only unlock Modbus after gateway type is cleared on the **web UI**.
+
+3. **Web browser config** (`http://<device-ip>/`) — Often the **same** Modbus flags appear there; sometimes you can set **transparent** mode in the browser when VirCom grayed it out. Submit and **restart device**.
+
+4. **Other Function checkboxes** — Rarely **REAL_COM**, **cloud**, or **MQTT/JSON** modes interact with protocol selection; try disabling nonessential features one at a time if docs suggest a conflict.
+
+5. **Last resort** — **Factory reset** (long **RESET** per [wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B))), then configure **only**: network, **TCP Client**, destination IP/port, serial **8N1** baud, **transparent** protocol—**do not** enable Modbus or Modbus gateway during initial setup.
+
 ### App-side listener
 
 - In **Settings → PerfectCue**, set the row’s **Converter** dropdown to **WaveShare** for longer keep-alive presets (vs **DSAN**).

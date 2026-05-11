@@ -52,35 +52,56 @@ WaveShare RS422/485 terminals (left → right from DIN side): **RB, TA, TA, TB, 
 
 So: **`GND` = power supply ground reference**; **`PE` = protective earth / shield path** (and often where DSAN **RJ45 4–5** land **if** the manual agrees). On some boards **PE** and internal signal reference are related; on others isolation separates them—**follow WaveShare’s doc** and don’t assume **`GND` (power)** and **`PE`** are interchangeable without checking.
 
-### End-to-end connections
+### How many wires? (read this first)
 
-| DSAN RJ45 pin(s) | Name (DSAN) | Connect to WaveShare terminal | Notes |
-|-------------------|-------------|-------------------------------|--------|
-| **1** | 12 V | **(none)** | Leave **open** at WaveShare—do not tie to **VCC/GND**. |
-| **2** | 12 V | **(none)** | Same as pin 1. |
-| **3** and **6** | **Data+** | **RS485 “A” / non-inverting / D+** | On many WaveShare boards this is one of **TA** or **TB**—read the manual for **RS485 two-wire** which screw is **A** (+). Tie RJ45 **3** and **6** together at your cable if you run one wire. |
-| **7** and **8** | **Data−** | **RS485 “B” / inverting / D−** | Usually the other of **TA/TB** or **RB**—manual will label **B** (−). Tie RJ45 **7** and **8** together at your cable if you run one wire. |
-| **4** and **5** | **Ground** | **PE** (and/or signal reference per manual) | Tie RJ45 **4** and **5** together at your cable. **PE** is for protective earth / shield; follow WaveShare doc for whether signal ref ties here vs another terminal. |
+At the WaveShare **RS422/485** row you land **exactly three conductors** for this job:
 
-If you have **no bytes** or garbage after baud checks, **swap** only the two differential wires (swap which WaveShare terminals get **Data+** vs **Data−**).
+1. **One wire** = DSAN **Data+** (RJ45 pins **3** and **6** strapped together **at the RJ45 plug** so they share **one** copper leaving toward WaveShare).
+2. **One wire** = DSAN **Data−** (RJ45 pins **7** and **8** strapped together the same way).
+3. **One wire** = DSAN **ground** (RJ45 pins **4** and **5** strapped together).
 
-### Which TA vs TB vs RB?
+Pins **1** and **2** do **not** connect to anything at the WaveShare end.
 
-Silkscreen varies by SKU and **RS422 vs RS485** mode. Your block shows **RB**, **TA**, **TA**, **TB**, **PE**:
+**Important:** **Data+** goes to **exactly one** screw on the block. **Data−** goes to **exactly one other** screw. You do **not** fan out one signal onto **RB**, **TA**, and **TB** at the same time—the letters **RB / TA / TA / TB** are **five optional mounting points**, but **half-duplex RS485 only needs two screws** (plus **PE** for shield/reference). The screws you **do not** use stay **empty**.
 
-- Use the WaveShare wiki/manual for **RS232 RS485 TO POE ETH (B)** (or your exact model) to see which screws are **RS485 A** and **RS485 B** in **half-duplex RS485**.
-- The **duplicate “TA”** may be two adjacent pads both marked TA, or TX/RX legs—**confirm** whether one is **no-connect** in RS485 mode.
+### Which screw gets Data+ and which gets Data−?
 
-Until the manual is checked, treat the table above as **nets**: **Data+**, **Data−**, **GND/shield**—assign them to the physical screws your documentation calls **A**, **B**, and earth.
+WaveShare labels (**RB**, **TA**, **TA**, **TB**) are **not** the same as DSAN’s names. You **must** open the manual for **your exact unit** and find which **single** terminal is **RS485 A** (or **D+**) and which **single** terminal is **RS485 B** (or **D−**) in **half-duplex RS485** mode.
 
-### One-line summary
+Example (hypothetical—**verify in your manual**):
+
+- If the doc says **“RS485 A → TB”** and **“RS485 B → RB”**, then:
+  - Your **one** Data+ wire → **TB only**
+  - Your **one** Data− wire → **RB only**
+  - Leave the **TA** screws **unconnected** for this mode.
+
+Another SKU might say A on the **first TA** and B on **TB**—then Data+ → **that TA only**, Data− → **TB only**, etc.
+
+The duplicate **TA** usually means **two different physical screws** both printed “TA” (e.g. RS422 TX vs RX). For **two-wire RS485** you typically wire **only two** of the five (**RB…TB**) and ignore the rest unless the manual says otherwise.
+
+### End-to-end checklist
+
+| Step | What to do |
+|------|------------|
+| DSAN plug | Strap **3+6** → **one** conductor toward WaveShare (**Data+**). Strap **7+8** → **one** conductor (**Data−**). Strap **4+5** → **one** conductor (**GND**). Leave **1–2** floating past the WaveShare end. |
+| WaveShare | **Data+** wire → **one** screw = **RS485 A** per manual. **Data−** wire → **one different** screw = **RS485 B** per manual. **GND** wire → **PE** (unless manual specifies otherwise). |
+| Wrong data? | Swap **only** the two differential wires (swap which screw gets Data+ vs Data−). Do **not** add extra taps. |
+
+### Diagram (logical — one wire each)
 
 ```
-RJ45 3+6 (Data+)  ──►  WaveShare RS485 A / (+) terminal (TA or TB per manual)
-RJ45 7+8 (Data−)  ──►  WaveShare RS485 B / (−) terminal (RB or TB per manual)
-RJ45 4+5 (GND)    ──►  PE (and reference rules per manual)
+RJ45 side (inside plug, straps)          WaveShare side (example labels only)
 
-RJ45 1+2 (12 V)   ──►  not connected at WaveShare
+  pin 3 ─┬── ONE wire "D+" ─────────────► ONE screw (RS485 A per YOUR manual)
+  pin 6 ─┘                                e.g. TB only — NOT also TA
+
+  pin 7 ─┬── ONE wire "D−" ─────────────► ONE screw (RS485 B per YOUR manual)
+  pin 8 ─┘                                e.g. RB only — NOT also TA
+
+  pin 4 ─┬── ONE wire "GND" ────────────► PE
+  pin 5 ─┘
+
+  pin 1,2   (no connection at WaveShare)
 ```
 
 ---
@@ -202,7 +223,7 @@ If `identity` is null in `package.json` **mac** section, builds may be **ad-hoc*
 
 ## Quick pass / fail checklist
 
-- [ ] Cable pinout verified against **DSAN + WaveShare** docs (not guessed); RS485 on **RB/TA/TB/PE** block only (DB9 is RS-232); RJ45 **12 V** pins **not** tied to WaveShare **VCC** unless documented.
+- [ ] Cable: **three** wires to RS485 block (**Data+**, **Data−**, **GND→PE**) to **exactly two** RS485 screws + **PE** per manual—not split across every TA/TB/RB; DB9 unused; RJ45 **12 V** not tied to **VCC**.
 - [ ] WaveShare serial **8N1** baud matches PerfectCue output (adjust if raw data is garbage).
 - [ ] TCP **Client** → controller IP + **same** port as PerfectCue row.
 - [ ] App row set to **WaveShare**; settings saved.

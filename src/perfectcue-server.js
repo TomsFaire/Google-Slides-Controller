@@ -1,7 +1,11 @@
 const net = require('net');
 const { parsePerfectCueByte } = require('./perfectcue-parser');
+const { getPerfectCueAdapterPreset, normalizeAdapterId } = require('./perfectcue-adapter-presets');
 
 function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed = null, dispatch, log, onStatus }) {
+  const adapterId = normalizeAdapterId(config && config.adapter);
+  const { pingIntervalMs: PING_INTERVAL_MS, idleTimeoutMs: IDLE_TIMEOUT_MS } = getPerfectCueAdapterPreset(adapterId);
+
   const server = net.createServer(socket => {
     const remoteIp = socket.remoteAddress;
     if (typeof isAllowed === 'function' && !isAllowed(remoteIp)) {
@@ -10,20 +14,18 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
       return;
     }
     onStatus('connected', remoteIp);
-    log(`DSAN connected from ${remoteIp}`);
+    log(`client connected (${adapterId}) from ${remoteIp}`);
     // Use OS default timing for probes (short initial delays upset some DSAN / PerfectCue links after idle periods).
     socket.setKeepAlive(true, 0);
 
-    // Send 0xFF every 15 s so the USR-TCP232's idle timer never fires.
+    // Send 0xFF on an adapter-specific interval so the converter's idle timer never fires.
     // 0xFF is a recognised no-op by parsePerfectCueByte and is ignored by the PerfectCue receiver.
-    const PING_INTERVAL_MS = 15_000;
     const pingTimer = setInterval(() => {
       if (!socket.destroyed) socket.write(Buffer.from([0xff]));
     }, PING_INTERVAL_MS);
 
-    // If no data arrives for 50 s (ping failed to get through → dead connection),
-    // destroy our side so the USR-TCP232 sees a RST and reconnects.
-    const IDLE_TIMEOUT_MS = 50_000;
+    // If no data arrives for IDLE_TIMEOUT_MS (ping failed to get through → dead connection),
+    // destroy our side so the converter sees a RST and reconnects.
     socket.setTimeout(IDLE_TIMEOUT_MS);
     socket.on('timeout', () => {
       log('idle timeout — closing socket to force reconnect');
@@ -49,7 +51,7 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
     socket.on('close', () => {
       clearInterval(pingTimer);
       onStatus('listening', null);
-      log('DSAN disconnected, waiting for reconnect');
+      log(`disconnected (${adapterId}), waiting for reconnect`);
     });
 
     socket.on('error', err => {

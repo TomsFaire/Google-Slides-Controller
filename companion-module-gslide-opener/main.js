@@ -328,6 +328,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				{ variableId: `perfectcue_port_${i+1}_port`, name: `PerfectCue Slot ${i+1} Port Number` },
 				{ variableId: `perfectcue_port_${i+1}_name`, name: `PerfectCue Slot ${i+1} Name` },
 				{ variableId: `perfectcue_port_${i+1}_enabled`, name: `PerfectCue Slot ${i+1} Enabled (1/0)` },
+				{ variableId: `perfectcue_port_${i+1}_adapter`, name: `PerfectCue Slot ${i+1} Adapter (dsan / waveshare)` },
 			]).flat(),
 		]
 
@@ -585,6 +586,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 							[`perfectcue_port_${i+1}_port`, p ? String(p.port) : ''],
 							[`perfectcue_port_${i+1}_name`, p ? (p.name || '') : ''],
 							[`perfectcue_port_${i+1}_enabled`, p ? (p.enabled ? '1' : '0') : ''],
+							[`perfectcue_port_${i+1}_adapter`, p ? (p.adapter || 'dsan') : ''],
 						]
 					}).flat()
 				),

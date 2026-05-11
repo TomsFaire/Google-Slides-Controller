@@ -1131,7 +1131,7 @@ function renderBackupIpList(ips = []) {
 
 function addPerfectCuePortRow(config = {}) {
   if (!perfectCuePortList) return;
-  const { port = '', name = '', enabled = true } = config;
+  const { port = '', name = '', enabled = true, adapter = 'dsan' } = config;
 
   const row = document.createElement('div');
   row.setAttribute('data-perfectcue-row', 'true');
@@ -1157,6 +1157,19 @@ function addPerfectCuePortRow(config = {}) {
   portInput.value = port || '';
   portInput.setAttribute('data-perfectcue-port', 'true');
   portInput.style.cssText = 'flex:1 1 90px;min-width:80px;';
+
+  const adapterSelect = document.createElement('select');
+  adapterSelect.className = 'input-field';
+  adapterSelect.setAttribute('data-perfectcue-adapter', 'true');
+  adapterSelect.setAttribute('aria-label', 'Converter type');
+  adapterSelect.style.cssText = 'flex:1 1 130px;min-width:120px;';
+  [['dsan', 'DSAN'], ['waveshare', 'WaveShare']].forEach(([value, label]) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    adapterSelect.appendChild(opt);
+  });
+  adapterSelect.value = adapter === 'waveshare' ? 'waveshare' : 'dsan';
 
   // Enabled checkbox label
   const enabledLabel = document.createElement('label');
@@ -1211,6 +1224,7 @@ function addPerfectCuePortRow(config = {}) {
     if (rows.length <= 1) {
       portInput.value = '';
       nameInput.value = '';
+      adapterSelect.value = 'dsan';
       enabledCheckbox.checked = true;
       return;
     }
@@ -1219,6 +1233,7 @@ function addPerfectCuePortRow(config = {}) {
 
   row.appendChild(nameInput);
   row.appendChild(portInput);
+  row.appendChild(adapterSelect);
   row.appendChild(enabledLabel);
   row.appendChild(removeBtn);
   perfectCuePortList.appendChild(row);
@@ -1229,7 +1244,7 @@ function renderPerfectCuePortList(portConfigs = []) {
   perfectCuePortList.innerHTML = '';
   const configs = Array.isArray(portConfigs) ? portConfigs : [];
   if (configs.length === 0) {
-    addPerfectCuePortRow({ port: 8899, name: '', enabled: true });
+    addPerfectCuePortRow({ port: 8899, name: '', enabled: true, adapter: 'dsan' });
     return;
   }
   configs.forEach(c => addPerfectCuePortRow(c));
@@ -1241,11 +1256,13 @@ function getPerfectCuePortsFromUi() {
     .map(row => {
       const portEl = row.querySelector('[data-perfectcue-port="true"]');
       const nameEl = row.querySelector('[data-perfectcue-name="true"]');
+      const adapterEl = row.querySelector('[data-perfectcue-adapter="true"]');
       const enabledEl = row.querySelector('[data-perfectcue-enabled="true"]');
       const port = portEl ? parseInt(portEl.value, 10) : NaN;
       const name = nameEl ? nameEl.value.trim() : '';
+      const adapter = adapterEl && adapterEl.value === 'waveshare' ? 'waveshare' : 'dsan';
       const enabled = enabledEl ? enabledEl.checked : true;
-      return { port, name, enabled };
+      return { port, name, enabled, adapter };
     })
     .filter(c => Number.isInteger(c.port) && c.port >= 1024 && c.port <= 65535);
 }

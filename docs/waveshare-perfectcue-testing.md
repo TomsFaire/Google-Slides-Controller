@@ -162,6 +162,22 @@ Apply / submit settings and **restart the device** if the UI requires it.
 - **Save** PerfectCue settings.
 - Ensure the WaveShare is still in **TCP Client** mode to the controller’s IP and the **same TCP port** as that row (default **8899**).
 
+### Validating serial data reaches WaveShare and the PC
+
+You care about **three links**: RS485 **PerfectCue → WaveShare**, **WaveShare serial → TCP**, **TCP → controller app**.
+
+1. **TCP session up (WaveShare ↔ PC)**  
+   In **Vircom → Device Management**, confirm the device shows an **established TCP client** connection to your controller **IP:PerfectCue port**. In the **web UI**, look for connection / status fields if present. No TCP link → fix IP, port, firewall, or **TCP Client** mode before debugging RS485.
+
+2. **Bytes moving at the serial port (WaveShare)**  
+   Firmware varies: some builds show **RX/TX counters**, a **serial traffic / debug** view, or **LED activity** on RS485—check the [wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)) and Vircom help for **your** revision. If nothing is exposed, rely on steps 3–4.
+
+3. **End-to-end with Google Slides Controller (strongest check)**  
+   Enable **PerfectCue**, open the **debug console**, press **forward/back** on the remote. You want **`client connected (waveshare)`** and lines like **`[PerfectCue] raw:`** with hex (e.g. **`0f`** / **`1f`** for next/previous). That proves bytes left PerfectCue, entered WaveShare on RS485, were forwarded over TCP, and reached the app. **Garbage hex** usually means **baud/format** mismatch on WaveShare serial settings, not “no data.”
+
+4. **Optional: raw TCP without the full app**  
+   On the controller Mac, run **`nc -l 8899`** (or your chosen port). Point WaveShare **destination IP:port** at that machine and press the remote—you should see **binary bytes** in the terminal when events fire. Stop `nc` before running the real app again (same port).
+
 ---
 
 ## 3. WaveShare keep-alive / idle timers

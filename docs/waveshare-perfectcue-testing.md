@@ -35,7 +35,15 @@ RJ45 numbering uses **standard Ethernet jack numbering**: hold the plug **latch 
 - **Pins 7, 8:** **Data−**.
 - **Pins 4, 5:** **Ground**.
 
-**Serial bytes** on that link (match Google Slides Controller parser): **0x0F** forward, **0x1F** back; DSAN also lists **0x2F** blank on, **0x3F** blank off (not used by the app unless extended).
+**Serial bytes** observed on this link at 9600 baud with WaveShare RS232/485/422 TO POE ETH (B):
+
+| Button | Clean byte | RS485 noise variant | App action |
+|--------|-----------|---------------------|------------|
+| Forward / Next | `0x0c` | `0x8c` | next-slide |
+| Back / Previous | `0x08` | `0x88` | previous-slide |
+| Blackout | `0x04` | `0x84` | *(stub — not yet dispatched)* |
+
+The app parser masks the high bit (`byte & 0x7f`) before lookup, so both the clean byte and its noisy variant map to the same command. The `0x80` high bit is set intermittently by framing noise on unterminated RS485; adding a **120 Ω termination resistor** across TA/TB should suppress it.
 
 ---
 
@@ -148,7 +156,7 @@ Configure via **web UI** (`http://<device-ip>/`) and/or **Vircom** so they match
 
 ### Typical values (confirm against your hardware)
 
-- **Baud rate:** **115200** — common on WaveShare paths; DSAN USR modules often used **9600**—if raw bytes look wrong, try the other.
+- **Baud rate:** **9600** — confirmed in field testing with WaveShare RS232/485/422 TO POE ETH (B) and DSAN PerfectCue RS485 output. At 115200 the WaveShare samples each PerfectCue bit ~12× too fast, producing all-zero frames. If your PerfectCue model differs, try 115200 only if 9600 produces garbage.
 - **Data bits:** **8**
 - **Parity:** **None**
 - **Stop bits:** **1**
@@ -188,6 +196,18 @@ VirCom locks that checkbox when **another setting forces gateway / Modbus behavi
 
 5. **Last resort** — **Factory reset** (long **RESET** per [wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B))), then configure **only**: network, **TCP Client**, destination IP/port, serial **8N1** baud, **transparent** protocol—**do not** enable Modbus or Modbus gateway during initial setup.
 
+### Blackout button — current status
+
+The blackout button sends byte `0x04` (or `0x84` with RS485 high-bit noise). The app **recognises** it — the parser returns `'blackout'` — but does **not yet dispatch** any action. The debug console will show:
+
+```
+[PerfectCue] blackout cue received (not yet implemented)
+```
+
+**Future implementation:** pressing blackout should send a `B` keypress to the Google Slides presentation window, which toggles the screen black (same as pressing **B** in Chrome during a slideshow). This will be wired up in `main.js` once the signal is clean (termination resistor fitted and `0x04` confirmed reliable).
+
+**Known issue (unterminated RS485):** Without the termination resistor, `0x04` sometimes arrives as `0x08` (one bit flipped by a reflection), which the app treats as a previous-slide command. Fitting the 120 Ω resistor across TA/TB is the fix — do not attempt to distinguish blackout from back in software until the hardware signal is stable.
+
 ### App-side listener
 
 - In **Settings → PerfectCue**, set the row’s **Converter** dropdown to **WaveShare** for longer keep-alive presets (vs **DSAN**).
@@ -205,7 +225,7 @@ You care about **three links**: RS485 **PerfectCue → WaveShare**, **WaveShare 
    Firmware varies: some builds show **RX/TX counters**, a **serial traffic / debug** view, or **LED activity** on RS485—check the [wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)) and Vircom help for **your** revision. If nothing is exposed, rely on steps 3–4.
 
 3. **End-to-end with Google Slides Controller (strongest check)**  
-   Enable **PerfectCue**, open the **debug console**, press **forward/back** on the remote. You want **`client connected (waveshare)`** and lines like **`[PerfectCue] raw:`** with hex (e.g. **`0f`** / **`1f`** for next/previous). That proves bytes left PerfectCue, entered WaveShare on RS485, were forwarded over TCP, and reached the app. **Garbage hex** usually means **baud/format** mismatch on WaveShare serial settings, not “no data.”
+   Enable **PerfectCue**, open the **debug console**, press **forward/back** on the remote. You want **`client connected (waveshare)`** and lines like **`[PerfectCue] raw:`** with hex (e.g. **`0c`** / **`08`** for next/previous, or high-bit variants **`8c`** / **`88`** if the RS485 line is unterminated). That proves bytes left PerfectCue, entered WaveShare on RS485, were forwarded over TCP, and reached the app. **All-zero frames** mean baud mismatch (check 9600); **no bytes at all** means Modbus is still on or transparent mode isn't set.
 
 4. **Optional: raw TCP without the full app**  
    On the PC/Mac running **`nc`**, listen on the **same port** WaveShare uses as **Destination Port** (e.g. **`nc -lk 4196`** or **`nc -l 0.0.0.0 4196`** so you bind IPv4). Press forward/back on the remote—you should see **binary bytes**. If the TCP session shows up but **no bytes**, fix **transparent mode** (above) and **serial baud** (try **115200** if **9600** shows nothing). Stop **`nc`** before the real app listens on that port.
@@ -287,7 +307,8 @@ If `identity` is null in `package.json` **mac** section, builds may be **ad-hoc*
 ## Quick pass / fail checklist
 
 - [ ] Cable: **three** wires (**TA**, **TB**, **PE**); prefer **pin 3 / 7 / 4 only**—**no** RJ45 straps (**3+6**, **7+8**, **4+5**) if they trip PerfectCue; DB9 unused; RJ45 **12 V** unused.
-- [ ] WaveShare serial **8N1** baud matches PerfectCue output (adjust if raw data is garbage).
+- [ ] WaveShare serial **9600 8N1** (confirmed for DSAN PerfectCue RS485; all-zero frames = wrong baud).
+- [ ] **120 Ω termination resistor** across TA/TB recommended to suppress RS485 high-bit framing noise (symptoms: `0x8c` instead of `0x0c`, or blackout/back indistinguishable).
 - [ ] TCP **Client** → controller IP + **same** port as PerfectCue row.
 - [ ] App row set to **WaveShare**; settings saved.
 - [ ] Keep-alive / no-data restart aligned with long idle (section 3).

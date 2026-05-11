@@ -11,7 +11,7 @@ Use this with the **WaveShare** branch settings: each PerfectCue listener row ca
 ## Serial / RS485
 
 - The WaveShare **DB9 is RS-232**—use the **RS422/RS485** screw terminals (**RB … PE**, then **GND/VCC**). **VCC/GND** are **DC input** to power the WaveShare (6–36 V)—not outputs for PerfectCue; do not tie DSAN RJ45 **12 V** there without explicit compatibility docs.
-- Land **RS485 data** per WaveShare manual (**TA/TB/RB** roles); pair **GND** with DSAN ground pins as documented.
+- **RS232/485/422 TO POE ETH (B):** RS485 **Data+ → TA**, **Data− → TB**, ground/shield per wiki ([link](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B))); **RB**/extra **TA** are RS422—unused for simple RS485.
 - Match **baud and framing** to the PerfectCue output on that link (often **115200 8N1** on WaveShare deployments; DSAN USR modules may differ—confirm with hardware).
 - Wire **RS485** per WaveShare and PerfectCue documentation (A/B, termination if required).
 

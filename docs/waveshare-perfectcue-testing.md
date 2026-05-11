@@ -10,7 +10,7 @@ This guide covers bench validation of the Google Slides Controller PerfectCue pa
 
 1. **PerfectCue RJ45 ports are model-specific.** Some DSAN ports carry **inter-unit cue data and/or power** (see DSAN PerfectCue / cue-light documentation). **Do not** assume “standard Ethernet” T568A/B pinout or plug an unknown homemade cable into audio gear or a switch.
 2. **Confirm the exact jack you use.** Your integration uses the **RS485 / network extender path** as discussed with DSAN—verify in the **manual for your PerfectCue model** which RJ45 pins are **RS485 A/B** (and whether **GND** or **shield** is required). If documentation is unclear, contact DSAN support with your model number before applying DC or long cables.
-3. **WaveShare connectors.** On this hardware the **DE-9 (DB9) is labeled RS-232**—do **not** use it for PerfectCue RS485. Use the **left-hand screw terminals** labeled **RS422/RS485** (silkscreen order from the DIN rail side: **RB, TA, TA, TB, PE, GND**, then **VCC**). Land RS485 + reference/shield per the WaveShare manual’s meaning of **TA/TB/RB** for **half-duplex RS485** (ferrules recommended). The **last two** terminals (**GND**, **VCC**) are the **DC power input** for the module—see **Power (VCC/GND) vs DSAN 12 V** below.
+3. **WaveShare connectors.** On **RS232/485/422 TO POE ETH (B)** the **DB9 is RS-232**—do **not** use it for PerfectCue RS485. Use the **RS422/RS485** screw terminals (see [WaveShare wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B))). For **RS485**, official wiring is **positive → TA**, **negative → TB**; **RB** / extra **TA** are for **RS422**—leave unused for a simple RS485 link. Block order on the panel may read **RB, TA, TA, TB, PE**, then **GND**, **VCC**—the **last two** are **DC power in** only—see **Power** below.
 
 ---
 
@@ -62,46 +62,53 @@ At the WaveShare **RS422/485** row you land **exactly three conductors** for thi
 
 Pins **1** and **2** do **not** connect to anything at the WaveShare end.
 
-**Important:** **Data+** goes to **exactly one** screw on the block. **Data−** goes to **exactly one other** screw. You do **not** fan out one signal onto **RB**, **TA**, and **TB** at the same time—the letters **RB / TA / TA / TB** are **five optional mounting points**, but **half-duplex RS485 only needs two screws** (plus **PE** for shield/reference). The screws you **do not** use stay **empty**.
+**Important:** **Data+** goes to **exactly one** screw on the block. **Data−** goes to **exactly one other** screw. You do **not** fan out one signal onto multiple terminals.
 
-### Which screw gets Data+ and which gets Data−?
+### Official RS485 pairing ([RS232/485/422 TO POE ETH (B)](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)))
 
-WaveShare labels (**RB**, **TA**, **TA**, **TB**) are **not** the same as DSAN’s names. You **must** open the manual for **your exact unit** and find which **single** terminal is **RS485 A** (or **D+**) and which **single** terminal is **RS485 B** (or **D−**) in **half-duplex RS485** mode.
+WaveShare’s wiki (*Hardware Connection*) states for **RS485**:
 
-Example (hypothetical—**verify in your manual**):
+> … connect the **positive pole to the TA**, the **negative pole to the TB** …
 
-- If the doc says **“RS485 A → TB”** and **“RS485 B → RB”**, then:
-  - Your **one** Data+ wire → **TB only**
-  - Your **one** Data− wire → **RB only**
-  - Leave the **TA** screws **unconnected** for this mode.
+So for **this product family**, **two-wire RS485** uses **only TA and TB** for the differential pair:
 
-Another SKU might say A on the **first TA** and B on **TB**—then Data+ → **that TA only**, Data− → **TB only**, etc.
+| DSAN side (after strapping in the RJ45) | WaveShare terminal |
+|----------------------------------------|--------------------|
+| **Data+** (RJ45 **3** + **6** → one wire) | **TA** |
+| **Data−** (RJ45 **7** + **8** → one wire) | **TB** |
+| **GND** (RJ45 **4** + **5** → one wire) | **PE** (protective earth / shield—follow manual if ref differs) |
 
-The duplicate **TA** usually means **two different physical screws** both printed “TA” (e.g. RS422 TX vs RX). For **two-wire RS485** you typically wire **only two** of the five (**RB…TB**) and ignore the rest unless the manual says otherwise.
+**RB** and the **extra TA** on the silkscreen are used for **RS422** (and related modes)—for simple **half-duplex RS485** to PerfectCue they stay **empty** unless your manual says otherwise.
+
+If bytes look wrong after baud is correct, **swap TA and TB once** (exchange Data+ and Data−).
+
+Other WaveShare SKUs may label differently—always cross-check the wiki page for **your** model string.
 
 ### End-to-end checklist
 
 | Step | What to do |
 |------|------------|
-| DSAN plug | Strap **3+6** → **one** conductor toward WaveShare (**Data+**). Strap **7+8** → **one** conductor (**Data−**). Strap **4+5** → **one** conductor (**GND**). Leave **1–2** floating past the WaveShare end. |
-| WaveShare | **Data+** wire → **one** screw = **RS485 A** per manual. **Data−** wire → **one different** screw = **RS485 B** per manual. **GND** wire → **PE** (unless manual specifies otherwise). |
-| Wrong data? | Swap **only** the two differential wires (swap which screw gets Data+ vs Data−). Do **not** add extra taps. |
+| DSAN plug | Strap **3+6** → **one** conductor (**Data+**). Strap **7+8** → **one** (**Data−**). Strap **4+5** → **one** (**GND**). Leave **1–2** unconnected at WaveShare. |
+| WaveShare ([wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B))) | **Data+** → **TA**. **Data−** → **TB**. **GND** → **PE** (unless manual differs). |
+| Wrong data? | Swap **TA** ↔ **TB** (swap the two differential wires only). |
 
-### Diagram (logical — one wire each)
+### Diagram (RS232/485/422 TO POE ETH (B) — RS485)
 
 ```
-RJ45 side (inside plug, straps)          WaveShare side (example labels only)
+RJ45 (strapped)                          WaveShare RS485
 
-  pin 3 ─┬── ONE wire "D+" ─────────────► ONE screw (RS485 A per YOUR manual)
-  pin 6 ─┘                                e.g. TB only — NOT also TA
+  pin 3 ─┬── ONE wire "Data+" ──────────► TA
+  pin 6 ─┘
 
-  pin 7 ─┬── ONE wire "D−" ─────────────► ONE screw (RS485 B per YOUR manual)
-  pin 8 ─┘                                e.g. RB only — NOT also TA
+  pin 7 ─┬── ONE wire "Data−" ──────────► TB
+  pin 8 ─┘
 
-  pin 4 ─┬── ONE wire "GND" ────────────► PE
+  pin 4 ─┬── ONE wire "GND" ─────────────► PE
   pin 5 ─┘
 
-  pin 1,2   (no connection at WaveShare)
+  pin 1,2   (not connected at WaveShare)
+
+  RB, extra TA    (leave empty for RS485-only link)
 ```
 
 ---
@@ -113,7 +120,7 @@ RJ45 side (inside plug, straps)          WaveShare side (example labels only)
 - Cable suitable for **RS485 + ground** (and optional shield to **PE** if your manual recommends it).
 - **Do not** connect RJ45 **pins 1–2** to WaveShare unless DSAN and WaveShare documentation explicitly define a safe shared-power arrangement (default: **leave open**).
 - **WaveShare side:** terminate only on the **RS422/RS485** terminals (**RB / TA / TA / TB / PE**), not the RS-232 DB9; **GND/VCC** at the right end of the block are **device power**, not RS485 data.
-- Map **Data+ / Data− / Ground** from the RJ45 to the correct **RS485 differential pair** on **TA/TB/RB** per **WaveShare’s manual** for **RS485 two-wire** mode (labels vary by firmware revision).
+- **RS232/485/422 TO POE ETH (B):** **Data+ → TA**, **Data− → TB**, **GND → PE** ([wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B))).
 
 ### Wiring steps (procedure)
 
@@ -123,7 +130,7 @@ RJ45 side (inside plug, straps)          WaveShare side (example labels only)
 4. If raw data looks wrong but polarity is unsure, **swap** the two differential wires once (RS485 A/B swap).
 5. **First power-on:** Power WaveShare normally; power PerfectCue normally; then check the app debug console for `[PerfectCue] raw:` when pressing forward/back.
 
-If anything is ambiguous, stop and confirm **TA/TB/RB** roles for **RS485** in the WaveShare wiki/manual for your exact SKU—RS422 labeling can differ from two-wire RS485.
+If your unit is **not** RS232/485/422 TO POE ETH (B), confirm **TA/TB** roles on the wiki page for **your** model.
 
 ---
 
@@ -157,7 +164,7 @@ Goal: the converter must stay connected through idle periods **without** requiri
 
 On many WaveShare units the **simple web page** (`http://<ip>/…`) shows **Reconnect-time** and **No-data restart**, but **does not show** a separate **TCP keep-alive interval** field. That parameter is often available only in **Vircom**:
 
-1. Install/open **Vircom** (WaveShare’s Windows config tool—see [WaveShare wiki](https://www.waveshare.com/wiki/RS232_RS485_TO_POE_ETH_(B)) → Software → Vircom).
+1. Install/open **Vircom** (WaveShare’s Windows config tool—see [RS232/485/422 TO POE ETH (B) wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)) → Software).
 2. **Device Management** → select your device → open **Device Settings** (double-click).
 3. Go to **Advanced Settings** (or **More Advanced Settings…** if present).
 4. Look for **Keep Alive Time** (seconds)—this is the firmware field that controls how often the module treats the TCP link as “still alive” from its side. Set it to **≥ 60 s** (e.g. **60**) so it does **not** tear down the session *before* the app’s next **`0xFF`** ping at **45 s**. If it were **30 s** while the app pings every **45 s**, you could see idle drops.

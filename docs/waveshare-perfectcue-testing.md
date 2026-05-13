@@ -73,9 +73,11 @@ Field fix that often works: use **one pin per function**—**no straps** between
 
 | Function | Prefer **one** RJ45 pin first | WaveShare |
 |----------|-------------------------------|-----------|
-| Data+ | **Pin 3 only** → TA (leave **pin 6** **not** jumpered to pin 3) | **TA** |
-| Data− | **Pin 7 only** → TB (leave **pin 8** open on pigtail) | **TB** |
+| Data− | **Pin 7 only** → TA (leave **pin 8** open on pigtail) | **TA** |
+| Data+ | **Pin 3 only** → TB (leave **pin 6** **not** jumpered to pin 3) | **TB** |
 | Ground | **Pin 4 only** → PE (leave **pin 5** open) — add pin 5 later only if needed | **PE** |
+
+> **Field-confirmed swap:** Despite the WaveShare wiki labelling TA as positive and TB as negative, field testing with DSAN PerfectCue RS485 requires **pin 7 (Data−) → TA** and **pin 3 (Data+) → TB**. If you see no RS485 activity, swap TA ↔ TB.
 
 If RS485 is unreliable with single-pin taps, ask DSAN whether **your** jack allows paralleling **3+6** / **7+8** / **4+5** **externally**—then try straps **only** after written OK.
 
@@ -83,20 +85,16 @@ If RS485 is unreliable with single-pin taps, ask DSAN whether **your** jack allo
 
 ### Official RS485 pairing ([RS232/485/422 TO POE ETH (B)](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)))
 
-WaveShare’s wiki states for **RS485**: **positive → TA**, **negative → TB**.
-
-Map DSAN **Data+** → **TA**, **Data−** → **TB**, reference/shield → **PE** as above.
+WaveShare’s wiki states for **RS485**: **positive → TA**, **negative → TB**. However, field testing with this DSAN PerfectCue unit requires the opposite — **pin 7 → TA**, **pin 3 → TB**. The parser and byte values are unaffected; only the physical screw assignment is swapped.
 
 **RB** and the **extra TA** stay empty for simple half-duplex RS485.
-
-If bytes look wrong after baud is correct, **swap TA ↔ TB** once.
 
 ### End-to-end checklist
 
 | Step | What to do |
 |------|------------|
-| DSAN plug | **Prefer:** **Pin 3** → TA, **pin 7** → TB, **pin 4** → PE — **no** 3+6 / 7+8 / 4+5 straps until DSAN confirms. Pins **1–2** unused. |
-| WaveShare | **TA** / **TB** / **PE** per [wiki](https://www.waveshare.com/wiki/RS232/485/422_TO_POE_ETH_(B)). |
+| DSAN plug | **Pin 7** (Brown/White) → **TA**, **pin 3** (Green/White) → **TB**, **pin 4** (Blue) → **PE**. Pins **1–2** unused. No 3+6 / 7+8 / 4+5 straps. |
+| WaveShare | **TA** / **TB** / **PE** per above (note swap vs wiki). |
 | Wrong data? | Swap **TA** ↔ **TB**. |
 
 ### Diagram (single-pin taps — recommended if straps trip protection)
@@ -104,14 +102,16 @@ If bytes look wrong after baud is correct, **swap TA ↔ TB** once.
 ```
 RJ45                                    WaveShare RS485
 
-  pin 3 only ── ONE wire ─────────────► TA     (pin 6 not jumpered to 3)
-  pin 7 only ── ONE wire ─────────────► TB     (pin 8 not jumpered to 7)
-  pin 4 only ── ONE wire ─────────────► PE     (pin 5 not jumpered to 4)
+  pin 7 only (Brown/White) ──────────► TA     (Data−; pin 8 not jumpered to 7)
+  pin 3 only (Green/White) ──────────► TB     (Data+; pin 6 not jumpered to 3)
+  pin 4 only (Blue)        ──────────► PE     (pin 5 not jumpered to 4)
 
-  pins 1,2   not connected
+  pins 1,2   not connected            100Ω across TA↔TB (termination)
 
   pin 6,8,5  left unterminated on pigtail unless DSAN approves straps
 ```
+
+> **Note:** This is the opposite of the WaveShare wiki convention (which shows positive→TA). Swap confirmed by field testing — if no RS485 activity, try swapping TA and TB.
 
 ### Troubleshooting: PerfectCue shuts off when the cable is plugged in
 
@@ -306,7 +306,7 @@ If `identity` is null in `package.json` **mac** section, builds may be **ad-hoc*
 
 ## Quick pass / fail checklist
 
-- [ ] Cable: **three** wires (**TA**, **TB**, **PE**); prefer **pin 3 / 7 / 4 only**—**no** RJ45 straps (**3+6**, **7+8**, **4+5**) if they trip PerfectCue; DB9 unused; RJ45 **12 V** unused.
+- [ ] Cable: **pin 7** (Brown/White) → **TA**, **pin 3** (Green/White) → **TB**, **pin 4** (Blue) → **PE**; no RJ45 straps; DB9 unused; pins 1–2 unused. If no RS485 activity, swap TA↔TB.
 - [ ] WaveShare serial **9600 8N1** (confirmed for DSAN PerfectCue RS485; all-zero frames = wrong baud).
 - [ ] **120 Ω termination resistor** across TA/TB recommended to suppress RS485 high-bit framing noise (symptoms: `0x8c` instead of `0x0c`, or blackout/back indistinguishable).
 - [ ] TCP **Client** → controller IP + **same** port as PerfectCue row.

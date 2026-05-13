@@ -9839,7 +9839,36 @@ function startWebUiServer() {
     let notesVisible = false;
     let notesZoomLevel = 1; // Numeric zoom level (1 = normal, can go up/down continuously)
     let previewsVisible = false;
-    
+    let keyboardShortcutsEnabled = false;
+
+    function getShortcutModifier() {
+      return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
+    }
+
+    function updateKeyboardHint() {
+      const hint = document.getElementById('keyboard-shortcuts-hint');
+      const keysEl = document.getElementById('keyboard-hint-keys');
+      const mod = getShortcutModifier();
+      if (!hint || !keysEl) return;
+      if (keyboardShortcutsEnabled) {
+        keysEl.textContent = mod + '← Prev slide · ' + mod + '→ Next slide · ' + mod + '↑ Notes up · ' + mod + '↓ Notes down';
+        hint.classList.add('visible');
+      } else {
+        hint.classList.remove('visible');
+      }
+    }
+
+    // Restore keyboard shortcut toggle from localStorage
+    (function() {
+      const stored = localStorage.getItem('gsc_keyboard_shortcuts_enabled');
+      if (stored === 'true') {
+        keyboardShortcutsEnabled = true;
+        const btn = document.getElementById('keyboard-toggle-btn');
+        if (btn) btn.classList.add('active');
+        updateKeyboardHint();
+      }
+    })();
+
     function normalizeSpeakerNotes(text) {
       if (text == null) return '';
       var s = String(text);
@@ -9987,6 +10016,40 @@ function startWebUiServer() {
       updateNotesZoomReadout();
     }
     
+    document.getElementById('keyboard-toggle-btn').addEventListener('click', () => {
+      const btn = document.getElementById('keyboard-toggle-btn');
+      keyboardShortcutsEnabled = !keyboardShortcutsEnabled;
+      if (keyboardShortcutsEnabled) {
+        btn.classList.add('active');
+        localStorage.setItem('gsc_keyboard_shortcuts_enabled', 'true');
+      } else {
+        btn.classList.remove('active');
+        localStorage.setItem('gsc_keyboard_shortcuts_enabled', 'false');
+      }
+      updateKeyboardHint();
+    });
+
+    document.addEventListener('keydown', function(e) {
+      if (!keyboardShortcutsEnabled) return;
+      const tag = document.activeElement ? document.activeElement.tagName : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable)) return;
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        apiCall('/api/next-slide').then(() => { updateSlideButtons(); });
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        apiCall('/api/previous-slide').then(() => { updateSlideButtons(); });
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        apiCall('/api/scroll-notes-down');
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        apiCall('/api/scroll-notes-up');
+      }
+    });
+
     document.getElementById('notes-toggle-btn').addEventListener('click', () => {
       const btn = document.getElementById('notes-toggle-btn');
       const container = document.getElementById('speaker-notes-container');

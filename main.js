@@ -8017,7 +8017,7 @@ function startWebUiServer() {
       height: 16px;
     }
     body.theme-light .keyboard-toggle-btn.active {
-      background: var(--faire-accent, #667eea);
+      background: #667eea;
       color: white;
       border-color: transparent;
     }

@@ -14,7 +14,7 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
       return;
     }
     onStatus('connected', remoteIp);
-    log(`client connected (${adapterId}) from ${remoteIp}`);
+    log(`client connected (${adapterId}) from ${remoteIp} on port ${config && config.port}`);
     // Use OS default timing for probes (short initial delays upset some DSAN / PerfectCue links after idle periods).
     socket.setKeepAlive(true, 0);
 
@@ -32,6 +32,9 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
       socket.destroy();
     });
 
+    let lastCmdTime = 0;
+    const DEBOUNCE_MS = 150;
+
     socket.on('data', chunk => {
       const hex = [...chunk].map(b => b.toString(16).padStart(2, '0')).join(' ');
       const ascii = chunk.toString('ascii').replace(/[^\x20-\x7e]/g, '.');
@@ -44,6 +47,14 @@ function createPerfectCueServer({ config = null, masterEnabled = null, isAllowed
           continue;
         }
         if (cmd !== 'next' && cmd !== 'previous') continue;
+
+        const now = Date.now();
+        if (now - lastCmdTime < DEBOUNCE_MS) {
+          log(`debounced ${cmd} (${now - lastCmdTime}ms since last)`);
+          continue;
+        }
+        lastCmdTime = now;
+
         const globalEnabled = masterEnabled === null || masterEnabled() === true;
         const portEnabled = config === null || config.enabled !== false;
         if (globalEnabled && portEnabled) {

@@ -7168,6 +7168,29 @@ function startWebUiServer() {
           opacity: 0.45;
           cursor: not-allowed;
         }
+    .keyboard-toggle-btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .keyboard-toggle-btn:hover {
+      background: #5568d3;
+    }
+    .keyboard-toggle-btn.active {
+      background: #764ba2;
+    }
+    .keyboard-toggle-btn svg {
+      width: 18px;
+      height: 18px;
+    }
     .remote-controls {
       display: flex;
       flex-direction: row;
@@ -7979,6 +8002,25 @@ function startWebUiServer() {
       height: 16px;
     }
     body.theme-light .toggle-btn-text { display: none; }
+    body.theme-light .keyboard-toggle-btn {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-radius: var(--faire-radius);
+      border: 1px solid var(--faire-border);
+      background: var(--faire-surface);
+      color: var(--faire-sub);
+      justify-content: center;
+    }
+    body.theme-light .keyboard-toggle-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+    body.theme-light .keyboard-toggle-btn.active {
+      background: var(--faire-accent, #667eea);
+      color: white;
+      border-color: transparent;
+    }
     body.theme-light .slide-previews-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -8500,6 +8542,7 @@ function startWebUiServer() {
     body.theme-touch .remote-btn:active { transform: scale(0.97); }
     body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
+    body.theme-touch .keyboard-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
     body.theme-touch .slide-previews-grid, body.theme-touch .speaker-notes-content-wrapper { border-radius: var(--faire-radius); padding: 18px; }
     @media (max-width: 768px) {
       body.theme-touch .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
@@ -8569,6 +8612,7 @@ function startWebUiServer() {
     body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); color: rgba(255,255,255,0.9); }
     body.theme-thumb .speaker-notes-content { color: rgba(255,255,255,0.9); }
     body.theme-thumb .notes-toggle-btn, body.theme-thumb .preview-toggle-btn { background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+    body.theme-thumb .keyboard-toggle-btn { background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
     body.theme-thumb .remote-header-compact .remote-machine-name { color: rgba(255,255,255,0.9); }
     body.theme-thumb .remote-header-compact .slide-counter { color: rgba(255,255,255,0.55); }
     @media (max-width: 768px) {
@@ -8591,6 +8635,11 @@ function startWebUiServer() {
     body.theme-max .preview-toggle-btn,
     body.theme-touch .preview-toggle-btn,
     body.theme-thumb .preview-toggle-btn,
+    body.theme-original .keyboard-toggle-btn,
+    body.theme-dark .keyboard-toggle-btn,
+    body.theme-max .keyboard-toggle-btn,
+    body.theme-touch .keyboard-toggle-btn,
+    body.theme-thumb .keyboard-toggle-btn,
     body.theme-original .notes-zoom-btn,
     body.theme-dark .notes-zoom-btn,
     body.theme-max .notes-zoom-btn,
@@ -8602,6 +8651,31 @@ function startWebUiServer() {
     body.theme-touch .tab-btn,
     body.theme-thumb .tab-btn {
       border-radius: var(--faire-radius);
+    }
+    #keyboard-shortcuts-hint {
+      display: none;
+      text-align: center;
+      padding: 10px 0 2px;
+    }
+    #keyboard-shortcuts-hint.visible {
+      display: block;
+    }
+    .keyboard-hint-title {
+      margin: 0 0 3px;
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.5);
+    }
+    .keyboard-hint-keys {
+      margin: 0;
+      font-size: 11px;
+      color: rgba(255,255,255,0.35);
+    }
+    body.theme-light .keyboard-hint-title {
+      color: rgba(0,0,0,0.4);
+    }
+    body.theme-light .keyboard-hint-keys {
+      color: rgba(0,0,0,0.3);
     }
     body.theme-original .slide-preview-card.clickable,
     body.theme-dark .slide-preview-card.clickable,

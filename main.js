@@ -9226,6 +9226,16 @@ function startWebUiServer() {
           </svg>
           <span class="toggle-btn-text">Previews</span>
         </button>
+        <button type="button" class="keyboard-toggle-btn" id="keyboard-toggle-btn" title="Toggle keyboard shortcuts" aria-label="Toggle keyboard shortcuts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="7" y1="12" x2="7.01" y2="12" stroke-width="3" stroke-linecap="round"></line>
+            <line x1="12" y1="12" x2="12.01" y2="12" stroke-width="3" stroke-linecap="round"></line>
+            <line x1="17" y1="12" x2="17.01" y2="12" stroke-width="3" stroke-linecap="round"></line>
+            <line x1="7" y1="16" x2="17" y2="16" stroke-linecap="round"></line>
+          </svg>
+          <span class="toggle-btn-text">Keys</span>
+        </button>
       </div>
       <div class="stagetimer-container disabled" id="stagetimer-container" style="display: none;">
         <div class="stagetimer-row">
@@ -9653,6 +9663,11 @@ function startWebUiServer() {
       ` : ``}
     </div>
 ` : ''}
+
+    <div id="keyboard-shortcuts-hint">
+      <p class="keyboard-hint-title">Keyboard shortcuts enabled</p>
+      <p class="keyboard-hint-keys" id="keyboard-hint-keys"></p>
+    </div>
 
     <div id="status" class="status"></div>
     <div class="build-number">${versionString}</div>

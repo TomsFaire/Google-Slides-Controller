@@ -9842,6 +9842,9 @@ function startWebUiServer() {
     let keyboardShortcutsEnabled = false;
 
     function getShortcutModifier() {
+      if (navigator.userAgentData) {
+        return navigator.userAgentData.platform === 'macOS' ? '⌘' : 'Ctrl';
+      }
       return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
     }
 
@@ -10016,14 +10019,14 @@ function startWebUiServer() {
       updateNotesZoomReadout();
     }
     
-    document.getElementById('keyboard-toggle-btn').addEventListener('click', () => {
-      const btn = document.getElementById('keyboard-toggle-btn');
+    const keyboardToggleBtn = document.getElementById('keyboard-toggle-btn');
+    if (keyboardToggleBtn) keyboardToggleBtn.addEventListener('click', () => {
       keyboardShortcutsEnabled = !keyboardShortcutsEnabled;
       if (keyboardShortcutsEnabled) {
-        btn.classList.add('active');
+        keyboardToggleBtn.classList.add('active');
         localStorage.setItem('gsc_keyboard_shortcuts_enabled', 'true');
       } else {
-        btn.classList.remove('active');
+        keyboardToggleBtn.classList.remove('active');
         localStorage.setItem('gsc_keyboard_shortcuts_enabled', 'false');
       }
       updateKeyboardHint();
@@ -10032,7 +10035,7 @@ function startWebUiServer() {
     document.addEventListener('keydown', function(e) {
       if (!keyboardShortcutsEnabled) return;
       const tag = document.activeElement ? document.activeElement.tagName : '';
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement && document.activeElement.isContentEditable)) return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement && document.activeElement.isContentEditable)) return;
       const isMod = e.metaKey || e.ctrlKey;
       if (!isMod) return;
       if (e.key === 'ArrowRight') {

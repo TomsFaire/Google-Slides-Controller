@@ -2,6 +2,16 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.2] - 2026-05-14
+
+### Added
+- **Keyboard shortcuts for web remote** – tap the keyboard icon in the Remote tab header to enable `Cmd+←/→` (previous/next slide) and `Cmd+↑/↓` (scroll speaker notes). On Windows/Linux use `Ctrl`. The toggle persists across page reloads via `localStorage`. Shortcuts are suppressed when an input, textarea, or select element has focus.
+
+### Build
+- **Version 2.3.2**, **build 78**.
+
+---
+
 ## [2.3.0] - 2026-05-06
 
 ### Added

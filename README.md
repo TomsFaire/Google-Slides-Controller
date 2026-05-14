@@ -51,6 +51,7 @@ Use your real path if the app lives elsewhere. Don’t run `xattr` over random t
 ## Web UI and API
 
 - **Web UI:** `http://<presentation-pc>` (same port as in settings). Remote / Controls / Settings in the browser; theme choice is in desktop **Web Remote** settings.
+- **Keyboard shortcuts:** tap the keyboard icon in the Remote tab header to enable `Cmd+←/→` (previous/next slide) and `Cmd+↑/↓` (scroll speaker notes). On Windows/Linux use `Ctrl` instead of `Cmd`. Toggle state persists across page reloads. Shortcuts fire only while the browser tab has focus.
 - **HTTP API:** `http://<presentation-pc>:9595` — mutating routes expect the controller IP allowlist (see [README-SECURITY.md](README-SECURITY.md)). Useful entrypoints: `GET /api/status`, `POST /api/next-slide`, `POST /api/open-presentation` with JSON `{"url":"…"}`.
 
 **WAN / tunnel / PIN:** Quick Tunnel and optional PIN live under desktop **WAN Access**. Behavior and caveats (restricted vs full UI, localhost vs LAN) are spelled out in [docs/PUBLIC-ACCESS.md](docs/PUBLIC-ACCESS.md)—read that before sharing a URL.

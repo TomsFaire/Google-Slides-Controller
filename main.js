@@ -9666,6 +9666,9 @@ function startWebUiServer() {
           <input type="checkbox" id="web-keyboard-default-enabled" style="width: auto;" />
           <label for="web-keyboard-default-enabled" style="margin: 0; font-weight: normal;">Enable for new connections by default</label>
         </div>
+        <small style="display: block; margin-top: 6px; color: #888; font-size: 12px;">
+          When enabled, shortcuts are always active on load regardless of user preference.
+        </small>
         <button type="button" class="btn" id="btn-save-keyboard-shortcuts" style="margin-top: 12px;">Save Keyboard Settings</button>
       </div>
 

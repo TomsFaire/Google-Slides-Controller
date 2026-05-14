@@ -9647,7 +9647,28 @@ function startWebUiServer() {
         </small>
         <button type="button" class="btn" id="btn-save-logging" style="margin-top: 12px;">Save Logging Settings</button>
       </div>
-      
+
+      <!-- Keyboard Shortcuts Section -->
+      <div class="controls-section">
+        <h3>Keyboard Shortcuts</h3>
+        <div class="info" style="margin-bottom: 10px;">
+          Configure the keyboard combo used when shortcuts are enabled. Changes take effect immediately without a page reload.
+        </div>
+        <div class="preset-group">
+          <label for="web-keyboard-preset">Shortcut preset</label>
+          <select id="web-keyboard-preset" class="input-field">
+            <option value="cmd+arrow">Cmd/Ctrl + Arrow</option>
+            <option value="alt+arrow">Alt/Option + Arrow</option>
+            <option value="cmd+shift+arrow">Cmd/Ctrl + Shift + Arrow (safest)</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+          <input type="checkbox" id="web-keyboard-default-enabled" style="width: auto;" />
+          <label for="web-keyboard-default-enabled" style="margin: 0; font-weight: normal;">Enable for new connections by default</label>
+        </div>
+        <button type="button" class="btn" id="btn-save-keyboard-shortcuts" style="margin-top: 12px;">Save Keyboard Settings</button>
+      </div>
+
       ${webUiDebugConsoleEnabled ? `
       <!-- Debug Console (enabled from desktop app) -->
       <div class="controls-section">
@@ -11721,7 +11742,18 @@ function startWebUiServer() {
         if (verboseEl) {
           verboseEl.checked = prefs.verboseLogging === true;
         }
-        
+
+        // Set keyboard shortcut preferences
+        const webKeyboardPresetEl = document.getElementById('web-keyboard-preset');
+        if (webKeyboardPresetEl) {
+          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+          webKeyboardPresetEl.value = validPresets.includes(prefs.keyboardShortcutPreset) ? prefs.keyboardShortcutPreset : 'cmd+arrow';
+        }
+        const webKeyboardDefaultEl = document.getElementById('web-keyboard-default-enabled');
+        if (webKeyboardDefaultEl) {
+          webKeyboardDefaultEl.checked = prefs.keyboardShortcutsDefaultEnabled === true;
+        }
+
         // Set up primary/backup mode change handlers
         document.getElementById('web-mode-primary').addEventListener('change', () => {
           if (document.getElementById('web-mode-primary').checked) {
@@ -11977,6 +12009,35 @@ function startWebUiServer() {
       });
     }
     
+    // Save keyboard shortcut settings
+    const saveKeyboardShortcutsBtn = document.getElementById('btn-save-keyboard-shortcuts');
+    if (saveKeyboardShortcutsBtn) {
+      saveKeyboardShortcutsBtn.addEventListener('click', async () => {
+        try {
+          const presetEl = document.getElementById('web-keyboard-preset');
+          const defaultEl = document.getElementById('web-keyboard-default-enabled');
+          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+          const preset = presetEl && validPresets.includes(presetEl.value) ? presetEl.value : 'cmd+arrow';
+          const defaultEnabled = defaultEl ? defaultEl.checked : false;
+          const res = await fetch(API_BASE + '/api/preferences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyboardShortcutPreset: preset, keyboardShortcutsDefaultEnabled: defaultEnabled })
+          });
+          const result = await res.json();
+          if (result.success) {
+            currentKeyboardPreset = preset;
+            updateKeyboardHint();
+            showStatus('Keyboard settings saved', false);
+          } else {
+            showStatus('Failed to save keyboard settings: ' + (result.error || 'Unknown error'), true);
+          }
+        } catch (error) {
+          showStatus('Failed to save keyboard settings: ' + error.message, true);
+        }
+      });
+    }
+
     // Backup status polling
     let webBackupStatusInterval = null;
     

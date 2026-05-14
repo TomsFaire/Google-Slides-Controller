@@ -7168,6 +7168,29 @@ function startWebUiServer() {
           opacity: 0.45;
           cursor: not-allowed;
         }
+    .keyboard-toggle-btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .keyboard-toggle-btn:hover {
+      background: #5568d3;
+    }
+    .keyboard-toggle-btn.active {
+      background: #764ba2;
+    }
+    .keyboard-toggle-btn svg {
+      width: 18px;
+      height: 18px;
+    }
     .remote-controls {
       display: flex;
       flex-direction: row;
@@ -7979,6 +8002,25 @@ function startWebUiServer() {
       height: 16px;
     }
     body.theme-light .toggle-btn-text { display: none; }
+    body.theme-light .keyboard-toggle-btn {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border-radius: var(--faire-radius);
+      border: 1px solid var(--faire-border);
+      background: var(--faire-surface);
+      color: var(--faire-sub);
+      justify-content: center;
+    }
+    body.theme-light .keyboard-toggle-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+    body.theme-light .keyboard-toggle-btn.active {
+      background: #667eea;
+      color: white;
+      border-color: transparent;
+    }
     body.theme-light .slide-previews-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -8500,6 +8542,7 @@ function startWebUiServer() {
     body.theme-touch .remote-btn:active { transform: scale(0.97); }
     body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
+    body.theme-touch .keyboard-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
     body.theme-touch .slide-previews-grid, body.theme-touch .speaker-notes-content-wrapper { border-radius: var(--faire-radius); padding: 18px; }
     @media (max-width: 768px) {
       body.theme-touch .container { width: min(100%, calc(100vw - 24px)); max-width: calc(100vw - 24px); margin-left: auto; margin-right: auto; }
@@ -8569,6 +8612,7 @@ function startWebUiServer() {
     body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); color: rgba(255,255,255,0.9); }
     body.theme-thumb .speaker-notes-content { color: rgba(255,255,255,0.9); }
     body.theme-thumb .notes-toggle-btn, body.theme-thumb .preview-toggle-btn { background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
+    body.theme-thumb .keyboard-toggle-btn { background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
     body.theme-thumb .remote-header-compact .remote-machine-name { color: rgba(255,255,255,0.9); }
     body.theme-thumb .remote-header-compact .slide-counter { color: rgba(255,255,255,0.55); }
     @media (max-width: 768px) {
@@ -8591,6 +8635,11 @@ function startWebUiServer() {
     body.theme-max .preview-toggle-btn,
     body.theme-touch .preview-toggle-btn,
     body.theme-thumb .preview-toggle-btn,
+    body.theme-original .keyboard-toggle-btn,
+    body.theme-dark .keyboard-toggle-btn,
+    body.theme-max .keyboard-toggle-btn,
+    body.theme-touch .keyboard-toggle-btn,
+    body.theme-thumb .keyboard-toggle-btn,
     body.theme-original .notes-zoom-btn,
     body.theme-dark .notes-zoom-btn,
     body.theme-max .notes-zoom-btn,
@@ -8602,6 +8651,31 @@ function startWebUiServer() {
     body.theme-touch .tab-btn,
     body.theme-thumb .tab-btn {
       border-radius: var(--faire-radius);
+    }
+    #keyboard-shortcuts-hint {
+      display: none;
+      text-align: center;
+      padding: 10px 0 2px;
+    }
+    #keyboard-shortcuts-hint.visible {
+      display: block;
+    }
+    .keyboard-hint-title {
+      margin: 0 0 3px;
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.5);
+    }
+    .keyboard-hint-keys {
+      margin: 0;
+      font-size: 11px;
+      color: rgba(255,255,255,0.35);
+    }
+    body.theme-light .keyboard-hint-title {
+      color: rgba(0,0,0,0.4);
+    }
+    body.theme-light .keyboard-hint-keys {
+      color: rgba(0,0,0,0.3);
     }
     body.theme-original .slide-preview-card.clickable,
     body.theme-dark .slide-preview-card.clickable,
@@ -9152,6 +9226,16 @@ function startWebUiServer() {
           </svg>
           <span class="toggle-btn-text">Previews</span>
         </button>
+        <button type="button" class="keyboard-toggle-btn" id="keyboard-toggle-btn" title="Toggle keyboard shortcuts" aria-label="Toggle keyboard shortcuts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="7" y1="12" x2="7.01" y2="12" stroke-width="3" stroke-linecap="round"></line>
+            <line x1="12" y1="12" x2="12.01" y2="12" stroke-width="3" stroke-linecap="round"></line>
+            <line x1="17" y1="12" x2="17.01" y2="12" stroke-width="3" stroke-linecap="round"></line>
+            <line x1="7" y1="16" x2="17" y2="16" stroke-linecap="round"></line>
+          </svg>
+          <span class="toggle-btn-text">Keys</span>
+        </button>
       </div>
       <div class="stagetimer-container disabled" id="stagetimer-container" style="display: none;">
         <div class="stagetimer-row">
@@ -9580,6 +9664,11 @@ function startWebUiServer() {
     </div>
 ` : ''}
 
+    <div id="keyboard-shortcuts-hint">
+      <p class="keyboard-hint-title">Keyboard shortcuts enabled</p>
+      <p class="keyboard-hint-keys" id="keyboard-hint-keys"></p>
+    </div>
+
     <div id="status" class="status"></div>
     <div class="build-number">${versionString}</div>
   </div>
@@ -9750,7 +9839,39 @@ function startWebUiServer() {
     let notesVisible = false;
     let notesZoomLevel = 1; // Numeric zoom level (1 = normal, can go up/down continuously)
     let previewsVisible = false;
-    
+    let keyboardShortcutsEnabled = false;
+
+    function getShortcutModifier() {
+      if (navigator.userAgentData) {
+        return navigator.userAgentData.platform === 'macOS' ? '⌘' : 'Ctrl';
+      }
+      return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
+    }
+
+    function updateKeyboardHint() {
+      const hint = document.getElementById('keyboard-shortcuts-hint');
+      const keysEl = document.getElementById('keyboard-hint-keys');
+      const mod = getShortcutModifier();
+      if (!hint || !keysEl) return;
+      if (keyboardShortcutsEnabled) {
+        keysEl.textContent = mod + '← Prev slide · ' + mod + '→ Next slide · ' + mod + '↑ Notes up · ' + mod + '↓ Notes down';
+        hint.classList.add('visible');
+      } else {
+        hint.classList.remove('visible');
+      }
+    }
+
+    // Restore keyboard shortcut toggle from localStorage
+    (function() {
+      const stored = localStorage.getItem('gsc_keyboard_shortcuts_enabled');
+      if (stored === 'true') {
+        keyboardShortcutsEnabled = true;
+        const btn = document.getElementById('keyboard-toggle-btn');
+        if (btn) btn.classList.add('active');
+        updateKeyboardHint();
+      }
+    })();
+
     function normalizeSpeakerNotes(text) {
       if (text == null) return '';
       var s = String(text);
@@ -9898,6 +10019,40 @@ function startWebUiServer() {
       updateNotesZoomReadout();
     }
     
+    const keyboardToggleBtn = document.getElementById('keyboard-toggle-btn');
+    if (keyboardToggleBtn) keyboardToggleBtn.addEventListener('click', () => {
+      keyboardShortcutsEnabled = !keyboardShortcutsEnabled;
+      if (keyboardShortcutsEnabled) {
+        keyboardToggleBtn.classList.add('active');
+        localStorage.setItem('gsc_keyboard_shortcuts_enabled', 'true');
+      } else {
+        keyboardToggleBtn.classList.remove('active');
+        localStorage.setItem('gsc_keyboard_shortcuts_enabled', 'false');
+      }
+      updateKeyboardHint();
+    });
+
+    document.addEventListener('keydown', function(e) {
+      if (!keyboardShortcutsEnabled) return;
+      const tag = document.activeElement ? document.activeElement.tagName : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement && document.activeElement.isContentEditable)) return;
+      const isMod = e.metaKey || e.ctrlKey;
+      if (!isMod) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        apiCall('/api/next-slide').then(() => { updateSlideButtons(); });
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        apiCall('/api/previous-slide').then(() => { updateSlideButtons(); });
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        apiCall('/api/scroll-notes-down');
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        apiCall('/api/scroll-notes-up');
+      }
+    });
+
     document.getElementById('notes-toggle-btn').addEventListener('click', () => {
       const btn = document.getElementById('notes-toggle-btn');
       const container = document.getElementById('speaker-notes-container');

@@ -9842,6 +9842,13 @@ function startWebUiServer() {
     let notesZoomLevel = 1; // Numeric zoom level (1 = normal, can go up/down continuously)
     let previewsVisible = false;
     let keyboardShortcutsEnabled = false;
+    const KEYBOARD_PRESETS = {
+      'cmd+arrow':       e => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey,
+      'alt+arrow':       e => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey,
+      'cmd+shift+arrow': e => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey,
+    };
+    let currentKeyboardPreset = (window.__GSO_KEYBOARD_PRESET__ && KEYBOARD_PRESETS[window.__GSO_KEYBOARD_PRESET__])
+      ? window.__GSO_KEYBOARD_PRESET__ : 'cmd+arrow';
 
     function getShortcutModifier() {
       if (navigator.userAgentData) {
@@ -9850,23 +9857,38 @@ function startWebUiServer() {
       return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
     }
 
+    function getPresetHintText(preset) {
+      const mod = getShortcutModifier();
+      const isMac = mod === '⌘';
+      if (preset === 'alt+arrow') {
+        const alt = isMac ? '⌥' : 'Alt+';
+        return alt + '← Prev slide · ' + alt + '→ Next slide · ' + alt + '↑ Notes up · ' + alt + '↓ Notes down';
+      }
+      if (preset === 'cmd+shift+arrow') {
+        const combo = isMac ? '⌘⇧' : 'Ctrl+Shift+';
+        return combo + '← Prev slide · ' + combo + '→ Next slide · ' + combo + '↑ Notes up · ' + combo + '↓ Notes down';
+      }
+      return mod + '← Prev slide · ' + mod + '→ Next slide · ' + mod + '↑ Notes up · ' + mod + '↓ Notes down';
+    }
+
     function updateKeyboardHint() {
       const hint = document.getElementById('keyboard-shortcuts-hint');
       const keysEl = document.getElementById('keyboard-hint-keys');
-      const mod = getShortcutModifier();
       if (!hint || !keysEl) return;
       if (keyboardShortcutsEnabled) {
-        keysEl.textContent = mod + '← Prev slide · ' + mod + '→ Next slide · ' + mod + '↑ Notes up · ' + mod + '↓ Notes down';
+        keysEl.textContent = getPresetHintText(currentKeyboardPreset);
         hint.classList.add('visible');
       } else {
         hint.classList.remove('visible');
       }
     }
 
-    // Restore keyboard shortcut toggle from localStorage
+    // Restore keyboard shortcut toggle from admin default or localStorage
     (function() {
+      const adminDefault = window.__GSO_KEYBOARD_DEFAULT_ENABLED__ === true;
       const stored = localStorage.getItem('gsc_keyboard_shortcuts_enabled');
-      if (stored === 'true') {
+      const shouldEnable = adminDefault || stored === 'true';
+      if (shouldEnable) {
         keyboardShortcutsEnabled = true;
         const btn = document.getElementById('keyboard-toggle-btn');
         if (btn) btn.classList.add('active');
@@ -10038,8 +10060,8 @@ function startWebUiServer() {
       if (!keyboardShortcutsEnabled) return;
       const tag = document.activeElement ? document.activeElement.tagName : '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement && document.activeElement.isContentEditable)) return;
-      const isMod = e.metaKey || e.ctrlKey;
-      if (!isMod) return;
+      const checker = KEYBOARD_PRESETS[currentKeyboardPreset] || KEYBOARD_PRESETS['cmd+arrow'];
+      if (!checker(e)) return;
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         apiCall('/api/next-slide').then(() => { updateSlideButtons(); });

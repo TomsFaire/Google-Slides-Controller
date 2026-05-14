@@ -9698,6 +9698,8 @@ function startWebUiServer() {
     // This allows the Web UI to work even when only port 80 is accessible from the network
     const API_BASE = '';
     window.__GSO_WEB_UI_RESTRICTED__ = ${webUiRestrictedTunnelClient ? 'true' : 'false'};
+    window.__GSO_KEYBOARD_PRESET__ = '${prefs.keyboardShortcutPreset || "cmd+arrow"}';
+    window.__GSO_KEYBOARD_DEFAULT_ENABLED__ = ${!!prefs.keyboardShortcutsDefaultEnabled};
     
     // Debug: Log the API base URL for troubleshooting
     console.log('[Web UI] Using relative API URLs (proxied through Web UI server on port 80)');

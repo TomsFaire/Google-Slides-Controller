@@ -61,11 +61,12 @@ test('0xFF keepalive does not dispatch', () =>
   })
 );
 
-test('multiple bytes in one chunk all dispatch', () =>
+test('multiple bytes in one chunk: only first dispatches (debounce)', () =>
   withServer(18902, {}, async (dispatched) => {
     await sendAndClose(18902, Buffer.from([0x0c, 0x08]));
     await new Promise(r => setTimeout(r, 50));
-    assert.deepEqual(dispatched, ['next-slide', 'previous-slide']);
+    // Debounce suppresses the second command when both arrive in the same TCP chunk
+    assert.deepEqual(dispatched, ['next-slide']);
   })
 );
 

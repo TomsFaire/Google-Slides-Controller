@@ -9647,7 +9647,31 @@ function startWebUiServer() {
         </small>
         <button type="button" class="btn" id="btn-save-logging" style="margin-top: 12px;">Save Logging Settings</button>
       </div>
-      
+
+      <!-- Keyboard Shortcuts Section -->
+      <div class="controls-section">
+        <h3>Keyboard Shortcuts</h3>
+        <div class="info" style="margin-bottom: 10px;">
+          Configure the keyboard combo used when shortcuts are enabled. Changes take effect immediately without a page reload.
+        </div>
+        <div class="preset-group">
+          <label for="web-keyboard-preset">Shortcut preset</label>
+          <select id="web-keyboard-preset" class="input-field">
+            <option value="cmd+arrow">Cmd/Ctrl + Arrow</option>
+            <option value="alt+arrow">Alt/Option + Arrow</option>
+            <option value="cmd+shift+arrow">Cmd/Ctrl + Shift + Arrow (safest)</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
+          <input type="checkbox" id="web-keyboard-default-enabled" style="width: auto;" />
+          <label for="web-keyboard-default-enabled" style="margin: 0; font-weight: normal;">Enable for new connections by default</label>
+        </div>
+        <small style="display: block; margin-top: 6px; color: #888; font-size: 12px;">
+          When enabled, shortcuts are always active on load regardless of user preference.
+        </small>
+        <button type="button" class="btn" id="btn-save-keyboard-shortcuts" style="margin-top: 12px;">Save Keyboard Settings</button>
+      </div>
+
       ${webUiDebugConsoleEnabled ? `
       <!-- Debug Console (enabled from desktop app) -->
       <div class="controls-section">
@@ -9698,6 +9722,8 @@ function startWebUiServer() {
     // This allows the Web UI to work even when only port 80 is accessible from the network
     const API_BASE = '';
     window.__GSO_WEB_UI_RESTRICTED__ = ${webUiRestrictedTunnelClient ? 'true' : 'false'};
+    window.__GSO_KEYBOARD_PRESET__ = '${prefs.keyboardShortcutPreset || "cmd+arrow"}';
+    window.__GSO_KEYBOARD_DEFAULT_ENABLED__ = ${!!prefs.keyboardShortcutsDefaultEnabled};
     
     // Debug: Log the API base URL for troubleshooting
     console.log('[Web UI] Using relative API URLs (proxied through Web UI server on port 80)');
@@ -9840,6 +9866,13 @@ function startWebUiServer() {
     let notesZoomLevel = 1; // Numeric zoom level (1 = normal, can go up/down continuously)
     let previewsVisible = false;
     let keyboardShortcutsEnabled = false;
+    const KEYBOARD_PRESETS = {
+      'cmd+arrow':       e => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey,
+      'alt+arrow':       e => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey,
+      'cmd+shift+arrow': e => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey,
+    };
+    let currentKeyboardPreset = (window.__GSO_KEYBOARD_PRESET__ && KEYBOARD_PRESETS[window.__GSO_KEYBOARD_PRESET__])
+      ? window.__GSO_KEYBOARD_PRESET__ : 'cmd+arrow';
 
     function getShortcutModifier() {
       if (navigator.userAgentData) {
@@ -9848,23 +9881,38 @@ function startWebUiServer() {
       return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent) ? '⌘' : 'Ctrl';
     }
 
+    function getPresetHintText(preset) {
+      const mod = getShortcutModifier();
+      const isMac = mod === '⌘';
+      if (preset === 'alt+arrow') {
+        const alt = isMac ? '⌥' : 'Alt+';
+        return alt + '← Prev slide · ' + alt + '→ Next slide · ' + alt + '↑ Notes up · ' + alt + '↓ Notes down';
+      }
+      if (preset === 'cmd+shift+arrow') {
+        const combo = isMac ? '⌘⇧' : 'Ctrl+Shift+';
+        return combo + '← Prev slide · ' + combo + '→ Next slide · ' + combo + '↑ Notes up · ' + combo + '↓ Notes down';
+      }
+      return mod + '← Prev slide · ' + mod + '→ Next slide · ' + mod + '↑ Notes up · ' + mod + '↓ Notes down';
+    }
+
     function updateKeyboardHint() {
       const hint = document.getElementById('keyboard-shortcuts-hint');
       const keysEl = document.getElementById('keyboard-hint-keys');
-      const mod = getShortcutModifier();
       if (!hint || !keysEl) return;
       if (keyboardShortcutsEnabled) {
-        keysEl.textContent = mod + '← Prev slide · ' + mod + '→ Next slide · ' + mod + '↑ Notes up · ' + mod + '↓ Notes down';
+        keysEl.textContent = getPresetHintText(currentKeyboardPreset);
         hint.classList.add('visible');
       } else {
         hint.classList.remove('visible');
       }
     }
 
-    // Restore keyboard shortcut toggle from localStorage
+    // Restore keyboard shortcut toggle from admin default or localStorage
     (function() {
+      const adminDefault = window.__GSO_KEYBOARD_DEFAULT_ENABLED__ === true;
       const stored = localStorage.getItem('gsc_keyboard_shortcuts_enabled');
-      if (stored === 'true') {
+      const shouldEnable = adminDefault || stored === 'true';
+      if (shouldEnable) {
         keyboardShortcutsEnabled = true;
         const btn = document.getElementById('keyboard-toggle-btn');
         if (btn) btn.classList.add('active');
@@ -10036,8 +10084,8 @@ function startWebUiServer() {
       if (!keyboardShortcutsEnabled) return;
       const tag = document.activeElement ? document.activeElement.tagName : '';
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement && document.activeElement.isContentEditable)) return;
-      const isMod = e.metaKey || e.ctrlKey;
-      if (!isMod) return;
+      const checker = KEYBOARD_PRESETS[currentKeyboardPreset] || KEYBOARD_PRESETS['cmd+arrow'];
+      if (!checker(e)) return;
       if (e.key === 'ArrowRight') {
         e.preventDefault();
         apiCall('/api/next-slide').then(() => { updateSlideButtons(); });
@@ -11697,7 +11745,18 @@ function startWebUiServer() {
         if (verboseEl) {
           verboseEl.checked = prefs.verboseLogging === true;
         }
-        
+
+        // Set keyboard shortcut preferences
+        const webKeyboardPresetEl = document.getElementById('web-keyboard-preset');
+        if (webKeyboardPresetEl) {
+          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+          webKeyboardPresetEl.value = validPresets.includes(prefs.keyboardShortcutPreset) ? prefs.keyboardShortcutPreset : 'cmd+arrow';
+        }
+        const webKeyboardDefaultEl = document.getElementById('web-keyboard-default-enabled');
+        if (webKeyboardDefaultEl) {
+          webKeyboardDefaultEl.checked = prefs.keyboardShortcutsDefaultEnabled === true;
+        }
+
         // Set up primary/backup mode change handlers
         document.getElementById('web-mode-primary').addEventListener('change', () => {
           if (document.getElementById('web-mode-primary').checked) {
@@ -11953,6 +12012,35 @@ function startWebUiServer() {
       });
     }
     
+    // Save keyboard shortcut settings
+    const saveKeyboardShortcutsBtn = document.getElementById('btn-save-keyboard-shortcuts');
+    if (saveKeyboardShortcutsBtn) {
+      saveKeyboardShortcutsBtn.addEventListener('click', async () => {
+        try {
+          const presetEl = document.getElementById('web-keyboard-preset');
+          const defaultEl = document.getElementById('web-keyboard-default-enabled');
+          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+          const preset = presetEl && validPresets.includes(presetEl.value) ? presetEl.value : 'cmd+arrow';
+          const defaultEnabled = defaultEl ? defaultEl.checked : false;
+          const res = await fetch(API_BASE + '/api/preferences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyboardShortcutPreset: preset, keyboardShortcutsDefaultEnabled: defaultEnabled })
+          });
+          const result = await res.json();
+          if (result.success) {
+            currentKeyboardPreset = preset;
+            updateKeyboardHint();
+            showStatus('Keyboard settings saved', false);
+          } else {
+            showStatus('Failed to save keyboard settings: ' + (result.error || 'Unknown error'), true);
+          }
+        } catch (error) {
+          showStatus('Failed to save keyboard settings: ' + error.message, true);
+        }
+      });
+    }
+
     // Backup status polling
     let webBackupStatusInterval = null;
     

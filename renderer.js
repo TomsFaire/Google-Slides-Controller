@@ -41,6 +41,9 @@ const webUiCustomCssPathInput = document.getElementById('web-ui-custom-css-path'
 const webUiCustomCssChooseBtn = document.getElementById('web-ui-custom-css-choose');
 const webUiCustomCssClearBtn = document.getElementById('web-ui-custom-css-clear');
 const saveWebUiAppearanceBtn = document.getElementById('save-web-ui-appearance-btn');
+const keyboardShortcutPresetSelect = document.getElementById('keyboard-shortcut-preset');
+const keyboardShortcutsDefaultEnabledCheckbox = document.getElementById('keyboard-shortcuts-default-enabled');
+const saveKeyboardShortcutsBtn = document.getElementById('save-keyboard-shortcuts-btn');
 const webUiDownloadCssTemplateBtn = document.getElementById('web-ui-download-css-template');
 const webUiUseHttpsCheckbox = document.getElementById('web-ui-use-https');
 const webUiCertPathInput = document.getElementById('web-ui-cert-path');
@@ -583,6 +586,16 @@ async function initDisplays() {
     if (genericUrlBgColorPicker) genericUrlBgColorPicker.value = savedBgColor;
     if (genericUrlBgColorHex) genericUrlBgColorHex.value = savedBgColor;
 
+    // Restore keyboard shortcut preferences
+    if (keyboardShortcutPresetSelect) {
+      const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+      const preset = preferences.keyboardShortcutPreset;
+      keyboardShortcutPresetSelect.value = validPresets.includes(preset) ? preset : 'cmd+arrow';
+    }
+    if (keyboardShortcutsDefaultEnabledCheckbox) {
+      keyboardShortcutsDefaultEnabledCheckbox.checked = preferences.keyboardShortcutsDefaultEnabled === true;
+    }
+
     // Restore Web UI appearance (theme + logo + custom CSS path)
     if (webUiThemeSelect) {
       const theme = preferences.webUiTheme || 'original';
@@ -786,6 +799,9 @@ async function initDisplays() {
     }
     if (saveWebUiAppearanceBtn) {
       saveWebUiAppearanceBtn.addEventListener('click', saveWebUiAppearance);
+    }
+    if (saveKeyboardShortcutsBtn) {
+      saveKeyboardShortcutsBtn.addEventListener('click', saveKeyboardShortcutSettings);
     }
     if (webUiDownloadCssTemplateBtn && window.electronAPI.downloadCssTemplate) {
       webUiDownloadCssTemplateBtn.addEventListener('click', async () => {
@@ -1510,6 +1526,22 @@ async function saveWebUiAppearance() {
   } catch (error) {
     console.error('Failed to save Web UI appearance:', error);
     showStatus('Failed to save Web UI appearance', 'error');
+  }
+}
+
+async function saveKeyboardShortcutSettings() {
+  try {
+    const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+    const preset = keyboardShortcutPresetSelect ? keyboardShortcutPresetSelect.value : 'cmd+arrow';
+    const defaultEnabled = keyboardShortcutsDefaultEnabledCheckbox ? keyboardShortcutsDefaultEnabledCheckbox.checked : false;
+    await window.electronAPI.savePreferences({
+      keyboardShortcutPreset: validPresets.includes(preset) ? preset : 'cmd+arrow',
+      keyboardShortcutsDefaultEnabled: defaultEnabled
+    });
+    showStatus('Keyboard shortcut settings saved.', 'info');
+  } catch (error) {
+    console.error('Failed to save keyboard shortcut settings:', error);
+    showStatus('Failed to save keyboard shortcut settings', 'error');
   }
 }
 

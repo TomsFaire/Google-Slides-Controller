@@ -2,6 +2,17 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.3] - 2026-05-14
+
+### Added
+- **Configurable keyboard shortcut preset** — Operators can now choose between three presets from the Electron desktop app's Web Remote tab or the web remote's Settings tab:
+  - `Cmd/Ctrl + Arrow` (original, default)
+  - `Alt/Option + Arrow`
+  - `Cmd/Ctrl + Shift + Arrow` (safest — avoids browser back/forward conflict)
+- **Default-enabled toggle** — Admins can pre-enable keyboard shortcuts for all new connections without requiring users to tap the toggle.
+- Both settings persist in `preferences.json` and are applied on web remote load via injected template globals.
+- Preset changes in the web Settings tab take effect immediately without a page reload.
+
 ## [2.3.2] - 2026-05-14
 
 ### Added

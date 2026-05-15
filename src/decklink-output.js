@@ -3,6 +3,9 @@
 const { execFileSync } = require('child_process');
 
 const DISPLAY_MODES = {
+  '1080p5994': { bmdMode: 'bmdModeHD1080p5994', width: 1920, height: 1080, fps: 59.94 },
+  '1080p60':   { bmdMode: 'bmdModeHD1080p60',   width: 1920, height: 1080, fps: 60   },
+  '1080p50':   { bmdMode: 'bmdModeHD1080p50',   width: 1920, height: 1080, fps: 50   },
   '1080p2997': { bmdMode: 'bmdModeHD1080p2997', width: 1920, height: 1080, fps: 29.97 },
   '1080p25':   { bmdMode: 'bmdModeHD1080p25',   width: 1920, height: 1080, fps: 25   },
   '1080p30':   { bmdMode: 'bmdModeHD1080p30',   width: 1920, height: 1080, fps: 30   },

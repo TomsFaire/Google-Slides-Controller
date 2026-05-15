@@ -88,7 +88,7 @@ test('DISPLAY_MODES contains expected keys', () => {
     DISPLAY_MODES = require('../src/decklink-output').DISPLAY_MODES;
   } catch (e) { return; }
   if (!DISPLAY_MODES) return;
-  const expected = ['1080p2997', '1080p25', '1080p30', '1080i5994', '720p5994', '720p50'];
+  const expected = ['1080p5994', '1080p60', '1080p50', '1080p2997', '1080p25', '1080p30', '1080i5994', '720p5994', '720p50'];
   for (const key of expected) {
     assert.ok(key in DISPLAY_MODES, `DISPLAY_MODES should contain ${key}`);
     assert.ok(DISPLAY_MODES[key].width > 0, `${key} should have positive width`);

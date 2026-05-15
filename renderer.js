@@ -2050,13 +2050,28 @@ async function updateDecklinkStatus() {
   if (!providerEl) return;
   try {
     const status = await window.electronAPI.getDecklinkStatus();
-    providerEl.textContent = status.providerType === 'unavailable'
-      ? 'No provider available (install macadam or FFmpeg with DeckLink support)'
-      : `Active — provider: ${status.providerType}`;
+    if (status.providerType === 'unavailable') {
+      const errs = status.detectionErrors || {};
+      const detail = [
+        errs.macadam ? `macadam: ${errs.macadam}` : null,
+        errs.ffmpeg  ? `ffmpeg: ${errs.ffmpeg}`   : null,
+      ].filter(Boolean).join(' | ');
+      providerEl.textContent = detail
+        ? `No provider available — ${detail}`
+        : 'No provider available (install macadam or FFmpeg with DeckLink support)';
+    } else {
+      providerEl.textContent = `Provider: ${status.providerType}`;
+    }
     if (slidesLed) slidesLed.className = `led ${status.slides.active ? 'led-ok' : 'led-neutral'}`;
-    if (slidesLabel) slidesLabel.textContent = status.slides.active ? 'Active' : 'Inactive';
+    if (slidesLabel) {
+      slidesLabel.textContent = status.slides.active ? 'Active'
+        : (status.slides.error ? `Error: ${status.slides.error}` : 'Inactive');
+    }
     if (notesLed) notesLed.className = `led ${status.notes.active ? 'led-ok' : 'led-neutral'}`;
-    if (notesLabel) notesLabel.textContent = status.notes.active ? 'Active' : 'Inactive';
+    if (notesLabel) {
+      notesLabel.textContent = status.notes.active ? 'Active'
+        : (status.notes.error ? `Error: ${status.notes.error}` : 'Inactive');
+    }
   } catch (e) {
     if (providerEl) providerEl.textContent = 'Status unavailable';
   }

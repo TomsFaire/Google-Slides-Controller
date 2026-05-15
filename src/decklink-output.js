@@ -15,31 +15,41 @@ const DISPLAY_MODES = {
 };
 
 let _cachedProviderType = null;
+let _detectionErrors = {};
 
 async function detectProviderType() {
   if (_cachedProviderType !== null) return _cachedProviderType;
 
   try {
     const macadam = require('macadam');
-    void macadam.bmdModeHD1080p2997;
+    // Verify at least one constant is accessible — confirms native module loaded OK
+    if (macadam.bmdModeHD1080p2997 === undefined) throw new Error('macadam constants not exposed — rebuild required');
     _cachedProviderType = 'macadam';
+    console.log('[decklink] Provider: macadam');
     return _cachedProviderType;
-  } catch (e) {}
+  } catch (e) {
+    _detectionErrors.macadam = e.message;
+    console.warn('[decklink] macadam unavailable:', e.message);
+  }
 
   try {
     execFileSync('ffmpeg', ['-hide_banner', '-f', 'decklink', '-list_devices', '1', '-i', 'dummy'],
       { stdio: 'pipe', timeout: 3000 });
     _cachedProviderType = 'ffmpeg';
+    console.log('[decklink] Provider: ffmpeg');
     return _cachedProviderType;
   } catch (e) {
     if (e.code !== 'ENOENT') {
-      // ffmpeg exists but errored (expected with dummy input); decklink support is present
+      // ffmpeg is present but errored on dummy input — expected; decklink support is present
       _cachedProviderType = 'ffmpeg';
+      console.log('[decklink] Provider: ffmpeg');
       return _cachedProviderType;
     }
+    _detectionErrors.ffmpeg = e.message;
+    console.warn('[decklink] ffmpeg unavailable:', e.message);
   }
 
-  console.warn('[decklink] No DeckLink output provider found (macadam and ffmpeg unavailable)');
+  console.warn('[decklink] No provider found. macadam error:', _detectionErrors.macadam, '| ffmpeg error:', _detectionErrors.ffmpeg);
   _cachedProviderType = 'unavailable';
   return _cachedProviderType;
 }
@@ -169,6 +179,8 @@ class OutputController {
 class DecklinkOutputManagerClass {
   constructor() {
     this._providerType = 'unavailable';
+    this._slidesError = null;
+    this._notesError = null;
     this._slidesProvider = null;
     this._notesProvider = null;
     this._slidesController = null;
@@ -195,15 +207,19 @@ class DecklinkOutputManagerClass {
     this._providerType = await detectProviderType();
     if (this._providerType === 'unavailable') return;
 
+    this._slidesError = null;
+    this._notesError = null;
+
     if (deckPrefs.slides && deckPrefs.slides.enabled) {
       try {
         const provider = createProvider(this._providerType);
-        await provider.start(deckPrefs.slides.deviceIndex || 0, deckPrefs.slides.displayMode || '1080p2997');
+        await provider.start(deckPrefs.slides.deviceIndex || 0, deckPrefs.slides.displayMode || '1080p5994');
         const controller = new OutputController();
-        controller.start(this._getSlidesWindow, provider, deckPrefs.slides.displayMode || '1080p2997');
+        controller.start(this._getSlidesWindow, provider, deckPrefs.slides.displayMode || '1080p5994');
         this._slidesProvider = provider;
         this._slidesController = controller;
       } catch (e) {
+        this._slidesError = e.message;
         console.error('[decklink] Failed to start slides output:', e.message);
       }
     }
@@ -211,12 +227,13 @@ class DecklinkOutputManagerClass {
     if (deckPrefs.notes && deckPrefs.notes.enabled) {
       try {
         const provider = createProvider(this._providerType);
-        await provider.start(deckPrefs.notes.deviceIndex || 1, deckPrefs.notes.displayMode || '1080p2997');
+        await provider.start(deckPrefs.notes.deviceIndex || 1, deckPrefs.notes.displayMode || '1080p5994');
         const controller = new OutputController();
-        controller.start(this._getNotesWindow, provider, deckPrefs.notes.displayMode || '1080p2997');
+        controller.start(this._getNotesWindow, provider, deckPrefs.notes.displayMode || '1080p5994');
         this._notesProvider = provider;
         this._notesController = controller;
       } catch (e) {
+        this._notesError = e.message;
         console.error('[decklink] Failed to start notes output:', e.message);
       }
     }
@@ -234,17 +251,20 @@ class DecklinkOutputManagerClass {
   getStatus() {
     return {
       providerType: this._providerType,
-      slides: { active: this._slidesController !== null },
-      notes:  { active: this._notesController !== null }
+      detectionErrors: _detectionErrors,
+      slides: { active: this._slidesController !== null, error: this._slidesError || null },
+      notes:  { active: this._notesController !== null, error: this._notesError || null }
     };
   }
 
   async getDevices() {
     try {
       const macadam = require('macadam');
-      const info = await macadam.deviceInfo();
-      return info.map((d, i) => ({ index: i, name: d.displayName || `DeckLink ${i}` }));
+      // macadam v2: getDeviceInfo() returns array of device info objects
+      const info = await macadam.getDeviceInfo();
+      return info.map((d, i) => ({ index: i, name: d.displayName || d.modelName || `DeckLink ${i}` }));
     } catch (e) {
+      console.warn('[decklink] getDevices failed:', e.message);
       return [];
     }
   }

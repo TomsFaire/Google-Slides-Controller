@@ -43,6 +43,9 @@
     "appId": "com.gslide.opener",
     "productName": "Google Slides Opener",
     "publish": null,
+    "asarUnpack": [
+      "node_modules/macadam/**"
+    ],
     "files": [
       "main.js",
       "preload.js",

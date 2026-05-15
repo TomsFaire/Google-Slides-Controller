@@ -524,7 +524,7 @@
           <!-- PerfectCue Network Extender panel -->
           <div class="panel">
             <h2 class="panel-title">PerfectCue Network Extender</h2>
-            <p class="card-description">Accept slide advance/back commands from DSAN PerfectCue network extenders over TCP. Add one port per extender (or group).</p>
+            <p class="card-description">Accept slide advance/back commands from PerfectCue serial–TCP converters (DSAN or WaveShare) over TCP. Add one listener port per device or group; pick the converter type per row for keep-alive timing.</p>
 
             <div class="form-group">
               <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
@@ -537,7 +537,7 @@
               <label>Listener Ports</label>
               <div id="perfectcue-port-list" style="display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0;"></div>
               <button type="button" id="add-perfectcue-port" class="btn btn-secondary" style="margin-top: 10px;">+ Add port</button>
-              <small class="field-hint">Default port is 8899. Add one entry per network extender or subnet if they connect on different ports.</small>
+              <small class="field-hint">Default port is 8899. Your converter must use TCP Client to this machine’s IP and this port. DSAN uses shorter keep-alive pings; WaveShare uses longer pings (see presets in code).</small>
             </div>
 
             <button type="button" id="save-perfectcue-btn" class="btn btn-primary" style="margin-top: 8px;">Save PerfectCue settings</button>

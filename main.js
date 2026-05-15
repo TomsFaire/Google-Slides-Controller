@@ -9660,6 +9660,7 @@ function startWebUiServer() {
             <option value="cmd+arrow">Cmd/Ctrl + Arrow</option>
             <option value="alt+arrow">Alt/Option + Arrow</option>
             <option value="cmd+shift+arrow">Cmd/Ctrl + Shift + Arrow (safest)</option>
+            <option value="arrow-only">Arrow only (captures scroll)</option>
           </select>
         </div>
         <div style="display: flex; align-items: center; gap: 10px; margin-top: 12px;">
@@ -9870,6 +9871,7 @@ function startWebUiServer() {
       'cmd+arrow':       e => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey,
       'alt+arrow':       e => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey,
       'cmd+shift+arrow': e => (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey,
+      'arrow-only':      e => !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey,
     };
     let currentKeyboardPreset = (window.__GSO_KEYBOARD_PRESET__ && KEYBOARD_PRESETS[window.__GSO_KEYBOARD_PRESET__])
       ? window.__GSO_KEYBOARD_PRESET__ : 'cmd+arrow';
@@ -9891,6 +9893,9 @@ function startWebUiServer() {
       if (preset === 'cmd+shift+arrow') {
         const combo = isMac ? '⌘⇧' : 'Ctrl+Shift+';
         return combo + '← Prev slide · ' + combo + '→ Next slide · ' + combo + '↑ Notes up · ' + combo + '↓ Notes down';
+      }
+      if (preset === 'arrow-only') {
+        return '← Prev slide · → Next slide · ↑ Notes up · ↓ Notes down';
       }
       return mod + '← Prev slide · ' + mod + '→ Next slide · ' + mod + '↑ Notes up · ' + mod + '↓ Notes down';
     }
@@ -11495,11 +11500,11 @@ function startWebUiServer() {
     
     // Load all settings when Settings tab is opened
     let settingsLoaded = false;
-    document.querySelector('[data-tab="settings"]').addEventListener('click', () => {
+    document.querySelectorAll('[data-tab="settings"]').forEach(btn => btn.addEventListener('click', () => {
       if (!settingsLoaded) {
         loadAllSettings();
       }
-    });
+    }));
 
     // Load settings immediately if Settings tab is already active
     if (document.getElementById('tab-settings').classList.contains('active')) {
@@ -11749,7 +11754,7 @@ function startWebUiServer() {
         // Set keyboard shortcut preferences
         const webKeyboardPresetEl = document.getElementById('web-keyboard-preset');
         if (webKeyboardPresetEl) {
-          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow', 'arrow-only'];
           webKeyboardPresetEl.value = validPresets.includes(prefs.keyboardShortcutPreset) ? prefs.keyboardShortcutPreset : 'cmd+arrow';
         }
         const webKeyboardDefaultEl = document.getElementById('web-keyboard-default-enabled');
@@ -11785,8 +11790,8 @@ function startWebUiServer() {
         settingsLoaded = false;
         const s1 = document.getElementById('web-presentation-display');
         const s2 = document.getElementById('web-notes-display');
-        if (s1 && !s1.options.length) s1.innerHTML = '<option value="">Could not load displays</option>';
-        if (s2 && !s2.options.length) s2.innerHTML = '<option value="">Could not load displays</option>';
+        if (s1) s1.innerHTML = '<option value="">Could not load displays</option>';
+        if (s2) s2.innerHTML = '<option value="">Could not load displays</option>';
       }
     }
     
@@ -12019,7 +12024,7 @@ function startWebUiServer() {
         try {
           const presetEl = document.getElementById('web-keyboard-preset');
           const defaultEl = document.getElementById('web-keyboard-default-enabled');
-          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow'];
+          const validPresets = ['cmd+arrow', 'alt+arrow', 'cmd+shift+arrow', 'arrow-only'];
           const preset = presetEl && validPresets.includes(presetEl.value) ? presetEl.value : 'cmd+arrow';
           const defaultEnabled = defaultEl ? defaultEl.checked : false;
           const res = await fetch(API_BASE + '/api/preferences', {

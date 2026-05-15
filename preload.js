@@ -37,5 +37,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onLogLine: (callback) => {
     if (typeof callback !== 'function') return;
     ipcRenderer.on('app-log-line', (_event, line) => callback(line));
-  }
+  },
+
+  getDecklinkDevices: () => ipcRenderer.invoke('get-decklink-devices'),
+  getDecklinkStatus: () => ipcRenderer.invoke('get-decklink-status'),
+  saveDecklinkConfig: (config) => ipcRenderer.invoke('save-decklink-config', config),
 });

@@ -1,3 +1,5 @@
+@.claude/skills/token-optimization.md
+
 # CLAUDE.md
 
 Project: Google Slides Controller (Electron Desktop App)
@@ -154,3 +156,11 @@ Use `/security-review` skill for authentication and API security questions.
 - `CHANGELOG.md` – Version history and feature changes
 - `_FINDINGS.md` – Technical findings and design decisions
 - `.claude/settings.local.json` – Local development settings
+
+## Three Man Team
+
+Available agents: Arch (Architect, Opus), Bob (Builder, Sonnet), Richard (Reviewer, Haiku)
+
+**Docs policy:** All docs live in `docs/`. After completing any work outlined in a doc, update that doc's status section to reflect what was done, what's pending, and any decisions made.
+
+Start sessions with: *You are the Architect on this project. Read CLAUDE.md, then ARCHITECT.md.*

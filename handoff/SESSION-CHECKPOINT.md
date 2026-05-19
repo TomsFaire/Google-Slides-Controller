@@ -5,32 +5,37 @@
 
 ## Where We Stopped
 
-Step 2 complete — DMGs built and ready for prod test. macadam 2.0.17 now compiles against Electron 33 (NAPI 10) with source patches. DMGs are at:
-- `dist/Google Slides Opener-2.3.2-arm64.dmg` — Apple Silicon
+Pending DV update on prod machine. DMGs at:
+- `dist/Google Slides Opener-2.3.2-arm64.dmg` — Apple Silicon (macadam 2.0.18, SDK 10.11.2)
 - `dist/Google Slides Opener-2.3.2.dmg` — Intel x64
+
+User is updating Desktop Video to latest stable. After that: install the arm64 DMG and retest.
 
 ---
 
 ## What Was Decided This Session
 
-- macadam 2.0.18 compiled with SDK 16.0 — incompatible with Desktop Video 14.5 installed on prod → SIGSEGV on any hardware call
-- macadam 2.0.17 uses SDK 10.11.2 headers, which Desktop Video 14.5 supports via backwards compatibility
-- macadam 2.0.17 source needed 5 patches to compile with Electron 33's NAPI 10:
-  1. `capture_promise.cc` line 85: `napi_env` → `node_api_basic_env` for `finalizeCaptureCarrier`
-  2. `capture_promise.cc` line 91: `napi_env` → `const napi_env` for `finalizeVideoBuffer` (not called at runtime)
-  3. `capture_promise.cc` line 102: `napi_env` → `const napi_env` for `finalizeAudioPacket` (not called at runtime)
-  4. `capture_promise.cc` lines 701-702: `napi_create_external_buffer` → `napi_create_buffer_copy` + manual Release()
-  5. `capture_promise.cc` lines 857-858: same as above for audio
-  6. `playback_promise.cc` line 85: `napi_env` → `node_api_basic_env` for `finalizePlaybackCarrier`
-- These patches live in node_modules (not committed) — they are applied at build time by electron-builder's rebuild step, which recompiles from source
-- package.json pins macadam to `"2.0.17"` (committed change pending)
+- ALL macadam versions (2.0.14–2.0.18, the entire npm history) use DeckLink SDK 10.11.2 — no newer SDK available
+- The crash is INSIDE DV 14.5's DeckLinkAPI.framework, not in macadam's wrapper. SDK version on our side is irrelevant.
+- Root cause: DV 14.5 is incompatible with the macOS version running on prod (likely macOS 15 Sequoia KEXT issues, or a DV 14.5 regression bug)
+- Decision: Update Desktop Video to latest stable; macadam 2.0.18 source compiled from scratch for Electron 33 with NAPI 10 patches
+- macadam source (same in 2.0.17 and 2.0.18) requires 5 NAPI 10 patches applied at build time:
+  1. `capture_promise.cc`: `finalizeCaptureCarrier` → `node_api_basic_env` (napi_create_external callback)
+  2. `capture_promise.cc`: `finalizeVideoBuffer` → `const napi_env` (no longer a callback)
+  3. `capture_promise.cc`: `finalizeAudioPacket` → `const napi_env` (no longer a callback)
+  4. `capture_promise.cc`: `napi_create_external_buffer` → `napi_create_buffer_copy` + immediate Release() (video)
+  5. `capture_promise.cc`: same as above for audio packet
+  6. `playback_promise.cc`: `finalizePlaybackCarrier` → `node_api_basic_env` (napi_create_external callback)
+
+Before installing DMG after DV update — also check:
+- System Settings → Privacy & Security — approve Blackmagic Design kernel extension if prompted
+- DeckLink device shows in Desktop Video Setup app after update
 
 ---
 
 ## Still Open
 
-- User needs to test on prod machine with DeckLink device
-- If prod test fails: check dmesg/Console for new crash signal/error
+- Prod test after DV update
 - KG-1: no error handling if `playback.frame()` throws
 - KG-2: no `pb.on('error', ...)` handler on macadam playback object
 

@@ -37,7 +37,7 @@
     "png-to-ico": "^2.1.8"
   },
   "optionalDependencies": {
-    "macadam": "^2.0.0"
+    "macadam": "2.0.17"
   },
   "build": {
     "appId": "com.gslide.opener",

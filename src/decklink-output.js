@@ -118,36 +118,105 @@ function createProvider(type) {
   return type === 'macadam' ? new MacadamProvider() : new FfmpegProvider();
 }
 
-// ── MacadamProvider — runs macadam directly in the main process ───────────────
+// ── MacadamProvider — persistent worker per output ────────────────────────────
+// macadam.playback() crashes with SIGSEGV when called in the Electron main
+// process. Running it in a fork isolates the crash so the app stays alive.
 
 class MacadamProvider {
   constructor() {
-    this._macadam  = null;
-    this._playback = null;
-    this._busy     = false;
-    this._mode     = null;
+    this._worker  = null;
+    this._msgId   = 0;
+    this._pending = new Map();
+    this._busy    = false;
+    this._mode    = null;
+    this._pbId    = null;
+  }
+
+  _spawnWorker() {
+    const w = fork(WORKER_SCRIPT, [], { serialization: 'advanced', silent: true });
+
+    w.on('message', (msg) => {
+      const p = this._pending.get(msg.id);
+      if (!p) return;
+      this._pending.delete(msg.id);
+      if (msg.cmd === 'error') p.reject(new Error(msg.error));
+      else p.resolve(msg);
+    });
+
+    // Log stderr from worker so we can see native crash messages.
+    if (w.stderr) {
+      w.stderr.on('data', (chunk) => {
+        console.error('[decklink] worker stderr:', chunk.toString().trimEnd());
+      });
+    }
+
+    w.on('error', (e) => {
+      console.error('[decklink] worker error event:', e.message);
+    });
+
+    w.on('exit', (code, signal) => {
+      console.error(`[decklink] macadam worker exited (code=${code} signal=${signal})`);
+      this._worker = null;
+      this._busy   = false;
+      for (const [, p] of this._pending) p.reject(new Error(`worker exited (code=${code} signal=${signal})`));
+      this._pending.clear();
+    });
+
+    return w;
+  }
+
+  _send(cmd, extra = {}) {
+    return new Promise((resolve, reject) => {
+      const id = ++this._msgId;
+      this._pending.set(id, { resolve, reject });
+      try {
+        this._worker.send({ id, cmd, ...extra });
+      } catch (e) {
+        this._pending.delete(id);
+        reject(e);
+      }
+    });
   }
 
   async start(deviceIndex, displayModeKey) {
-    this._macadam = require('macadam');
     const mode = DISPLAY_MODES[displayModeKey];
     this._mode = mode;
-    this._playback = await this._macadam.playback({
+    this._pbId = `pb-${deviceIndex}-${Date.now()}`;
+    this._worker = this._spawnWorker();
+    await this._send('start', {
       deviceIndex,
-      displayMode: this._macadam[mode.bmdMode],
-      pixelFormat: this._macadam.bmdFormat8BitBGRA,
+      bmdMode: mode.bmdMode,
+      playbackId: this._pbId,
     });
   }
 
   pushFrame(bgraBuffer) {
-    if (this._busy || !this._playback) return;
+    if (this._busy || !this._worker) return;
     this._busy = true;
-    this._playback.frame(bgraBuffer, () => { this._busy = false; });
+    const id = ++this._msgId;
+    this._pending.set(id, {
+      resolve: () => { this._busy = false; },
+      reject:  () => { this._busy = false; },
+    });
+    try {
+      const ab = bgraBuffer.buffer.slice(
+        bgraBuffer.byteOffset,
+        bgraBuffer.byteOffset + bgraBuffer.byteLength
+      );
+      this._worker.send({ id, cmd: 'frame', playbackId: this._pbId, data: ab });
+    } catch (_) {
+      this._pending.delete(id);
+      this._busy = false;
+    }
   }
 
   stop() {
-    try { if (this._playback) this._playback.stop(); } catch (_) {}
-    this._playback = null;
+    if (this._worker) {
+      try { this._send('stop', { playbackId: this._pbId }).catch(() => {}); } catch (_) {}
+      const w = this._worker;
+      this._worker = null;
+      setTimeout(() => { try { w.kill(); } catch (_) {} }, 600);
+    }
   }
 }
 

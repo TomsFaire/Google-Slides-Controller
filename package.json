@@ -45,7 +45,8 @@
     "productName": "Google Slides Opener",
     "publish": null,
     "asarUnpack": [
-      "node_modules/macadam/**"
+      "node_modules/macadam/**",
+      "!node_modules/macadam/**/.vscode/**"
     ],
     "files": [
       "main.js",

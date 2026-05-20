@@ -416,4 +416,4 @@ class DecklinkOutputManagerClass {
   }
 }
 
-module.exports = { DecklinkOutputManager: new DecklinkOutputManagerClass() };
+module.exports = { DecklinkOutputManager: new DecklinkOutputManagerClass(), DISPLAY_MODES };

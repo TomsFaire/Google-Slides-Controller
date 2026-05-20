@@ -49,6 +49,9 @@ async function handle(msg) {
         displayMode: macadam[msg.bmdMode],
         pixelFormat: macadam.bmdFormat8BitBGRA,
       });
+      pb.on('error', (e) => {
+        console.error('[decklink-worker] playback error:', e.message);
+      });
       playbacks[msg.playbackId] = { pb, busy: false };
       reply(id, { cmd: 'ok' });
       break;
@@ -63,12 +66,23 @@ async function handle(msg) {
       }
       entry.busy = true;
       const buf = Buffer.from(msg.data);
-      await new Promise((resolve) => {
-        entry.pb.frame(buf, () => {
-          entry.busy = false;
-          resolve();
+      try {
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            entry.busy = false;
+            reject(new Error('frame() callback timed out after 2000ms'));
+          }, 2000);
+          entry.pb.frame(buf, () => {
+            clearTimeout(timeout);
+            entry.busy = false;
+            resolve();
+          });
         });
-      });
+      } catch (e) {
+        entry.busy = false;
+        console.error('[decklink-worker] frame error:', e.message);
+        throw e;
+      }
       reply(id, { cmd: 'ok' });
       break;
     }

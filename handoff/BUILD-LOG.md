@@ -67,3 +67,4 @@ Deploy: PENDING — user to test on prod machine with DeckLink device
 *Locked decisions that cannot be changed without breaking the system.*
 
 - Worker process (`macadam-worker.js`) scope is probe + device enumeration only. Live frame pushing stays in main process. — 2026-05-18
+- NAPI 10 patches to macadam C++ source (6 changes across `capture_promise.cc` and `playback_promise.cc`) are now reproduced automatically via `scripts/patch-macadam.js`, which runs as a `postinstall` hook after every `yarn install`. The script is idempotent and exits 0 gracefully when macadam is absent (optional dep). Raw patch details are in `handoff/SESSION-CHECKPOINT.md`. — 2026-05-20

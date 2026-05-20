@@ -16,6 +16,7 @@
     "smoke:slides-gpu": "electron scripts/slides-presenter-gpu-smoke.cjs",
     "capture:readme-screenshots": "cross-env GSO_README_CAPTURE=1 electron .",
     "rebuild": "electron-rebuild -f -w macadam",
+    "postinstall": "node scripts/patch-macadam.js",
     "test": "node --test 'tests/**/*.test.js'"
   },
   "keywords": [

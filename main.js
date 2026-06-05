@@ -2802,11 +2802,12 @@ function scheduleReadmeScreenshotCapture() {
 // Get all available displays
 ipcMain.handle('get-displays', async () => {
   const displays = screen.getAllDisplays();
+  const primaryId = screen.getPrimaryDisplay().id;
   return displays.map((display, index) => ({
     id: display.id,
-    label: `Monitor ${index + 1} (${display.bounds.width}x${display.bounds.height})`,
+    label: `Display ${index + 1} (${display.bounds.width}×${display.bounds.height})`,
     bounds: display.bounds,
-    primary: display.bounds.x === 0 && display.bounds.y === 0
+    primary: display.id === primaryId
   }));
 });
 
@@ -4167,11 +4168,12 @@ function startHttpServer() {
     if (req.method === 'GET' && req.url === '/api/displays') {
       try {
         const displays = screen.getAllDisplays();
-        const displayList = displays.map(display => ({
+        const primaryId = screen.getPrimaryDisplay().id;
+        const displayList = displays.map((display, index) => ({
           id: display.id,
           bounds: display.bounds,
-          label: `${display.bounds.width}x${display.bounds.height} @ (${display.bounds.x}, ${display.bounds.y})`,
-          primary: display.id === screen.getPrimaryDisplay().id
+          label: `Display ${index + 1} (${display.bounds.width}×${display.bounds.height})`,
+          primary: display.id === primaryId
         }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(displayList));
@@ -9753,6 +9755,15 @@ function startWebUiServer() {
 
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         tabPanel.classList.add('active');
+
+        const hint = document.getElementById('keyboard-shortcuts-hint');
+        if (hint) {
+          if (tabName === 'remote') {
+            updateKeyboardHint();
+          } else {
+            hint.classList.remove('visible');
+          }
+        }
       });
     });
 
@@ -10885,8 +10896,7 @@ function startWebUiServer() {
     function updateStagetimerVisibility() {
       const container = document.getElementById('stagetimer-container');
       if (!container) return;
-      // Only show the widget once an API key has been saved; no key = no box
-      if (!stagetimerApiKeyCached) {
+      if (!stagetimerApiKeyCached || !stagetimerVisible) {
         container.style.display = 'none';
       } else {
         container.style.display = 'block';

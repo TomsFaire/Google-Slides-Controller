@@ -1002,7 +1002,10 @@ async function initDisplays() {
 
     updateStatusBar();
   } catch (error) {
-    showStatus('Failed to load displays', 'error');
+    showStatus('Failed to load displays — restart the app to retry', 'error');
+    [presentationDisplay, notesDisplay].forEach((sel, i) => {
+      if (sel) sel.innerHTML = `<option value="">Display ${i + 1} (unavailable)</option>`;
+    });
   }
 }
 

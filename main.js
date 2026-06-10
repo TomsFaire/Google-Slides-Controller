@@ -678,6 +678,8 @@ async function warmOfflineCache(presWindow, presentationId) {
   let pendingCount = 0;
   let idleTimer = null;
   let idleResolve = null;
+  let startSlide = 1;   // slide presenter was on before warm began — restored in finally
+  let warmEndSlide = 1; // tracks how far the warm advanced
 
   const dbg = presWindow.webContents.debugger;
 
@@ -774,6 +776,18 @@ async function warmOfflineCache(presWindow, presentationId) {
     // Wait for initial page load to settle
     await waitForNetworkIdle();
 
+    // Capture starting slide so we can restore it after advancing through the deck
+    if (notesWindow && !notesWindow.isDestroyed()) {
+      const startInfo = await notesWindow.webContents.executeJavaScript(`
+        (function(){
+          var el = document.querySelector('[aria-posinset]');
+          return el ? (parseInt(el.getAttribute('aria-posinset'), 10) || null) : null;
+        })()
+      `).catch(() => null);
+      if (typeof startInfo === 'number') startSlide = startInfo;
+    }
+    warmEndSlide = startSlide;
+
     let slideCount = 0;
     let reachedEnd = false;
 
@@ -803,6 +817,7 @@ async function warmOfflineCache(presWindow, presentationId) {
       if (abortController.aborted) break;
       presWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
       presWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+      warmEndSlide++;
       await waitForNetworkIdle();
     }
 
@@ -838,6 +853,15 @@ async function warmOfflineCache(presWindow, presentationId) {
       presWindow.webContents.removeListener('debugger-message', onDebugMessage);
       if (dbg.isAttached()) dbg.detach();
     } catch { /* ignore detach errors */ }
+    // Restore the slide the presenter was on before the warm advanced through the deck.
+    // Done after debugger detach so the navigation is not re-captured.
+    const slidesToGoBack = warmEndSlide - startSlide;
+    if (slidesToGoBack > 0 && !presWindow.isDestroyed()) {
+      for (let i = 0; i < slidesToGoBack; i++) {
+        presWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
+        presWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
+      }
+    }
     if (offlineWarmAbortController === abortController) {
       offlineWarmAbortController = null;
     }
@@ -4084,6 +4108,9 @@ ipcMain.handle('warm-offline-cache', async () => {
   }
   const pid = offlineActivePresentationId;
   if (!pid) return { success: false, error: 'No presentation ID' };
+  if (offlineCacheState === 'caching') {
+    return { success: true, cacheState: 'caching' }; // already in progress
+  }
   warmOfflineCache(presentationWindow, pid).catch(e =>
     logWarn('[Offline] Manual warm failed:', e.message)
   );
@@ -4616,6 +4643,11 @@ function startHttpServer() {
     // ---------------------------------------------------------------------------
 
     if (req.method === 'GET' && apiReqPath === '/api/offline/status') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
       const prefs = loadPreferences();
       const diskBytes = offlineActivePresentationId ? getOfflineCacheDiskBytes(offlineActivePresentationId) : 0;
       res.writeHead(200, { 'Content-Type': 'application/json' });

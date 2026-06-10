@@ -565,13 +565,15 @@ function readOfflineCacheBody(cacheDir, hash) {
   }
 }
 
-function getOfflineCacheDiskBytes(presentationId) {
+async function getOfflineCacheDiskBytes(presentationId) {
   try {
     const dir = getOfflineCacheDir(presentationId);
-    if (!fs.existsSync(dir)) return 0;
-    return fs.readdirSync(dir).reduce((sum, f) => {
-      try { return sum + fs.statSync(path.join(dir, f)).size; } catch { return sum; }
-    }, 0);
+    try { await fs.promises.access(dir); } catch { return 0; }
+    const files = await fs.promises.readdir(dir);
+    const sizes = await Promise.all(
+      files.map(f => fs.promises.stat(path.join(dir, f)).then(s => s.size).catch(() => 0))
+    );
+    return sizes.reduce((sum, s) => sum + s, 0);
   } catch { return 0; }
 }
 
@@ -598,7 +600,7 @@ function setOfflineCacheState(state, presentationId) {
 function loadOfflineModeForPresentation(presentationId) {
   offlineActivePresentationId = presentationId;
   const manifest = loadOfflineManifest(presentationId);
-  if (manifest) {
+  if (manifest && manifest.entries) {
     offlineActiveManifest = manifest.entries;
     offlineHashToUrl = Object.fromEntries(
       Object.entries(manifest.entries).map(([url, entry]) => [entry.hash, url])
@@ -839,7 +841,7 @@ async function warmOfflineCache(presWindow, presentationId) {
     offlineActiveCacheDir = cacheDir;
     offlineCachedAt = cachedAt;
 
-    const diskBytes = getOfflineCacheDiskBytes(presentationId);
+    const diskBytes = await getOfflineCacheDiskBytes(presentationId);
     logInfo('[Offline] Cache complete:', Object.keys(bufferedEntries).length, 'resources,',
       Math.round(diskBytes / 1024), 'KB on disk');
 
@@ -851,7 +853,9 @@ async function warmOfflineCache(presWindow, presentationId) {
   } finally {
     try {
       presWindow.webContents.removeListener('debugger-message', onDebugMessage);
-      if (dbg.isAttached()) dbg.detach();
+      // Only detach if we're still the current warm — an aborted warm must not
+      // detach the debugger that the replacement warm is already using.
+      if (offlineWarmAbortController === abortController && dbg.isAttached()) dbg.detach();
     } catch { /* ignore detach errors */ }
     // Restore the slide the presenter was on before the warm advanced through the deck.
     // Done after debugger detach so the navigation is not re-captured.
@@ -4090,9 +4094,9 @@ ipcMain.handle('update-stage-timer-overlay-settings', (_event, settings) => {
 // Offline mode IPC handlers
 // ---------------------------------------------------------------------------
 
-ipcMain.handle('get-offline-status', () => {
+ipcMain.handle('get-offline-status', async () => {
   const prefs = loadPreferences();
-  const diskBytes = offlineActivePresentationId ? getOfflineCacheDiskBytes(offlineActivePresentationId) : 0;
+  const diskBytes = offlineActivePresentationId ? await getOfflineCacheDiskBytes(offlineActivePresentationId) : 0;
   return {
     cacheState: offlineCacheState,
     cachedAt: offlineCachedAt,
@@ -4649,7 +4653,7 @@ function startHttpServer() {
         return;
       }
       const prefs = loadPreferences();
-      const diskBytes = offlineActivePresentationId ? getOfflineCacheDiskBytes(offlineActivePresentationId) : 0;
+      const diskBytes = offlineActivePresentationId ? await getOfflineCacheDiskBytes(offlineActivePresentationId) : 0;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         cacheState: offlineCacheState,

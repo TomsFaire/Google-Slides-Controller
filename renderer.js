@@ -24,6 +24,9 @@ const stagetimerEnabledCheckbox = document.getElementById('stagetimer-enabled');
 const stagetimerVisibleCheckbox = document.getElementById('stagetimer-visible');
 const saveStagetimerBtn = document.getElementById('save-stagetimer-btn');
 const loadStagetimerBtn = document.getElementById('load-stagetimer-btn');
+const stageTimerOverlayEnabledCheckbox  = document.getElementById('stage-timer-overlay-enabled');
+const stageTimerOverlayPositionSelect   = document.getElementById('stage-timer-overlay-position');
+const stageTimerOverlaySizeInput        = document.getElementById('stage-timer-overlay-size');
 const perfectCueEnabledCheckbox = document.getElementById('perfectcue-enabled');
 const perfectCuePortList = document.getElementById('perfectcue-port-list');
 const addPerfectCuePortBtn = document.getElementById('add-perfectcue-port');
@@ -969,6 +972,33 @@ async function initDisplays() {
     saveStagetimerBtn.addEventListener('click', saveStagetimerSettings);
     loadStagetimerBtn.addEventListener('click', loadStagetimerSettings);
 
+    stageTimerOverlayEnabledCheckbox.addEventListener('change', async () => {
+      try {
+        if (stageTimerOverlayEnabledCheckbox.checked) {
+          await window.electronAPI.stageTimerOverlay.show();
+        } else {
+          await window.electronAPI.stageTimerOverlay.hide();
+        }
+      } catch (e) {
+        console.error('Failed to toggle stage timer overlay:', e);
+      }
+    });
+
+    async function applyOverlaySettings() {
+      const position = stageTimerOverlayPositionSelect.value;
+      const size = parseInt(stageTimerOverlaySizeInput.value, 10);
+      if (!isNaN(size) && size >= 1 && size <= 100) {
+        try {
+          await window.electronAPI.stageTimerOverlay.updateSettings({ position, size });
+        } catch (e) {
+          console.error('Failed to update stage timer overlay settings:', e);
+        }
+      }
+    }
+
+    stageTimerOverlayPositionSelect.addEventListener('change', applyOverlaySettings);
+    stageTimerOverlaySizeInput.addEventListener('change', applyOverlaySettings);
+
     // Speaker notes capture (clean text via IPC - no fetch/port needed)
     async function refreshSpeakerNotesCapture() {
       if (!speakerNotesCapture) return;
@@ -1763,6 +1793,16 @@ async function loadStagetimerSettings() {
     stagetimerApiKeyInput.value = preferences.stagetimerApiKey || '';
     stagetimerEnabledCheckbox.checked = preferences.stagetimerEnabled !== false;
     stagetimerVisibleCheckbox.checked = preferences.stagetimerVisible !== false && preferences.stagetimerVisible !== undefined ? preferences.stagetimerVisible : true;
+  }
+
+  // Load overlay status via IPC
+  try {
+    const overlayStatus = await window.electronAPI.stageTimerOverlay.getStatus();
+    stageTimerOverlayEnabledCheckbox.checked  = overlayStatus.enabled;
+    stageTimerOverlayPositionSelect.value     = overlayStatus.position || 'bottom-left';
+    stageTimerOverlaySizeInput.value          = String(overlayStatus.size || 10);
+  } catch (e) {
+    console.error('Failed to load stage timer overlay status:', e);
   }
 }
 

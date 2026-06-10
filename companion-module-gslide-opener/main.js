@@ -321,6 +321,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				variableId: 'notes_layout',
 				name: 'Notes Layout (hide / default)'
 			},
+			// Stage Timer Overlay
+			{ variableId: 'stage_timer_overlay_enabled',  name: 'Stage Timer Overlay Active (Yes/No)' },
+			{ variableId: 'stage_timer_overlay_position', name: 'Stage Timer Overlay Position' },
+			{ variableId: 'stage_timer_overlay_size',     name: 'Stage Timer Overlay Size (%)' },
 			// PerfectCue global enable
 			{ variableId: 'perfectcue_enabled', name: 'PerfectCue Global Enabled (1/0)' },
 			// PerfectCue port slots (up to 10)
@@ -480,6 +484,20 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				},
 				showInvert: false
 			},
+			stage_timer_overlay_active: {
+				type: 'boolean',
+				name: 'Stage Timer Overlay Active',
+				description: 'Active when the stage timer overlay is shown on the notes monitor',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(0, 100, 220)
+				},
+				options: [],
+				callback: () => {
+					return this.state.stageTimerOverlayEnabled === true
+				},
+				showInvert: true
+			},
 		}
 
 		this.setFeedbackDefinitions(feedbacks)
@@ -525,6 +543,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			notesZoomDefault: response.notesZoomDefault !== null && response.notesZoomDefault !== undefined ? response.notesZoomDefault : null,
 			notesLayout: response.notesLayout || 'hide',
 			perfectcue: response.perfectcue || { enabled: false, ports: [] },
+			stageTimerOverlayEnabled:  response.stageTimerOverlayEnabled  === true,
+			stageTimerOverlayPosition: response.stageTimerOverlayPosition || 'bottom-left',
+			stageTimerOverlaySize:     response.stageTimerOverlaySize     != null ? response.stageTimerOverlaySize : 10,
 		}
 		
 		// Check if state changed (compare all fields)
@@ -550,7 +571,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.state.notesZoomSteps !== newState.notesZoomSteps ||
 			this.state.notesZoomDefault !== newState.notesZoomDefault ||
 			this.state.notesLayout !== newState.notesLayout ||
-			JSON.stringify(this.state.perfectcue) !== JSON.stringify(newState.perfectcue)
+			JSON.stringify(this.state.perfectcue) !== JSON.stringify(newState.perfectcue) ||
+			this.state.stageTimerOverlayEnabled  !== newState.stageTimerOverlayEnabled  ||
+			this.state.stageTimerOverlayPosition !== newState.stageTimerOverlayPosition ||
+			this.state.stageTimerOverlaySize     !== newState.stageTimerOverlaySize
 		
 		if (stateChanged) {
 			this.state = newState
@@ -578,6 +602,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				notes_zoom_steps: this.state.notesZoomSteps !== null && this.state.notesZoomSteps !== undefined ? String(this.state.notesZoomSteps) : '',
 				notes_zoom_default: this.state.notesZoomDefault !== null && this.state.notesZoomDefault !== undefined ? String(this.state.notesZoomDefault) : '',
 				notes_layout: this.state.notesLayout || 'hide',
+				stage_timer_overlay_enabled:  this.state.stageTimerOverlayEnabled  ? 'Yes' : 'No',
+				stage_timer_overlay_position: this.state.stageTimerOverlayPosition || 'bottom-left',
+				stage_timer_overlay_size:     String(this.state.stageTimerOverlaySize || 10),
 				perfectcue_enabled: newState.perfectcue.enabled ? '1' : '0',
 				...Object.fromEntries(
 					Array.from({ length: 10 }, (_, i) => {
@@ -593,7 +620,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			})
 			
 			// Trigger feedback updates
-			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state', 'backup_controls_enabled', 'notes_layout_is')
+			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state', 'backup_controls_enabled', 'notes_layout_is', 'stage_timer_overlay_active')
 			
 			this.log('debug', `State updated: presentation=${this.state.presentationOpen}, notes=${this.state.notesOpen}, slide=${this.state.currentSlide}/${this.state.totalSlides}, title=${this.state.presentationTitle || 'N/A'}`)
 		}

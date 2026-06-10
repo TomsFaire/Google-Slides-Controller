@@ -608,6 +608,93 @@ module.exports = function (self) {
 				}
 			},
 		},
+
+		show_stage_timer_overlay: {
+			name: 'Show Stage Timer Overlay',
+			description: 'Show the stage timer clock overlay on the notes monitor',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Showing stage timer overlay')
+					await self.apiRequest('POST', '/api/show-stage-timer-overlay', {})
+				} catch (error) {
+					self.log('error', `Failed to show stage timer overlay: ${error.message}`)
+				}
+			},
+		},
+
+		hide_stage_timer_overlay: {
+			name: 'Hide Stage Timer Overlay',
+			description: 'Hide the stage timer clock overlay on the notes monitor',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Hiding stage timer overlay')
+					await self.apiRequest('POST', '/api/hide-stage-timer-overlay', {})
+				} catch (error) {
+					self.log('error', `Failed to hide stage timer overlay: ${error.message}`)
+				}
+			},
+		},
+
+		set_stage_timer_overlay_position: {
+			name: 'Set Stage Timer Overlay Position',
+			description: 'Move the stage timer overlay to a different corner of the notes monitor',
+			options: [
+				{
+					id: 'position',
+					type: 'dropdown',
+					label: 'Position',
+					default: 'bottom-left',
+					choices: [
+						{ id: 'bottom-left',  label: 'Bottom Left'  },
+						{ id: 'bottom-right', label: 'Bottom Right' },
+						{ id: 'top-left',     label: 'Top Left'     },
+						{ id: 'top-right',    label: 'Top Right'    },
+					],
+				},
+			],
+			callback: async (event) => {
+				try {
+					const position = event.options.position
+					self.log('info', `Setting stage timer overlay position to: ${position}`)
+					await self.apiRequest('POST', '/api/update-stage-timer-overlay-settings', { position })
+				} catch (error) {
+					self.log('error', `Failed to set overlay position: ${error.message}`)
+				}
+			},
+		},
+
+		set_stage_timer_overlay_size: {
+			name: 'Set Stage Timer Overlay Size',
+			description: 'Set the stage timer overlay size as a percentage of the notes monitor (1–100)',
+			options: [
+				{
+					id: 'size',
+					type: 'number',
+					label: 'Size (%)',
+					default: 10,
+					min: 1,
+					max: 100,
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const sizeStr = await self.parseVariablesInString(String(event.options.size))
+					const size = parseInt(sizeStr, 10)
+					if (isNaN(size) || size < 1 || size > 100) {
+						self.log('error', `Invalid overlay size: ${sizeStr} (must be 1–100)`)
+						return
+					}
+					self.log('info', `Setting stage timer overlay size to: ${size}%`)
+					await self.apiRequest('POST', '/api/update-stage-timer-overlay-settings', { size })
+				} catch (error) {
+					self.log('error', `Failed to set overlay size: ${error.message}`)
+				}
+			},
+		},
 	}
 
 	console.log('[gslide-opener] actions.js - Registering', Object.keys(actionDefinitions).length, 'actions')

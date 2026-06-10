@@ -4712,6 +4712,11 @@ function startHttpServer() {
         res.end(JSON.stringify({ error: 'No presentation ID' }));
         return;
       }
+      if (offlineCacheState === 'caching') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, cacheState: 'caching' }));
+        return;
+      }
       warmOfflineCache(presentationWindow, pid).catch(e =>
         logWarn('[Offline] API warm failed:', e.message)
       );

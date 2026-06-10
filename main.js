@@ -4022,9 +4022,10 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
         // Delay to let the presentation fully enter present mode before pre-fetching
         setTimeout(() => {
           if (presentationWindow && !presentationWindow.isDestroyed()) {
-            warmOfflineCache(presentationWindow, pid).catch(e =>
-              logWarn('[Offline] Auto-warm failed:', e.message)
-            );
+            warmOfflineCache(presentationWindow, pid).catch(e => {
+              logWarn('[Offline] Auto-warm failed:', e.message);
+              if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
+            });
           }
         }, 5000);
       }
@@ -4115,9 +4116,10 @@ ipcMain.handle('warm-offline-cache', async () => {
   if (offlineCacheState === 'caching') {
     return { success: true, cacheState: 'caching' }; // already in progress
   }
-  warmOfflineCache(presentationWindow, pid).catch(e =>
-    logWarn('[Offline] Manual warm failed:', e.message)
-  );
+  warmOfflineCache(presentationWindow, pid).catch(e => {
+    logWarn('[Offline] Manual warm failed:', e.message);
+    if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
+  });
   return { success: true, cacheState: 'caching' };
 });
 
@@ -4717,9 +4719,10 @@ function startHttpServer() {
         res.end(JSON.stringify({ success: true, cacheState: 'caching' }));
         return;
       }
-      warmOfflineCache(presentationWindow, pid).catch(e =>
-        logWarn('[Offline] API warm failed:', e.message)
-      );
+      warmOfflineCache(presentationWindow, pid).catch(e => {
+        logWarn('[Offline] API warm failed:', e.message);
+        if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, cacheState: 'caching' }));
       return;

@@ -8,7 +8,7 @@
  * Licensed under the MIT License
  */
 
-const { app, BrowserWindow, ipcMain, screen, session, dialog, nativeImage, crashReporter, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, dialog, nativeImage, crashReporter, shell, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -465,6 +465,13 @@ function writeCrashReport(type, content) {
   }
 }
 
+function extractPresentationId(inputUrl) {
+  try {
+    const m = String(inputUrl || '').match(/\/presentation\/d\/([^/?#]+)/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
 // Optional slideNumber: if provided and > 0, append #slide=id.pN so presentation opens on that slide
 function toPresentUrl(inputUrl, slideNumber) {
   try {
@@ -490,6 +497,380 @@ const SLIDO_SESSION_PARTITION = 'persist:slido';
 const KEY_FILL_SESSION_PARTITION = 'persist:keyfill';
 // Separate partition for arbitrary URL display so cookies do not mix with Google or Slido
 const GENERIC_SESSION_PARTITION = 'persist:generic';
+
+// ---------------------------------------------------------------------------
+// Offline mode — CDP-record + webRequest-replay cache
+// ---------------------------------------------------------------------------
+
+const OFFLINE_CACHE_SUBDIR = 'presentation-cache';
+const OFFLINE_CACHE_MANIFEST = 'cache-manifest.json';
+const OFFLINE_MAX_BODY_BYTES = 10 * 1024 * 1024; // skip individual responses > 10 MB
+const OFFLINE_PREFETCH_IDLE_MS = 2000;            // network-idle threshold between slides
+const OFFLINE_PREFETCH_MAX_SLIDES = 300;
+
+// URL patterns to intercept during offline playback
+const OFFLINE_INTERCEPT_PATTERNS = [
+  'https://docs.google.com/*',
+  'https://*.gstatic.com/*',
+  'https://fonts.googleapis.com/*',
+  'https://*.googleusercontent.com/*',
+  'https://*.ggpht.com/*',
+];
+
+// Runtime state
+let offlineModeActive = false;
+let offlineCacheState = 'not-cached'; // 'not-cached' | 'caching' | 'cached' | 'offline'
+let offlineCachedAt = null;
+let offlineActivePresentationId = null;
+let offlineActiveManifest = null; // url → { hash, mimeType, statusCode, responseHeaders }
+let offlineHashToUrl = null;      // hash → url (reverse index for gs-cache:// serving)
+let offlineActiveCacheDir = null;
+let offlineWarmAbortController = null;
+
+function getOfflineCacheDir(presentationId) {
+  return path.join(app.getPath('userData'), OFFLINE_CACHE_SUBDIR, presentationId);
+}
+
+function loadOfflineManifest(presentationId) {
+  try {
+    const p = path.join(getOfflineCacheDir(presentationId), OFFLINE_CACHE_MANIFEST);
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (e) {
+    logWarn('[Offline] Could not load cache manifest:', e.message);
+    return null;
+  }
+}
+
+function saveOfflineManifest(presentationId, manifest) {
+  const dir = getOfflineCacheDir(presentationId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, OFFLINE_CACHE_MANIFEST), JSON.stringify(manifest), 'utf8');
+}
+
+function hashUrl(url) {
+  return crypto.createHash('sha256').update(url).digest('hex');
+}
+
+function writeOfflineCacheBody(cacheDir, hash, buffer) {
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(cacheDir, hash), buffer);
+}
+
+function readOfflineCacheBody(cacheDir, hash) {
+  try {
+    return fs.readFileSync(path.join(cacheDir, hash));
+  } catch (e) {
+    return null;
+  }
+}
+
+async function getOfflineCacheDiskBytes(presentationId) {
+  try {
+    const dir = getOfflineCacheDir(presentationId);
+    try { await fs.promises.access(dir); } catch { return 0; }
+    const files = await fs.promises.readdir(dir);
+    const sizes = await Promise.all(
+      files.map(f => fs.promises.stat(path.join(dir, f)).then(s => s.size).catch(() => 0))
+    );
+    return sizes.reduce((sum, s) => sum + s, 0);
+  } catch { return 0; }
+}
+
+function deleteOfflineCache(presentationId) {
+  try {
+    const dir = getOfflineCacheDir(presentationId);
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    logWarn('[Offline] Could not delete cache dir:', e.message);
+  }
+}
+
+function setOfflineCacheState(state, presentationId) {
+  offlineCacheState = state;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('offline-cache-state-changed', {
+      cacheState: state,
+      cachedAt: offlineCachedAt,
+      presentationId: presentationId || offlineActivePresentationId,
+    });
+  }
+}
+
+function loadOfflineModeForPresentation(presentationId) {
+  offlineActivePresentationId = presentationId;
+  const manifest = loadOfflineManifest(presentationId);
+  if (manifest && manifest.entries) {
+    offlineActiveManifest = manifest.entries;
+    offlineHashToUrl = Object.fromEntries(
+      Object.entries(manifest.entries).map(([url, entry]) => [entry.hash, url])
+    );
+    offlineActiveCacheDir = getOfflineCacheDir(presentationId);
+    offlineCachedAt = manifest.cachedAt || null;
+    setOfflineCacheState('cached', presentationId);
+  } else {
+    offlineActiveManifest = null;
+    offlineHashToUrl = null;
+    offlineActiveCacheDir = null;
+    offlineCachedAt = null;
+    setOfflineCacheState('not-cached', presentationId);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Offline mode — webRequest playback handler
+// ---------------------------------------------------------------------------
+
+function offlineRequestHandler(details, callback) {
+  // Only intercept requests from the presentation window
+  if (!presentationWindow || presentationWindow.isDestroyed()) return callback({});
+  if (details.webContentsId !== presentationWindow.webContents.id) return callback({});
+  if (!offlineActiveManifest || !offlineHashToUrl) return callback({});
+
+  const entry = offlineActiveManifest[details.url];
+  if (entry) {
+    return callback({ redirectURL: `gs-cache://${entry.hash}` });
+  }
+  // Cache miss — fall through to live network
+  callback({});
+}
+
+function applyOfflineMode(enabled) {
+  offlineModeActive = enabled;
+  const ses = session.fromPartition(GOOGLE_SESSION_PARTITION);
+  if (enabled && offlineActiveManifest) {
+    ses.webRequest.onBeforeRequest({ urls: OFFLINE_INTERCEPT_PATTERNS }, offlineRequestHandler);
+    setOfflineCacheState('offline', offlineActivePresentationId);
+    logInfo('[Offline] Offline playback enabled — serving', Object.keys(offlineActiveManifest).length, 'cached URLs');
+  } else {
+    ses.webRequest.onBeforeRequest(null);
+    offlineModeActive = false;
+    if (offlineCacheState === 'offline') {
+      setOfflineCacheState(offlineActiveManifest ? 'cached' : 'not-cached', offlineActivePresentationId);
+    }
+    logInfo('[Offline] Offline playback disabled — live mode');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Offline mode — CDP warm-up (records all network responses while pre-fetching slides)
+// ---------------------------------------------------------------------------
+
+async function warmOfflineCache(presWindow, presentationId) {
+  if (!presWindow || presWindow.isDestroyed()) {
+    logWarn('[Offline] warmOfflineCache: no presentation window');
+    return;
+  }
+
+  // Abort any in-progress warm
+  if (offlineWarmAbortController) {
+    offlineWarmAbortController.abort();
+  }
+  const abortController = { aborted: false };
+  offlineWarmAbortController = abortController;
+
+  setOfflineCacheState('caching', presentationId);
+  logInfo('[Offline] Cache warm-up started for', presentationId);
+
+  const cacheDir = getOfflineCacheDir(presentationId);
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+
+  const pendingRequests = new Map();  // requestId → { url, mimeType, status, headers }
+  const bufferedEntries = {};         // url → { hash, mimeType, statusCode, responseHeaders }
+  let pendingCount = 0;
+  let idleTimer = null;
+  let idleResolve = null;
+  let startSlide = 1;   // slide presenter was on before warm began — restored in finally
+  let warmEndSlide = 1; // tracks how far the warm advanced
+
+  const dbg = presWindow.webContents.debugger;
+
+  function resetIdleTimer() {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (pendingCount === 0 && idleResolve) {
+      idleTimer = setTimeout(() => {
+        if (pendingCount === 0 && idleResolve) {
+          const resolve = idleResolve;
+          idleResolve = null;
+          resolve();
+        }
+      }, OFFLINE_PREFETCH_IDLE_MS);
+    }
+  }
+
+  function waitForNetworkIdle() {
+    return new Promise(resolve => {
+      idleResolve = resolve;
+      resetIdleTimer();
+    });
+  }
+
+  function onDebugMessage(_event, method, params) {
+    if (abortController.aborted) return;
+
+    if (method === 'Network.requestWillBeSent') {
+      pendingRequests.set(params.requestId, {
+        url: params.request.url,
+        mimeType: null,
+        status: null,
+        headers: null,
+      });
+      pendingCount++;
+      resetIdleTimer();
+    }
+
+    if (method === 'Network.responseReceived') {
+      const entry = pendingRequests.get(params.requestId);
+      if (entry) {
+        entry.mimeType = params.response.mimeType;
+        entry.status = params.response.status;
+        entry.headers = params.response.headers;
+      }
+    }
+
+    if (method === 'Network.loadingFinished') {
+      const entry = pendingRequests.get(params.requestId);
+      pendingCount = Math.max(0, pendingCount - 1);
+      pendingRequests.delete(params.requestId);
+
+      if (entry && entry.url && entry.url.startsWith('https://') && entry.status >= 200 && entry.status < 300) {
+        // Retrieve body asynchronously — don't await inside the synchronous event handler
+        dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId })
+          .then(({ body, base64Encoded }) => {
+            if (abortController.aborted) return;
+            const buf = base64Encoded
+              ? Buffer.from(body, 'base64')
+              : Buffer.from(body, 'utf8');
+            if (buf.length > OFFLINE_MAX_BODY_BYTES) {
+              logDebug('[Offline] Skipping large response (', buf.length, 'bytes):', entry.url);
+              return;
+            }
+            const hash = hashUrl(entry.url);
+            writeOfflineCacheBody(cacheDir, hash, buf);
+            bufferedEntries[entry.url] = {
+              hash,
+              mimeType: entry.mimeType || 'application/octet-stream',
+              statusCode: entry.status,
+              responseHeaders: entry.headers || {},
+            };
+          })
+          .catch(() => { /* body unavailable — skip */ });
+      }
+
+      resetIdleTimer();
+    }
+
+    if (method === 'Network.loadingFailed') {
+      pendingCount = Math.max(0, pendingCount - 1);
+      pendingRequests.delete(params.requestId);
+      resetIdleTimer();
+    }
+  }
+
+  try {
+    if (!dbg.isAttached()) dbg.attach('1.3');
+    presWindow.webContents.on('debugger-message', onDebugMessage);
+    await dbg.sendCommand('Network.enable', {
+      maxTotalBufferSize: 200 * 1024 * 1024,
+      maxResourceBufferSize: 10 * 1024 * 1024,
+    });
+
+    // Wait for initial page load to settle
+    await waitForNetworkIdle();
+
+    // Capture starting slide so we can restore it after advancing through the deck
+    if (notesWindow && !notesWindow.isDestroyed()) {
+      const startInfo = await notesWindow.webContents.executeJavaScript(`
+        (function(){
+          var el = document.querySelector('[aria-posinset]');
+          return el ? (parseInt(el.getAttribute('aria-posinset'), 10) || null) : null;
+        })()
+      `).catch(() => null);
+      if (typeof startInfo === 'number') startSlide = startInfo;
+    }
+    warmEndSlide = startSlide;
+
+    let slideCount = 0;
+    let reachedEnd = false;
+
+    for (let i = 0; i < OFFLINE_PREFETCH_MAX_SLIDES && !abortController.aborted; i++) {
+      // Check if this is the last slide by reading aria state from the notes window
+      if (notesWindow && !notesWindow.isDestroyed()) {
+        try {
+          const info = await notesWindow.webContents.executeJavaScript(`
+            (function(){
+              var el = document.querySelector('[aria-posinset]');
+              if (!el) return null;
+              return {
+                cur: parseInt(el.getAttribute('aria-posinset'), 10),
+                tot: parseInt(el.getAttribute('aria-setsize'), 10)
+              };
+            })()
+          `).catch(() => null);
+          if (info && info.cur === info.tot) {
+            reachedEnd = true;
+            slideCount = info.tot;
+            logInfo('[Offline] Pre-fetch reached last slide:', info.tot);
+            break;
+          }
+        } catch { /* ignore */ }
+      }
+
+      if (abortController.aborted) break;
+      presWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
+      presWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+      warmEndSlide++;
+      await waitForNetworkIdle();
+    }
+
+    if (abortController.aborted) {
+      logInfo('[Offline] Cache warm-up aborted for', presentationId);
+      return;
+    }
+
+    // Give any in-flight body fetches a moment to complete
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const cachedAt = new Date().toISOString();
+    saveOfflineManifest(presentationId, { entries: bufferedEntries, cachedAt, slideCount });
+
+    offlineActiveManifest = bufferedEntries;
+    offlineHashToUrl = Object.fromEntries(
+      Object.entries(bufferedEntries).map(([url, entry]) => [entry.hash, url])
+    );
+    offlineActiveCacheDir = cacheDir;
+    offlineCachedAt = cachedAt;
+
+    const diskBytes = await getOfflineCacheDiskBytes(presentationId);
+    logInfo('[Offline] Cache complete:', Object.keys(bufferedEntries).length, 'resources,',
+      Math.round(diskBytes / 1024), 'KB on disk');
+
+    setOfflineCacheState('cached', presentationId);
+
+  } catch (e) {
+    logError('[Offline] Cache warm-up failed:', e.message);
+    setOfflineCacheState(loadOfflineManifest(presentationId) ? 'cached' : 'not-cached', presentationId);
+  } finally {
+    try {
+      presWindow.webContents.removeListener('debugger-message', onDebugMessage);
+      // Only detach if we're still the current warm — an aborted warm must not
+      // detach the debugger that the replacement warm is already using.
+      if (offlineWarmAbortController === abortController && dbg.isAttached()) dbg.detach();
+    } catch { /* ignore detach errors */ }
+    // Restore the slide the presenter was on before the warm advanced through the deck.
+    // Done after debugger detach so the navigation is not re-captured.
+    const slidesToGoBack = warmEndSlide - startSlide;
+    if (slidesToGoBack > 0 && !presWindow.isDestroyed()) {
+      for (let i = 0; i < slidesToGoBack; i++) {
+        presWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
+        presWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
+      }
+    }
+    if (offlineWarmAbortController === abortController) {
+      offlineWarmAbortController = null;
+    }
+  }
+}
 
 // Build BrowserWindow options for the speaker notes popup so it opens at notes-display size.
 // Google Slides presenter view uses a responsive layout: wide viewport = narrow preview column + wide notes; small viewport = 50/50. Opening at full size avoids the 50/50 split.
@@ -3632,6 +4013,23 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     }
     
     // No auto-launch of speaker notes - user must call open-speaker-notes separately
+
+    // Auto-warm offline cache if none exists for this presentation
+    const pid = extractPresentationId(url);
+    if (pid) {
+      loadOfflineModeForPresentation(pid);
+      if (!loadOfflineManifest(pid)) {
+        // Delay to let the presentation fully enter present mode before pre-fetching
+        setTimeout(() => {
+          if (presentationWindow && !presentationWindow.isDestroyed()) {
+            warmOfflineCache(presentationWindow, pid).catch(e => {
+              logWarn('[Offline] Auto-warm failed:', e.message);
+              if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
+            });
+          }
+        }, 5000);
+      }
+    }
   });
 
   presentationWindow.on('closed', () => {
@@ -3664,6 +4062,87 @@ ipcMain.handle('open-url', async (_event, { url, backgroundColor }) => {
   return { success: true };
 });
 
+ipcMain.handle('show-stage-timer-overlay', async () => {
+  showStageTimerOverlay();
+  return { success: true };
+});
+
+ipcMain.handle('hide-stage-timer-overlay', async () => {
+  hideStageTimerOverlay();
+  return { success: true };
+});
+
+ipcMain.handle('get-stage-timer-overlay-status', () => {
+  const prefs = loadPreferences();
+  return {
+    enabled:  !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()),
+    position: prefs.stageTimerOverlayPosition || 'bottom-left',
+    size:     prefs.stageTimerOverlaySize     || 10
+  };
+});
+
+ipcMain.handle('update-stage-timer-overlay-settings', (_event, settings) => {
+  updateStageTimerOverlaySettings(settings || {});
+  const prefs = loadPreferences();
+  return {
+    success:  true,
+    position: prefs.stageTimerOverlayPosition || 'bottom-left',
+    size:     prefs.stageTimerOverlaySize     || 10
+  };
+});
+
+// ---------------------------------------------------------------------------
+// Offline mode IPC handlers
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('get-offline-status', async () => {
+  const prefs = loadPreferences();
+  const diskBytes = offlineActivePresentationId ? await getOfflineCacheDiskBytes(offlineActivePresentationId) : 0;
+  return {
+    cacheState: offlineCacheState,
+    cachedAt: offlineCachedAt,
+    offlineModeEnabled: prefs.offlineModeEnabled === true,
+    presentationId: offlineActivePresentationId || null,
+    diskBytes,
+  };
+});
+
+ipcMain.handle('warm-offline-cache', async () => {
+  if (!presentationWindow || presentationWindow.isDestroyed()) {
+    return { success: false, error: 'No presentation open' };
+  }
+  const pid = offlineActivePresentationId;
+  if (!pid) return { success: false, error: 'No presentation ID' };
+  if (offlineCacheState === 'caching') {
+    return { success: true, cacheState: 'caching' }; // already in progress
+  }
+  warmOfflineCache(presentationWindow, pid).catch(e => {
+    logWarn('[Offline] Manual warm failed:', e.message);
+    if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
+  });
+  return { success: true, cacheState: 'caching' };
+});
+
+ipcMain.handle('set-offline-mode', async (_event, enabled) => {
+  const prefs = loadPreferences();
+  prefs.offlineModeEnabled = enabled === true;
+  savePreferences(prefs);
+  applyOfflineMode(enabled === true);
+  return { success: true, offlineModeEnabled: enabled === true };
+});
+
+ipcMain.handle('clear-offline-cache', async () => {
+  const pid = offlineActivePresentationId;
+  if (pid) deleteOfflineCache(pid);
+  offlineActiveManifest = null;
+  offlineHashToUrl = null;
+  offlineActiveCacheDir = null;
+  offlineCachedAt = null;
+  if (offlineModeActive) applyOfflineMode(false);
+  setOfflineCacheState('not-cached', pid);
+  return { success: true, cacheState: 'not-cached' };
+});
+
 // HTTP API for Bitfocus Companion integration
 // Ports are configurable via preferences, defaults below
 const DEFAULT_API_PORT = 9595;
@@ -3682,6 +4161,7 @@ let tunnelUrl = null;
 let cloudflaredKillTimer = null;
 let tunnelQrWindow = null;
 let tunnelQrHideTimer = null;
+let stageTimerOverlayWindow = null;
 
 function startHttpServer() {
   httpServer = http.createServer(async (req, res) => {
@@ -3789,7 +4269,9 @@ function startHttpServer() {
             node: process.versions.node
           },
           presentationGpuMode: statusPrefs.presentationGpuMode || 'default',
-          presentationNativeFullscreen: statusPrefs.presentationNativeFullscreen === true
+          presentationNativeFullscreen: statusPrefs.presentationNativeFullscreen === true,
+          offlineModeEnabled: statusPrefs.offlineModeEnabled === true,
+          offlineCacheState: offlineCacheState,
         };
         
         // Get slide info and other data from notes window DOM
@@ -3911,6 +4393,9 @@ function startHttpServer() {
             adapter: adapter || 'dsan'
           }))
         };
+        state.stageTimerOverlayEnabled  = !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed());
+        state.stageTimerOverlayPosition = prefs.stageTimerOverlayPosition || 'bottom-left';
+        state.stageTimerOverlaySize     = prefs.stageTimerOverlaySize     || 10;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
       })().catch(err => {
@@ -4090,6 +4575,175 @@ function startHttpServer() {
       hideTunnelQrOverlay();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'QR hidden' }));
+      return;
+    }
+
+    // POST /api/show-stage-timer-overlay
+    if (req.method === 'POST' && req.url === '/api/show-stage-timer-overlay') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      showStageTimerOverlay();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, stageTimerOverlayEnabled: true }));
+      return;
+    }
+
+    // POST /api/hide-stage-timer-overlay
+    if (req.method === 'POST' && req.url === '/api/hide-stage-timer-overlay') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      hideStageTimerOverlay();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, stageTimerOverlayEnabled: false }));
+      return;
+    }
+
+    // POST /api/update-stage-timer-overlay-settings
+    if (req.method === 'POST' && req.url === '/api/update-stage-timer-overlay-settings') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const position = typeof data.position === 'string' ? data.position : undefined;
+          const size     = typeof data.size     === 'number' ? Math.round(data.size) : undefined;
+          if (position !== undefined && !VALID_OVERLAY_POSITIONS.has(position)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid position. Must be one of: bottom-left, bottom-right, top-left, top-right' }));
+            return;
+          }
+          if (size !== undefined && (size < 1 || size > 100)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid size. Must be integer 1–100' }));
+            return;
+          }
+          updateStageTimerOverlaySettings({ position, size });
+          const prefs = loadPreferences();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            stageTimerOverlayPosition: prefs.stageTimerOverlayPosition || 'bottom-left',
+            stageTimerOverlaySize:     prefs.stageTimerOverlaySize     || 10
+          }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid request body' }));
+        }
+      });
+      return;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Offline mode API routes
+    // ---------------------------------------------------------------------------
+
+    if (req.method === 'GET' && apiReqPath === '/api/offline/status') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      const prefs = loadPreferences();
+      const diskBytes = offlineActivePresentationId ? await getOfflineCacheDiskBytes(offlineActivePresentationId) : 0;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        cacheState: offlineCacheState,
+        cachedAt: offlineCachedAt,
+        offlineModeEnabled: prefs.offlineModeEnabled === true,
+        presentationId: offlineActivePresentationId || null,
+        diskBytes,
+      }));
+      return;
+    }
+
+    if (req.method === 'POST' && apiReqPath === '/api/offline/enable') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      const prefs = loadPreferences();
+      prefs.offlineModeEnabled = true;
+      savePreferences(prefs);
+      applyOfflineMode(true);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, offlineModeEnabled: true }));
+      return;
+    }
+
+    if (req.method === 'POST' && apiReqPath === '/api/offline/disable') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      const prefs = loadPreferences();
+      prefs.offlineModeEnabled = false;
+      savePreferences(prefs);
+      applyOfflineMode(false);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, offlineModeEnabled: false }));
+      return;
+    }
+
+    if (req.method === 'POST' && apiReqPath === '/api/offline/warm-cache') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      if (!presentationWindow || presentationWindow.isDestroyed()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation open' }));
+        return;
+      }
+      const pid = offlineActivePresentationId;
+      if (!pid) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No presentation ID' }));
+        return;
+      }
+      if (offlineCacheState === 'caching') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, cacheState: 'caching' }));
+        return;
+      }
+      warmOfflineCache(presentationWindow, pid).catch(e => {
+        logWarn('[Offline] API warm failed:', e.message);
+        if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, cacheState: 'caching' }));
+      return;
+    }
+
+    if (req.method === 'POST' && apiReqPath === '/api/offline/clear-cache') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      const pid = offlineActivePresentationId;
+      if (pid) deleteOfflineCache(pid);
+      offlineActiveManifest = null;
+      offlineHashToUrl = null;
+      offlineActiveCacheDir = null;
+      offlineCachedAt = null;
+      if (offlineModeActive) applyOfflineMode(false);
+      setOfflineCacheState('not-cached', pid);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, cacheState: 'not-cached' }));
       return;
     }
 
@@ -6321,6 +6975,83 @@ function hideTunnelQrOverlay() {
   if (tunnelQrWindow && !tunnelQrWindow.isDestroyed()) { tunnelQrWindow.close(); }
   tunnelQrWindow = null;
 }
+
+// --- Stage Timer Overlay ---
+
+function getOverlayBounds(notesDisplay, position, sizePercent) {
+  const { bounds } = notesDisplay;
+  const width  = Math.round(bounds.width  * sizePercent / 100);
+  const height = Math.round(bounds.height * sizePercent / 100);
+  const margin = sizePercent === 100 ? 0 : 12;
+  const positions = {
+    'bottom-left':  { x: bounds.x + margin,                        y: bounds.y + bounds.height - height - margin },
+    'bottom-right': { x: bounds.x + bounds.width - width - margin, y: bounds.y + bounds.height - height - margin },
+    'top-left':     { x: bounds.x + margin,                        y: bounds.y + margin },
+    'top-right':    { x: bounds.x + bounds.width - width - margin, y: bounds.y + margin },
+  };
+  const { x, y } = positions[position] || positions['bottom-left'];
+  return { x, y, width, height };
+}
+
+const VALID_OVERLAY_POSITIONS = new Set(['bottom-left', 'bottom-right', 'top-left', 'top-right']);
+
+function showStageTimerOverlay() {
+  const prefs = loadPreferences();
+  const roomId = prefs.stagetimerRoomId || '';
+  const apiKey = prefs.stagetimerApiKey || '';
+  const position   = VALID_OVERLAY_POSITIONS.has(prefs.stageTimerOverlayPosition) ? prefs.stageTimerOverlayPosition : 'bottom-left';
+  const sizePercent = Math.min(100, Math.max(1, parseInt(prefs.stageTimerOverlaySize) || 10));
+
+  const displays = screen.getAllDisplays();
+  const notesDisplay = displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
+  const bounds = getOverlayBounds(notesDisplay, position, sizePercent);
+
+  if (stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()) {
+    stageTimerOverlayWindow.setBounds(bounds);
+    stageTimerOverlayWindow.show();
+  } else {
+    stageTimerOverlayWindow = new BrowserWindow({
+      x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      focusable: false,
+      resizable: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true }
+    });
+    const overlayPath = path.join(__dirname, 'src', 'stage-timer-overlay.html');
+    const query = `?roomId=${encodeURIComponent(roomId)}&apiKey=${encodeURIComponent(apiKey)}`;
+    stageTimerOverlayWindow.loadURL('file://' + overlayPath + query);
+    stageTimerOverlayWindow.on('closed', () => { stageTimerOverlayWindow = null; });
+  }
+
+  savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: true });
+}
+
+function hideStageTimerOverlay() {
+  if (stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()) {
+    stageTimerOverlayWindow.close();
+  }
+  stageTimerOverlayWindow = null;
+  savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: false });
+}
+
+function updateStageTimerOverlaySettings({ position, size }) {
+  const prefs = loadPreferences();
+  const newPosition = VALID_OVERLAY_POSITIONS.has(position) ? position : prefs.stageTimerOverlayPosition || 'bottom-left';
+  const newSize = (Number.isInteger(size) && size >= 1 && size <= 100) ? size : prefs.stageTimerOverlaySize || 10;
+  savePreferences({ ...prefs, stageTimerOverlayPosition: newPosition, stageTimerOverlaySize: newSize });
+
+  if (stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()) {
+    const displays = screen.getAllDisplays();
+    const updatedPrefs = loadPreferences();
+    const notesDisplay = displays.find(d => d.id === Number(updatedPrefs.notesDisplayId)) || displays[0];
+    stageTimerOverlayWindow.setBounds(getOverlayBounds(notesDisplay, newPosition, newSize));
+  }
+}
+
+// --- End Stage Timer Overlay ---
 
 function stopCloudflaredTunnel() {
   hideTunnelQrOverlay();
@@ -9610,6 +10341,52 @@ function startWebUiServer() {
         </small>
       </div>
 
+      <!-- Stage Timer Overlay Section -->
+      <div class="controls-section">
+        <h3>Stage Timer Overlay</h3>
+        <div class="info" style="margin-bottom: 10px;">
+          Show a live timer clock on the notes monitor.
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+          <button type="button" class="btn" id="btn-show-stage-timer-overlay" style="margin: 0;">Show on Notes Monitor</button>
+          <button type="button" class="btn btn-secondary" id="btn-hide-stage-timer-overlay" style="margin: 0;">Hide</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+          <label for="web-stage-timer-overlay-position" style="margin: 0; font-size: 13px; font-weight: normal; white-space: nowrap;">Position:</label>
+          <select id="web-stage-timer-overlay-position" style="padding: 5px 8px; border-radius: 6px; border: 1px solid #ccc; font-size: 13px;">
+            <option value="bottom-left">Bottom Left</option>
+            <option value="bottom-right">Bottom Right</option>
+            <option value="top-left">Top Left</option>
+            <option value="top-right">Top Right</option>
+          </select>
+          <label for="web-stage-timer-overlay-size" style="margin: 0; font-size: 13px; font-weight: normal; white-space: nowrap;">Size:</label>
+          <input type="number" id="web-stage-timer-overlay-size" value="10" min="1" max="100"
+            style="width: 60px; padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px;" />
+          <label style="margin: 0; font-size: 13px; font-weight: normal;">%</label>
+          <button type="button" class="btn btn-secondary" id="btn-apply-stage-timer-overlay-settings" style="margin: 0;">Apply</button>
+        </div>
+      </div>
+
+      <!-- Offline Mode Section -->
+      <div class="controls-section">
+        <h3>Offline Mode</h3>
+        <div class="info" style="margin-bottom: 10px;">
+          Cache the open presentation locally. Enable before disconnecting from the internet.
+        </div>
+        <div id="web-offline-status" style="margin-bottom: 10px; font-size: 13px;">
+          <span id="web-offline-cache-badge" style="padding: 2px 8px; border-radius: 10px; background: rgba(255,255,255,0.15); font-size: 12px;">Not cached</span>
+          <span id="web-offline-cache-detail" style="margin-left: 8px; font-size: 12px; color: #888;"></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+          <button type="button" class="btn" id="btn-offline-enable" style="margin: 0;">Enable Offline</button>
+          <button type="button" class="btn btn-secondary" id="btn-offline-disable" style="margin: 0;">Disable</button>
+          <button type="button" class="btn btn-secondary" id="btn-offline-warm" style="margin: 0;">Re-download</button>
+        </div>
+        <small style="display: block; margin-top: 8px; color: #888; font-size: 12px;">
+          Control network (web remote, Companion, API) stays active in all modes.
+        </small>
+      </div>
+
       <!-- Logging Section -->
       <div class="controls-section">
         <h3>Logging</h3>
@@ -11475,7 +12252,97 @@ function startWebUiServer() {
         showStatus('QR hidden');
       } catch (e) { showStatus('Request failed', true); }
     });
-    
+
+    document.getElementById('btn-show-stage-timer-overlay').addEventListener('click', async () => {
+      try {
+        await fetch(API_BASE + '/api/show-stage-timer-overlay', { method: 'POST' });
+        showStatus('Stage timer overlay shown');
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    document.getElementById('btn-hide-stage-timer-overlay').addEventListener('click', async () => {
+      try {
+        await fetch(API_BASE + '/api/hide-stage-timer-overlay', { method: 'POST' });
+        showStatus('Stage timer overlay hidden');
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    document.getElementById('btn-apply-stage-timer-overlay-settings').addEventListener('click', async () => {
+      const position = document.getElementById('web-stage-timer-overlay-position').value;
+      const size = parseInt(document.getElementById('web-stage-timer-overlay-size').value, 10);
+      try {
+        const res = await fetch(API_BASE + '/api/update-stage-timer-overlay-settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ position, size })
+        });
+        const data = await res.json();
+        showStatus(data.error ? 'Error: ' + data.error : 'Overlay settings applied', !!data.error);
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    // Offline mode web remote handlers
+    function updateWebOfflineUI(data) {
+      const badge = document.getElementById('web-offline-cache-badge');
+      const detail = document.getElementById('web-offline-cache-detail');
+      if (!badge) return;
+      const labels = { 'not-cached': 'Not cached', 'caching': 'Caching…', 'cached': 'Cached', 'offline': 'Offline', 'stale': 'Stale' };
+      const colors = { 'not-cached': 'rgba(255,255,255,0.15)', 'caching': '#7b61ff', 'cached': '#22c55e', 'offline': '#3b82f6', 'stale': '#f59e0b' };
+      badge.textContent = labels[data.cacheState] || data.cacheState || 'Unknown';
+      badge.style.background = colors[data.cacheState] || 'rgba(255,255,255,0.15)';
+      badge.style.color = data.cacheState === 'not-cached' ? '' : '#fff';
+      if (data.cachedAt && data.cacheState !== 'not-cached') {
+        detail.textContent = 'Cached: ' + new Date(data.cachedAt).toLocaleString();
+      } else if (data.cacheState === 'caching') {
+        detail.textContent = 'Recording…';
+      } else {
+        detail.textContent = '';
+      }
+    }
+
+    async function refreshWebOfflineStatus() {
+      try {
+        const res = await fetch(API_BASE + '/api/offline/status');
+        const data = await res.json();
+        updateWebOfflineUI(data);
+      } catch { /* ignore */ }
+    }
+
+    document.getElementById('btn-offline-enable').addEventListener('click', async () => {
+      try {
+        await fetch(API_BASE + '/api/offline/enable', { method: 'POST' });
+        showStatus('Offline mode enabled');
+        refreshWebOfflineStatus();
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    document.getElementById('btn-offline-disable').addEventListener('click', async () => {
+      try {
+        await fetch(API_BASE + '/api/offline/disable', { method: 'POST' });
+        showStatus('Offline mode disabled');
+        refreshWebOfflineStatus();
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    document.getElementById('btn-offline-warm').addEventListener('click', async () => {
+      try {
+        const res = await fetch(API_BASE + '/api/offline/warm-cache', { method: 'POST' });
+        const data = await res.json();
+        if (data.error) {
+          showStatus('Error: ' + data.error, true);
+        } else {
+          showStatus('Cache download started');
+          const pollId = setInterval(async () => {
+            const r = await fetch(API_BASE + '/api/offline/status').catch(() => null);
+            if (!r) return;
+            const d = await r.json().catch(() => null);
+            if (!d) return;
+            updateWebOfflineUI(d);
+            if (d.cacheState !== 'caching') clearInterval(pollId);
+          }, 2000);
+        }
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
     // Load all settings when Settings tab is opened
     let settingsLoaded = false;
     document.querySelectorAll('[data-tab="settings"]').forEach(btn => btn.addEventListener('click', () => {
@@ -11761,6 +12628,20 @@ function startWebUiServer() {
         if (mode === 'primary') {
           startWebBackupStatusPolling();
         }
+
+        // Populate stage timer overlay controls from status
+        try {
+          const statusRes = await fetch(API_BASE + '/api/status');
+          const statusData = await statusRes.json();
+          const posEl  = document.getElementById('web-stage-timer-overlay-position');
+          const sizeEl = document.getElementById('web-stage-timer-overlay-size');
+          if (posEl  && statusData.stageTimerOverlayPosition) posEl.value  = statusData.stageTimerOverlayPosition;
+          if (sizeEl && statusData.stageTimerOverlaySize)     sizeEl.value = String(statusData.stageTimerOverlaySize);
+        } catch (e) { /* non-fatal */ }
+
+        // Load offline mode status
+        refreshWebOfflineStatus().catch(() => {});
+
         settingsLoaded = true;
       } catch (error) {
         console.error('Failed to load settings:', error);
@@ -12246,6 +13127,26 @@ function startWebUiServer() {
 }
 
 app.whenReady().then(() => {
+  // Register custom protocol for serving offline-cached responses
+  protocol.registerBufferProtocol('gs-cache', (request, callback) => {
+    try {
+      const hash = request.url.replace('gs-cache://', '').split('?')[0];
+      if (!offlineActiveManifest || !offlineHashToUrl || !offlineActiveCacheDir) {
+        return callback({ error: -6 }); // net::ERR_FILE_NOT_FOUND
+      }
+      const url = offlineHashToUrl[hash];
+      if (!url) return callback({ error: -6 });
+      const entry = offlineActiveManifest[url];
+      if (!entry) return callback({ error: -6 });
+      const data = readOfflineCacheBody(offlineActiveCacheDir, hash);
+      if (!data) return callback({ error: -6 });
+      callback({ data, mimeType: entry.mimeType || 'application/octet-stream' });
+    } catch (e) {
+      logWarn('[Offline] gs-cache protocol error:', e.message);
+      callback({ error: -6 });
+    }
+  });
+
   if (process.env.GSO_README_CAPTURE === '1') {
     try {
       readmeCapturePrefsBackup = JSON.parse(JSON.stringify(loadPreferences()));

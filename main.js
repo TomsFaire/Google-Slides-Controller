@@ -2802,11 +2802,12 @@ function scheduleReadmeScreenshotCapture() {
 // Get all available displays
 ipcMain.handle('get-displays', async () => {
   const displays = screen.getAllDisplays();
+  const primaryId = screen.getPrimaryDisplay().id;
   return displays.map((display, index) => ({
     id: display.id,
-    label: `Monitor ${index + 1} (${display.bounds.width}x${display.bounds.height})`,
+    label: `Display ${index + 1} (${display.bounds.width}×${display.bounds.height})`,
     bounds: display.bounds,
-    primary: display.bounds.x === 0 && display.bounds.y === 0
+    primary: display.id === primaryId
   }));
 });
 
@@ -3664,6 +3665,35 @@ ipcMain.handle('open-url', async (_event, { url, backgroundColor }) => {
   return { success: true };
 });
 
+ipcMain.handle('show-stage-timer-overlay', async () => {
+  showStageTimerOverlay();
+  return { success: true };
+});
+
+ipcMain.handle('hide-stage-timer-overlay', async () => {
+  hideStageTimerOverlay();
+  return { success: true };
+});
+
+ipcMain.handle('get-stage-timer-overlay-status', () => {
+  const prefs = loadPreferences();
+  return {
+    enabled:  !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()),
+    position: prefs.stageTimerOverlayPosition || 'bottom-left',
+    size:     prefs.stageTimerOverlaySize     || 10
+  };
+});
+
+ipcMain.handle('update-stage-timer-overlay-settings', (_event, settings) => {
+  updateStageTimerOverlaySettings(settings || {});
+  const prefs = loadPreferences();
+  return {
+    success:  true,
+    position: prefs.stageTimerOverlayPosition || 'bottom-left',
+    size:     prefs.stageTimerOverlaySize     || 10
+  };
+});
+
 // HTTP API for Bitfocus Companion integration
 // Ports are configurable via preferences, defaults below
 const DEFAULT_API_PORT = 9595;
@@ -3682,6 +3712,7 @@ let tunnelUrl = null;
 let cloudflaredKillTimer = null;
 let tunnelQrWindow = null;
 let tunnelQrHideTimer = null;
+let stageTimerOverlayWindow = null;
 
 function startHttpServer() {
   httpServer = http.createServer(async (req, res) => {
@@ -3911,6 +3942,9 @@ function startHttpServer() {
             adapter: adapter || 'dsan'
           }))
         };
+        state.stageTimerOverlayEnabled  = !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed());
+        state.stageTimerOverlayPosition = prefs.stageTimerOverlayPosition || 'bottom-left';
+        state.stageTimerOverlaySize     = prefs.stageTimerOverlaySize     || 10;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state));
       })().catch(err => {
@@ -4093,6 +4127,72 @@ function startHttpServer() {
       return;
     }
 
+    // POST /api/show-stage-timer-overlay
+    if (req.method === 'POST' && req.url === '/api/show-stage-timer-overlay') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      showStageTimerOverlay();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, stageTimerOverlayEnabled: true }));
+      return;
+    }
+
+    // POST /api/hide-stage-timer-overlay
+    if (req.method === 'POST' && req.url === '/api/hide-stage-timer-overlay') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      hideStageTimerOverlay();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, stageTimerOverlayEnabled: false }));
+      return;
+    }
+
+    // POST /api/update-stage-timer-overlay-settings
+    if (req.method === 'POST' && req.url === '/api/update-stage-timer-overlay-settings') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const position = typeof data.position === 'string' ? data.position : undefined;
+          const size     = typeof data.size     === 'number' ? Math.round(data.size) : undefined;
+          if (position !== undefined && !VALID_OVERLAY_POSITIONS.has(position)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid position. Must be one of: bottom-left, bottom-right, top-left, top-right' }));
+            return;
+          }
+          if (size !== undefined && (size < 1 || size > 100)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid size. Must be integer 1–100' }));
+            return;
+          }
+          updateStageTimerOverlaySettings({ position, size });
+          const prefs = loadPreferences();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            stageTimerOverlayPosition: prefs.stageTimerOverlayPosition || 'bottom-left',
+            stageTimerOverlaySize:     prefs.stageTimerOverlaySize     || 10
+          }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid request body' }));
+        }
+      });
+      return;
+    }
+
     // GET /api/backup-status - Get connection status of backup machines (primary mode only)
     if (req.method === 'GET' && req.url === '/api/backup-status') {
       (async () => {
@@ -4167,11 +4267,12 @@ function startHttpServer() {
     if (req.method === 'GET' && req.url === '/api/displays') {
       try {
         const displays = screen.getAllDisplays();
-        const displayList = displays.map(display => ({
+        const primaryId = screen.getPrimaryDisplay().id;
+        const displayList = displays.map((display, index) => ({
           id: display.id,
           bounds: display.bounds,
-          label: `${display.bounds.width}x${display.bounds.height} @ (${display.bounds.x}, ${display.bounds.y})`,
-          primary: display.id === screen.getPrimaryDisplay().id
+          label: `Display ${index + 1} (${display.bounds.width}×${display.bounds.height})`,
+          primary: display.id === primaryId
         }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(displayList));
@@ -6321,6 +6422,83 @@ function hideTunnelQrOverlay() {
   if (tunnelQrWindow && !tunnelQrWindow.isDestroyed()) { tunnelQrWindow.close(); }
   tunnelQrWindow = null;
 }
+
+// --- Stage Timer Overlay ---
+
+function getOverlayBounds(notesDisplay, position, sizePercent) {
+  const { bounds } = notesDisplay;
+  const width  = Math.round(bounds.width  * sizePercent / 100);
+  const height = Math.round(bounds.height * sizePercent / 100);
+  const margin = sizePercent === 100 ? 0 : 12;
+  const positions = {
+    'bottom-left':  { x: bounds.x + margin,                        y: bounds.y + bounds.height - height - margin },
+    'bottom-right': { x: bounds.x + bounds.width - width - margin, y: bounds.y + bounds.height - height - margin },
+    'top-left':     { x: bounds.x + margin,                        y: bounds.y + margin },
+    'top-right':    { x: bounds.x + bounds.width - width - margin, y: bounds.y + margin },
+  };
+  const { x, y } = positions[position] || positions['bottom-left'];
+  return { x, y, width, height };
+}
+
+const VALID_OVERLAY_POSITIONS = new Set(['bottom-left', 'bottom-right', 'top-left', 'top-right']);
+
+function showStageTimerOverlay() {
+  const prefs = loadPreferences();
+  const roomId = prefs.stagetimerRoomId || '';
+  const apiKey = prefs.stagetimerApiKey || '';
+  const position   = VALID_OVERLAY_POSITIONS.has(prefs.stageTimerOverlayPosition) ? prefs.stageTimerOverlayPosition : 'bottom-left';
+  const sizePercent = Math.min(100, Math.max(1, parseInt(prefs.stageTimerOverlaySize) || 10));
+
+  const displays = screen.getAllDisplays();
+  const notesDisplay = displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
+  const bounds = getOverlayBounds(notesDisplay, position, sizePercent);
+
+  if (stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()) {
+    stageTimerOverlayWindow.setBounds(bounds);
+    stageTimerOverlayWindow.show();
+  } else {
+    stageTimerOverlayWindow = new BrowserWindow({
+      x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      focusable: false,
+      resizable: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true }
+    });
+    const overlayPath = path.join(__dirname, 'src', 'stage-timer-overlay.html');
+    const query = `?roomId=${encodeURIComponent(roomId)}&apiKey=${encodeURIComponent(apiKey)}`;
+    stageTimerOverlayWindow.loadURL('file://' + overlayPath + query);
+    stageTimerOverlayWindow.on('closed', () => { stageTimerOverlayWindow = null; });
+  }
+
+  savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: true });
+}
+
+function hideStageTimerOverlay() {
+  if (stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()) {
+    stageTimerOverlayWindow.close();
+  }
+  stageTimerOverlayWindow = null;
+  savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: false });
+}
+
+function updateStageTimerOverlaySettings({ position, size }) {
+  const prefs = loadPreferences();
+  const newPosition = VALID_OVERLAY_POSITIONS.has(position) ? position : prefs.stageTimerOverlayPosition || 'bottom-left';
+  const newSize = (Number.isInteger(size) && size >= 1 && size <= 100) ? size : prefs.stageTimerOverlaySize || 10;
+  savePreferences({ ...prefs, stageTimerOverlayPosition: newPosition, stageTimerOverlaySize: newSize });
+
+  if (stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()) {
+    const displays = screen.getAllDisplays();
+    const updatedPrefs = loadPreferences();
+    const notesDisplay = displays.find(d => d.id === Number(updatedPrefs.notesDisplayId)) || displays[0];
+    stageTimerOverlayWindow.setBounds(getOverlayBounds(notesDisplay, newPosition, newSize));
+  }
+}
+
+// --- End Stage Timer Overlay ---
 
 function stopCloudflaredTunnel() {
   hideTunnelQrOverlay();
@@ -9610,6 +9788,32 @@ function startWebUiServer() {
         </small>
       </div>
 
+      <!-- Stage Timer Overlay Section -->
+      <div class="controls-section">
+        <h3>Stage Timer Overlay</h3>
+        <div class="info" style="margin-bottom: 10px;">
+          Show a live timer clock on the notes monitor.
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+          <button type="button" class="btn" id="btn-show-stage-timer-overlay" style="margin: 0;">Show on Notes Monitor</button>
+          <button type="button" class="btn btn-secondary" id="btn-hide-stage-timer-overlay" style="margin: 0;">Hide</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+          <label for="web-stage-timer-overlay-position" style="margin: 0; font-size: 13px; font-weight: normal; white-space: nowrap;">Position:</label>
+          <select id="web-stage-timer-overlay-position" style="padding: 5px 8px; border-radius: 6px; border: 1px solid #ccc; font-size: 13px;">
+            <option value="bottom-left">Bottom Left</option>
+            <option value="bottom-right">Bottom Right</option>
+            <option value="top-left">Top Left</option>
+            <option value="top-right">Top Right</option>
+          </select>
+          <label for="web-stage-timer-overlay-size" style="margin: 0; font-size: 13px; font-weight: normal; white-space: nowrap;">Size:</label>
+          <input type="number" id="web-stage-timer-overlay-size" value="10" min="1" max="100"
+            style="width: 60px; padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px;" />
+          <label style="margin: 0; font-size: 13px; font-weight: normal;">%</label>
+          <button type="button" class="btn btn-secondary" id="btn-apply-stage-timer-overlay-settings" style="margin: 0;">Apply</button>
+        </div>
+      </div>
+
       <!-- Logging Section -->
       <div class="controls-section">
         <h3>Logging</h3>
@@ -9753,6 +9957,15 @@ function startWebUiServer() {
 
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         tabPanel.classList.add('active');
+
+        const hint = document.getElementById('keyboard-shortcuts-hint');
+        if (hint) {
+          if (tabName === 'remote') {
+            updateKeyboardHint();
+          } else {
+            hint.classList.remove('visible');
+          }
+        }
       });
     });
 
@@ -10885,8 +11098,7 @@ function startWebUiServer() {
     function updateStagetimerVisibility() {
       const container = document.getElementById('stagetimer-container');
       if (!container) return;
-      // Only show the widget once an API key has been saved; no key = no box
-      if (!stagetimerApiKeyCached) {
+      if (!stagetimerApiKeyCached || !stagetimerVisible) {
         container.style.display = 'none';
       } else {
         container.style.display = 'block';
@@ -11475,7 +11687,34 @@ function startWebUiServer() {
         showStatus('QR hidden');
       } catch (e) { showStatus('Request failed', true); }
     });
-    
+
+    document.getElementById('btn-show-stage-timer-overlay').addEventListener('click', async () => {
+      try {
+        await fetch(API_BASE + '/api/show-stage-timer-overlay', { method: 'POST' });
+        showStatus('Stage timer overlay shown');
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    document.getElementById('btn-hide-stage-timer-overlay').addEventListener('click', async () => {
+      try {
+        await fetch(API_BASE + '/api/hide-stage-timer-overlay', { method: 'POST' });
+        showStatus('Stage timer overlay hidden');
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
+    document.getElementById('btn-apply-stage-timer-overlay-settings').addEventListener('click', async () => {
+      const position = document.getElementById('web-stage-timer-overlay-position').value;
+      const size = parseInt(document.getElementById('web-stage-timer-overlay-size').value, 10);
+      try {
+        const res = await fetch(API_BASE + '/api/update-stage-timer-overlay-settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ position, size })
+        });
+        const data = await res.json();
+        showStatus(data.error ? 'Error: ' + data.error : 'Overlay settings applied', !!data.error);
+      } catch (e) { showStatus('Request failed', true); }
+    });
+
     // Load all settings when Settings tab is opened
     let settingsLoaded = false;
     document.querySelectorAll('[data-tab="settings"]').forEach(btn => btn.addEventListener('click', () => {
@@ -11761,6 +12000,17 @@ function startWebUiServer() {
         if (mode === 'primary') {
           startWebBackupStatusPolling();
         }
+
+        // Populate stage timer overlay controls from status
+        try {
+          const statusRes = await fetch(API_BASE + '/api/status');
+          const statusData = await statusRes.json();
+          const posEl  = document.getElementById('web-stage-timer-overlay-position');
+          const sizeEl = document.getElementById('web-stage-timer-overlay-size');
+          if (posEl  && statusData.stageTimerOverlayPosition) posEl.value  = statusData.stageTimerOverlayPosition;
+          if (sizeEl && statusData.stageTimerOverlaySize)     sizeEl.value = String(statusData.stageTimerOverlaySize);
+        } catch (e) { /* non-fatal */ }
+
         settingsLoaded = true;
       } catch (error) {
         console.error('Failed to load settings:', error);

@@ -27,6 +27,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('tunnel-url-changed', (_event, url) => callback(url));
   },
 
+  // Stage Timer Overlay
+  stageTimerOverlay: {
+    show:           () => ipcRenderer.invoke('show-stage-timer-overlay'),
+    hide:           () => ipcRenderer.invoke('hide-stage-timer-overlay'),
+    getStatus:      () => ipcRenderer.invoke('get-stage-timer-overlay-status'),
+    updateSettings: (s) => ipcRenderer.invoke('update-stage-timer-overlay-settings', s),
+  },
+
   // Debug logs (desktop UI)
   getLogBuffer: () => ipcRenderer.invoke('get-log-buffer'),
   clearLogBuffer: () => ipcRenderer.invoke('clear-log-buffer'),

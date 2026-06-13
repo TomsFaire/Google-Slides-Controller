@@ -2,6 +2,34 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.5] - 2026-06-12
+
+### Added
+- **Stage timer overlay on notes monitor** — Frameless, always-on-top countdown clock on the notes display, connected to StageTimer.io via Socket.io (reuses existing room ID and API key). Color-codes through idle → running → warning → critical → overtime. Controls in desktop settings (enable, position, size %) and web remote Settings (show/hide, position, size). HTTP API: `POST /api/show-stage-timer-overlay`, `POST /api/hide-stage-timer-overlay`, `POST /api/update-stage-timer-overlay-settings`; `GET /api/status` adds `stageTimerOverlayEnabled`, `stageTimerOverlayPosition`, `stageTimerOverlaySize`. IPC: `window.electronAPI.stageTimerOverlay.{show,hide,getStatus,updateSettings}`.
+
+### Fixed
+- **Display labels** — Primary display detection uses `screen.getPrimaryDisplay().id` in IPC and HTTP handlers; labels normalized to `Display N (W×H)`. Renderer no longer stuck on "Loading…" when display enumeration fails.
+- **StageTimer visibility** — Unchecking "Show timer on Remote tab" and saving now hides the embedded StageTimer widget (respects `stagetimerVisible`, not just API key presence).
+- **Keyboard shortcut hint** — Tooltip scoped to the Remote tab only; hidden when switching to Controls or Settings.
+
+### Companion module
+- Ship **companion-module-gslide-opener v1.7.0** — Stage timer overlay: 4 actions (`show_stage_timer_overlay`, `hide_stage_timer_overlay`, `set_stage_timer_overlay_position`, `set_stage_timer_overlay_size`), 3 variables, 1 feedback (`stage_timer_overlay_active`).
+
+### Build
+- **Version 2.3.5**, **build 82**.
+
+---
+
+## [2.3.4] - 2026-05-15
+
+### Added
+- **WaveShare RS232/485/422 TO POE ETH (B) support for PerfectCue** — Per-port adapter selection (DSAN vs WaveShare), WaveShare byte mapping and RS485 debounce, keep-alive presets, and setup/testing docs (`docs/waveshare-perfectcue-setup.md`, `docs/waveshare-perfectcue-testing.md`).
+
+### Build
+- **Version 2.3.4**, **build 81**.
+
+---
+
 ## [2.3.3] - 2026-05-14
 
 ### Added

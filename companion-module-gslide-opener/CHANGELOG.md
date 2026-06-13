@@ -1,5 +1,17 @@
 # Companion Module Changelog
 
+## [1.7.0] - 2026-06-12
+
+### Added
+- **Stage timer overlay actions** — `show_stage_timer_overlay`, `hide_stage_timer_overlay`, `set_stage_timer_overlay_position`, `set_stage_timer_overlay_size`.
+- **Stage timer overlay variables** — `stage_timer_overlay_enabled`, `stage_timer_overlay_position`, `stage_timer_overlay_size`.
+- **Stage timer overlay feedback** — `stage_timer_overlay_active`.
+
+## [1.6.0] - 2026-05-06
+
+### Added
+- **Open URL** action (`open_url`) with variable support for arbitrary URL display.
+
 ## [1.5.0] - 2026-04-28
 
 ### Added

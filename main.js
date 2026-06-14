@@ -3060,6 +3060,19 @@ ipcMain.handle('show-open-key-dialog', async () => {
   return { canceled: false, filePath: result.filePaths[0] };
 });
 
+ipcMain.handle('show-open-credentials-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select Cloudflare tunnel credentials file',
+    properties: ['openFile'],
+    filters: [{ name: 'Cloudflare Credentials', extensions: ['json'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
 // Template CSS for Web UI white-label (colors only, no layout)
 const WEB_UI_CSS_TEMPLATE = `/*
   Web UI Custom Style Template
@@ -4080,6 +4093,51 @@ function startHttpServer() {
       stopCloudflaredTunnel();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'Tunnel disabled' }));
+      return;
+    }
+
+    // GET /api/tunnel-config — return named tunnel configuration fields
+    if (req.method === 'GET' && req.url === '/api/tunnel-config') {
+      const p = loadPreferences();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        tunnelMode: p.tunnelMode || 'quick',
+        cfTunnelName: p.cfTunnelName || '',
+        cfTunnelHostname: p.cfTunnelHostname || '',
+        cfCredentialsPath: p.cfCredentialsPath || ''
+      }));
+      return;
+    }
+
+    // POST /api/tunnel-config — save named tunnel config; restart tunnel if currently running
+    if (req.method === 'POST' && req.url === '/api/tunnel-config') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const p = loadPreferences();
+          if (data.tunnelMode !== undefined) p.tunnelMode = data.tunnelMode === 'named' ? 'named' : 'quick';
+          if (data.cfTunnelName !== undefined) p.cfTunnelName = String(data.cfTunnelName);
+          if (data.cfTunnelHostname !== undefined) p.cfTunnelHostname = String(data.cfTunnelHostname);
+          if (data.cfCredentialsPath !== undefined) p.cfCredentialsPath = String(data.cfCredentialsPath);
+          savePreferences(p);
+          if (p.cloudflaredEnabled && cloudflaredProcess) {
+            stopCloudflaredTunnel();
+            setTimeout(() => startCloudflaredTunnel(), 500);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
       return;
     }
 
@@ -6573,11 +6631,28 @@ function startCloudflaredTunnel() {
 
   if (cloudflaredProcess) return;
 
-  const origin = getWebUiLocalOriginForTunnel();
-  // Web UI often uses a self-signed cert; cloudflared rejects it without this → edge returns 502
-  const tunnelArgs = ['tunnel', '--url', origin];
-  if (origin.startsWith('https://')) {
-    tunnelArgs.push('--no-tls-verify');
+  const tunnelMode = prefs.tunnelMode || 'quick';
+  const isNamed = tunnelMode === 'named';
+  let tunnelArgs;
+  let namedHostname = '';
+
+  if (isNamed) {
+    const cfTunnelName = prefs.cfTunnelName || '';
+    const cfCredentialsPath = prefs.cfCredentialsPath || '';
+    namedHostname = prefs.cfTunnelHostname || '';
+    if (!cfTunnelName || !cfCredentialsPath || !namedHostname) {
+      logError('[Tunnel] Named tunnel mode requires tunnel name, hostname, and credentials file to be configured.');
+      broadcastTunnelUrl(null);
+      return;
+    }
+    tunnelArgs = ['tunnel', '--credentials-file', cfCredentialsPath, 'run', cfTunnelName];
+  } else {
+    const origin = getWebUiLocalOriginForTunnel();
+    // Web UI often uses a self-signed cert; cloudflared rejects it without this → edge returns 502
+    tunnelArgs = ['tunnel', '--url', origin];
+    if (origin.startsWith('https://')) {
+      tunnelArgs.push('--no-tls-verify');
+    }
   }
 
   try {
@@ -6591,13 +6666,22 @@ function startCloudflaredTunnel() {
   }
 
   const onData = (data) => {
-    const found = extractTrycloudflareUrl(data);
-    if (found && !tunnelUrl) {
-      tunnelUrl = found;
-      logInfo('[Tunnel] URL:', tunnelUrl);
-      broadcastTunnelUrl(tunnelUrl);
+    const str = data.toString();
+    if (isNamed) {
+      if (!tunnelUrl && str.includes('Registered tunnel connection')) {
+        tunnelUrl = namedHostname.startsWith('http') ? namedHostname : `https://${namedHostname}`;
+        logInfo('[Tunnel] Named tunnel connected, URL:', tunnelUrl);
+        broadcastTunnelUrl(tunnelUrl);
+      }
+    } else {
+      const found = extractTrycloudflareUrl(data);
+      if (found && !tunnelUrl) {
+        tunnelUrl = found;
+        logInfo('[Tunnel] URL:', tunnelUrl);
+        broadcastTunnelUrl(tunnelUrl);
+      }
     }
-    logDebug('[Tunnel]', data.toString().slice(0, 240));
+    logDebug('[Tunnel]', str.slice(0, 240));
   };
 
   cloudflaredProcess.stdout.on('data', onData);

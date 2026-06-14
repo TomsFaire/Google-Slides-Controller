@@ -72,7 +72,17 @@ const openCrashReportsFolderBtn = document.getElementById('open-crash-reports-fo
 const wanEnabledCheckbox = document.getElementById('wan-enabled');
 const wanStatusRow = document.getElementById('wan-status-row');
 const wanUrlDisplay = document.getElementById('wan-url-display');
+const wanUrlHint = document.getElementById('wan-url-hint');
 const wanCopyBtn = document.getElementById('wan-copy-btn');
+const tunnelModeQuickRadio = document.getElementById('tunnel-mode-quick');
+const tunnelModeNamedRadio = document.getElementById('tunnel-mode-named');
+const namedTunnelConfig = document.getElementById('named-tunnel-config');
+const cfTunnelNameInput = document.getElementById('cf-tunnel-name');
+const cfTunnelHostnameInput = document.getElementById('cf-tunnel-hostname');
+const cfCredentialsPathInput = document.getElementById('cf-credentials-path');
+const cfCredentialsBrowseBtn = document.getElementById('cf-credentials-browse');
+const namedTunnelSaveBtn = document.getElementById('named-tunnel-save');
+const namedTunnelStatus = document.getElementById('named-tunnel-status');
 const wanTunnelPinNewInput = document.getElementById('wan-tunnel-pin-new');
 const wanTunnelPinConfirmInput = document.getElementById('wan-tunnel-pin-confirm');
 const wanTunnelPinSaveBtn = document.getElementById('wan-tunnel-pin-save');
@@ -920,6 +930,61 @@ async function initDisplays() {
       });
     }
 
+    // Named tunnel: radio toggle show/hide
+    [tunnelModeQuickRadio, tunnelModeNamedRadio].forEach(radio => {
+      if (!radio) return;
+      radio.addEventListener('change', () => {
+        const isNamed = tunnelModeNamedRadio && tunnelModeNamedRadio.checked;
+        if (namedTunnelConfig) namedTunnelConfig.style.display = isNamed ? '' : 'none';
+        if (wanUrlHint) {
+          wanUrlHint.textContent = isNamed
+            ? 'Fixed URL — does not change between app restarts.'
+            : 'The URL changes each time the app starts. Requires internet access.';
+        }
+      });
+    });
+
+    // Named tunnel: Browse credentials file
+    if (cfCredentialsBrowseBtn && window.electronAPI.showOpenCredentialsDialog) {
+      cfCredentialsBrowseBtn.addEventListener('click', async () => {
+        const result = await window.electronAPI.showOpenCredentialsDialog();
+        if (!result.canceled && result.filePath && cfCredentialsPathInput) {
+          cfCredentialsPathInput.value = result.filePath;
+        }
+      });
+    }
+
+    // Named tunnel: Save config
+    if (namedTunnelSaveBtn) {
+      namedTunnelSaveBtn.addEventListener('click', async () => {
+        const tunnelMode = (tunnelModeNamedRadio && tunnelModeNamedRadio.checked) ? 'named' : 'quick';
+        const cfg = {
+          tunnelMode,
+          cfTunnelName: cfTunnelNameInput ? cfTunnelNameInput.value.trim() : '',
+          cfTunnelHostname: cfTunnelHostnameInput ? cfTunnelHostnameInput.value.trim() : '',
+          cfCredentialsPath: cfCredentialsPathInput ? cfCredentialsPathInput.value.trim() : ''
+        };
+        if (tunnelMode === 'named' && (!cfg.cfTunnelName || !cfg.cfTunnelHostname || !cfg.cfCredentialsPath)) {
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Please fill in all named tunnel fields.';
+          return;
+        }
+        try {
+          await window.electronAPI.savePreferences(cfg);
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Saved.';
+          setTimeout(() => { if (namedTunnelStatus) namedTunnelStatus.textContent = ''; }, 2500);
+          // Restart tunnel if currently running so the new config takes effect
+          if (wanEnabledCheckbox && wanEnabledCheckbox.checked) {
+            await window.electronAPI.setTunnelEnabled(false);
+            await window.electronAPI.setTunnelEnabled(true);
+            if (wanUrlDisplay) wanUrlDisplay.value = 'Connecting…';
+          }
+        } catch (e) {
+          console.error('save named tunnel config:', e);
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Save failed.';
+        }
+      });
+    }
+
     if (wanTunnelPinSaveBtn) {
       wanTunnelPinSaveBtn.addEventListener('click', () => {
         saveWanTunnelPinFromDesktop();
@@ -1331,7 +1396,10 @@ async function savePerfectCuePrefs() {
 async function loadTunnelStatus() {
   if (!wanEnabledCheckbox || !window.electronAPI.getTunnelStatus) return;
   try {
-    const status = await window.electronAPI.getTunnelStatus();
+    const [status, prefs] = await Promise.all([
+      window.electronAPI.getTunnelStatus(),
+      window.electronAPI.getPreferences()
+    ]);
     wanEnabledCheckbox.checked = !!status.enabled;
     if (wanStatusRow) {
       wanStatusRow.style.display = status.enabled ? '' : 'none';
@@ -1339,10 +1407,26 @@ async function loadTunnelStatus() {
     if (wanUrlDisplay) {
       wanUrlDisplay.value = status.url || (status.running ? 'Connecting\u2026' : '');
     }
+    applyTunnelConfig(prefs);
     updateStatusBar();
     syncDashboardWan();
   } catch (err) {
     console.error('Failed to load tunnel status:', err);
+  }
+}
+
+function applyTunnelConfig(prefs) {
+  const mode = prefs.tunnelMode || 'quick';
+  if (tunnelModeQuickRadio) tunnelModeQuickRadio.checked = mode !== 'named';
+  if (tunnelModeNamedRadio) tunnelModeNamedRadio.checked = mode === 'named';
+  if (namedTunnelConfig) namedTunnelConfig.style.display = mode === 'named' ? '' : 'none';
+  if (cfTunnelNameInput) cfTunnelNameInput.value = prefs.cfTunnelName || '';
+  if (cfTunnelHostnameInput) cfTunnelHostnameInput.value = prefs.cfTunnelHostname || '';
+  if (cfCredentialsPathInput) cfCredentialsPathInput.value = prefs.cfCredentialsPath || '';
+  if (wanUrlHint) {
+    wanUrlHint.textContent = mode === 'named'
+      ? 'Fixed URL \u2014 does not change between app restarts.'
+      : 'The URL changes each time the app starts. Requires internet access.';
   }
 }
 

@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showOpenLogoDialog: () => ipcRenderer.invoke('show-open-logo-dialog'),
   showOpenCertDialog: () => ipcRenderer.invoke('show-open-cert-dialog'),
   showOpenKeyDialog: () => ipcRenderer.invoke('show-open-key-dialog'),
+  showOpenCredentialsDialog: () => ipcRenderer.invoke('show-open-credentials-dialog'),
   downloadCssTemplate: () => ipcRenderer.invoke('download-css-template'),
   getNetworkInfo: () => ipcRenderer.invoke('get-network-info'),
   getBuildInfo: () => ipcRenderer.invoke('get-build-info'),

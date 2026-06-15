@@ -2,6 +2,16 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.7] - 2026-06-15
+
+### Fixed
+- **Stage timer overlay — layout density** — Timer name and countdown now use the overlay area efficiently at smaller sizes (e.g. 25% bottom-left): title moved to a readable header row, clock scales to fill remaining space instead of being capped by a low CSS font-size limit.
+
+### Build
+- **Version 2.3.7**, **build 84**.
+
+---
+
 ## [2.3.6] - 2026-06-15
 
 ### Fixed

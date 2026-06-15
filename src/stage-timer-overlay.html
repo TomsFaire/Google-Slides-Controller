@@ -23,15 +23,25 @@
       height: 100%;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 2%;
-      padding: 4%;
+      align-items: stretch;
+      justify-content: flex-start;
+      gap: 2px;
+      padding: 6px 8px 5px;
       min-height: 0;
     }
 
+    #header {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45em;
+      width: 100%;
+      min-width: 0;
+    }
+
     #time-wrap {
-      flex: 1 1 auto;
+      flex: 1 1 0;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -41,7 +51,6 @@
     }
 
     #time {
-      font-size: min(22vw, 20vh);
       font-weight: bold;
       line-height: 1;
       color: #ffffff;
@@ -52,25 +61,21 @@
     }
 
     #label {
-      flex: 0 0 auto;
-      font-size: min(4.5vw, 4vh);
-      color: rgba(255,255,255,0.65);
+      font-size: clamp(12px, 6.5vh, 22px);
+      font-weight: 600;
+      color: rgba(255,255,255,0.85);
       text-align: center;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      width: 100%;
-      line-height: 1.2;
+      min-width: 0;
+      line-height: 1.15;
     }
 
     #status-dot {
-      flex: 0 0 auto;
-      width: 2vw;
-      height: 2vw;
-      min-width: 6px;
-      min-height: 6px;
-      max-width: 14px;
-      max-height: 14px;
+      flex-shrink: 0;
+      width: clamp(6px, 1.8vh, 12px);
+      height: clamp(6px, 1.8vh, 12px);
       border-radius: 50%;
       background: rgba(255,255,255,0.3);
       transition: background 0.3s ease;
@@ -91,9 +96,11 @@
 </head>
 <body>
   <div id="clock">
+    <div id="header">
+      <div id="label">Connecting…</div>
+      <div id="status-dot"></div>
+    </div>
     <div id="time-wrap"><div id="time">--:--</div></div>
-    <div id="label">Connecting…</div>
-    <div id="status-dot"></div>
   </div>
 
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
@@ -121,14 +128,9 @@
       const maxH = timeWrapEl.clientHeight;
       if (maxW <= 0 || maxH <= 0) return;
 
-      // Reset to CSS max, then shrink until the string fits both axes.
-      timeEl.style.fontSize = '';
-      const computed = window.getComputedStyle(timeEl);
-      let hi = parseFloat(computed.fontSize);
-      if (!Number.isFinite(hi) || hi <= 0) hi = maxH;
-
+      // Grow to fill the time area; binary-search the largest size that fits.
       let lo = TIME_MIN_PX;
-      timeEl.style.fontSize = hi + 'px';
+      let hi = maxH * 0.98;
 
       while (lo < hi - 0.5) {
         const mid = (lo + hi) / 2;

@@ -2,6 +2,17 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.6] - 2026-06-15
+
+### Fixed
+- **Stage timer overlay — primary/backup sync** — Show, hide, and overlay settings changes on the primary now broadcast to backup machines via `sendToBackups()`, matching slide navigation and speaker-notes behavior.
+- **Stage timer overlay — responsive clock** — Long overtime values (e.g. `-61:10:59`) no longer clip; the clock auto-scales to fit the widget area on every tick and resize.
+
+### Build
+- **Version 2.3.6**, **build 83**.
+
+---
+
 ## [2.3.5] - 2026-06-12
 
 ### Added

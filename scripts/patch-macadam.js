@@ -63,32 +63,22 @@ const PATCHES = [
 
   {
     id: 'D',
-    // video buffer creation: replace napi_create_external_buffer with buffer-copy pattern
-    // Before (single statement):
-    //   c->status = napi_create_external_buffer(env, rowBytes*height, bytes, finalizeVideoBuffer, frame->videoFrame, &param);
-    // After (copy + immediate release — two lines, 4-space indent):
-    //   c->status = napi_create_buffer_copy(env, rowBytes*height, bytes, &bytes, &param);
-    //   if (frame->videoFrame) frame->videoFrame->Release();
     file: CAPTURE_FILE,
-    before: 'c->status = napi_create_external_buffer(env, rowBytes*height, bytes, finalizeVideoBuffer, frame->videoFrame, &param);',
-    // after must exactly match the lines already written in the patched file
-    after:  'c->status = napi_create_buffer_copy(env, rowBytes*height, bytes, &bytes, &param);\n    if (frame->videoFrame) frame->videoFrame->Release();',
-    // idempotency sentinel: substring that is present only when patch is applied
+    before: `    c->status = napi_create_external_buffer(env, rowBytes*height, bytes,
+      finalizeVideoBuffer, frame->videoFrame, &param);`,
+    after: `    c->status = napi_create_buffer_copy(env, rowBytes*height, bytes, &bytes, &param);
+    if (frame->videoFrame) frame->videoFrame->Release();`,
     applied: 'napi_create_buffer_copy(env, rowBytes*height',
   },
 
   {
     id: 'E',
-    // audio buffer creation: replace napi_create_external_buffer with buffer-copy pattern
-    // Before:
-    //   c->status = napi_create_external_buffer(env, audioFinalizeData->dataSize, bytes, finalizeAudioPacket, audioFinalizeData, &param);
-    // After (three lines, 6-space indent):
-    //   c->status = napi_create_buffer_copy(env, audioFinalizeData->dataSize, bytes, &bytes, &param);
-    //   if (audioFinalizeData->audioPacket) audioFinalizeData->audioPacket->Release();
-    //   free(audioFinalizeData);
     file: CAPTURE_FILE,
-    before: 'c->status = napi_create_external_buffer(env, audioFinalizeData->dataSize, bytes, finalizeAudioPacket, audioFinalizeData, &param);',
-    after:  'c->status = napi_create_buffer_copy(env, audioFinalizeData->dataSize, bytes, &bytes, &param);\n      if (audioFinalizeData->audioPacket) audioFinalizeData->audioPacket->Release();\n      free(audioFinalizeData);',
+    before: `      c->status = napi_create_external_buffer(env,
+        audioFinalizeData->dataSize, bytes, finalizeAudioPacket, audioFinalizeData, &param);`,
+    after: `      c->status = napi_create_buffer_copy(env, audioFinalizeData->dataSize, bytes, &bytes, &param);
+      if (audioFinalizeData->audioPacket) audioFinalizeData->audioPacket->Release();
+      free(audioFinalizeData);`,
     applied: 'napi_create_buffer_copy(env, audioFinalizeData->dataSize',
   },
 
@@ -111,7 +101,7 @@ const fileCache = {};
 
 function readFile(filePath) {
   if (!(filePath in fileCache)) {
-    fileCache[filePath] = fs.readFileSync(filePath, 'utf8');
+    fileCache[filePath] = fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
   }
   return fileCache[filePath];
 }

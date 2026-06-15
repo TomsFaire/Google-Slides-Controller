@@ -6474,6 +6474,9 @@ function showStageTimerOverlay() {
   }
 
   savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: true });
+  sendToBackups('/api/show-stage-timer-overlay', {}).catch(err => {
+    console.error('[Backup] Error broadcasting show-stage-timer-overlay:', err);
+  });
 }
 
 function hideStageTimerOverlay() {
@@ -6482,6 +6485,9 @@ function hideStageTimerOverlay() {
   }
   stageTimerOverlayWindow = null;
   savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: false });
+  sendToBackups('/api/hide-stage-timer-overlay', {}).catch(err => {
+    console.error('[Backup] Error broadcasting hide-stage-timer-overlay:', err);
+  });
 }
 
 function updateStageTimerOverlaySettings({ position, size }) {
@@ -6496,6 +6502,14 @@ function updateStageTimerOverlaySettings({ position, size }) {
     const notesDisplay = displays.find(d => d.id === Number(updatedPrefs.notesDisplayId)) || displays[0];
     stageTimerOverlayWindow.setBounds(getOverlayBounds(notesDisplay, newPosition, newSize));
   }
+
+  const updatedPrefs = loadPreferences();
+  sendToBackups('/api/update-stage-timer-overlay-settings', {
+    position: updatedPrefs.stageTimerOverlayPosition || 'bottom-left',
+    size: updatedPrefs.stageTimerOverlaySize || 10
+  }).catch(err => {
+    console.error('[Backup] Error broadcasting update-stage-timer-overlay-settings:', err);
+  });
 }
 
 // --- End Stage Timer Overlay ---

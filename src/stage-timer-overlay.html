@@ -27,21 +27,33 @@
       justify-content: center;
       gap: 2%;
       padding: 4%;
+      min-height: 0;
+    }
+
+    #time-wrap {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 0;
+      overflow: hidden;
     }
 
     #time {
-      font-size: 22vw;
+      font-size: min(22vw, 20vh);
       font-weight: bold;
       line-height: 1;
       color: #ffffff;
       letter-spacing: -0.02em;
       transition: color 0.3s ease;
       text-align: center;
-      width: 100%;
+      white-space: nowrap;
     }
 
     #label {
-      font-size: 4.5vw;
+      flex: 0 0 auto;
+      font-size: min(4.5vw, 4vh);
       color: rgba(255,255,255,0.65);
       text-align: center;
       white-space: nowrap;
@@ -52,6 +64,7 @@
     }
 
     #status-dot {
+      flex: 0 0 auto;
       width: 2vw;
       height: 2vw;
       min-width: 6px;
@@ -78,7 +91,7 @@
 </head>
 <body>
   <div id="clock">
-    <div id="time">--:--</div>
+    <div id="time-wrap"><div id="time">--:--</div></div>
     <div id="label">Connecting…</div>
     <div id="status-dot"></div>
   </div>
@@ -90,17 +103,59 @@
     const apiKey = params.get('apiKey') || '';
 
     const clockEl = document.getElementById('clock');
+    const timeWrapEl = document.getElementById('time-wrap');
     const timeEl  = document.getElementById('time');
     const labelEl = document.getElementById('label');
+
+    const TIME_MIN_PX = 8;
 
     let state = null;
     let currentTimer = null;
     let tickInterval = null;
+    let fitFrame = null;
+
+    function fitTimeDisplay() {
+      if (!timeWrapEl || !timeEl) return;
+
+      const maxW = timeWrapEl.clientWidth;
+      const maxH = timeWrapEl.clientHeight;
+      if (maxW <= 0 || maxH <= 0) return;
+
+      // Reset to CSS max, then shrink until the string fits both axes.
+      timeEl.style.fontSize = '';
+      const computed = window.getComputedStyle(timeEl);
+      let hi = parseFloat(computed.fontSize);
+      if (!Number.isFinite(hi) || hi <= 0) hi = maxH;
+
+      let lo = TIME_MIN_PX;
+      timeEl.style.fontSize = hi + 'px';
+
+      while (lo < hi - 0.5) {
+        const mid = (lo + hi) / 2;
+        timeEl.style.fontSize = mid + 'px';
+        if (timeEl.scrollWidth <= maxW && timeEl.scrollHeight <= maxH) {
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
+
+      timeEl.style.fontSize = lo + 'px';
+    }
+
+    function scheduleFitTimeDisplay() {
+      if (fitFrame !== null) cancelAnimationFrame(fitFrame);
+      fitFrame = requestAnimationFrame(() => {
+        fitFrame = null;
+        fitTimeDisplay();
+      });
+    }
 
     function setState(cls, timeStr, lbl) {
       clockEl.className = cls ? 'state-' + cls : '';
       timeEl.textContent  = timeStr;
       labelEl.textContent = lbl;
+      scheduleFitTimeDisplay();
     }
 
     function formatMs(ms) {
@@ -161,6 +216,12 @@
 
     function stopTick() {
       if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+    }
+
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(scheduleFitTimeDisplay).observe(clockEl);
+    } else {
+      window.addEventListener('resize', scheduleFitTimeDisplay);
     }
 
     if (!roomId || !apiKey) {

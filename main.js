@@ -3678,7 +3678,7 @@ ipcMain.handle('hide-stage-timer-overlay', async () => {
 ipcMain.handle('get-stage-timer-overlay-status', () => {
   const prefs = loadPreferences();
   return {
-    enabled:  !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()),
+    enabled:  prefs.stageTimerOverlayEnabled === true,
     position: prefs.stageTimerOverlayPosition || 'bottom-left',
     size:     prefs.stageTimerOverlaySize     || 10
   };
@@ -3942,7 +3942,7 @@ function startHttpServer() {
             adapter: adapter || 'dsan'
           }))
         };
-        state.stageTimerOverlayEnabled  = !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed());
+        state.stageTimerOverlayEnabled  = prefs.stageTimerOverlayEnabled === true;
         state.stageTimerOverlayPosition = prefs.stageTimerOverlayPosition || 'bottom-left';
         state.stageTimerOverlaySize     = prefs.stageTimerOverlaySize     || 10;
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -6488,6 +6488,13 @@ function hideStageTimerOverlay() {
   sendToBackups('/api/hide-stage-timer-overlay', {}).catch(err => {
     console.error('[Backup] Error broadcasting hide-stage-timer-overlay:', err);
   });
+}
+
+function restoreStageTimerOverlayFromPreferences() {
+  const prefs = loadPreferences();
+  if (prefs.stageTimerOverlayEnabled === true) {
+    showStageTimerOverlay();
+  }
 }
 
 function updateStageTimerOverlaySettings({ position, size }) {
@@ -12528,6 +12535,8 @@ app.whenReady().then(() => {
   startBackupStatusPolling();
 
   applyPerfectCuePrefs(loadPreferences());
+
+  restoreStageTimerOverlayFromPreferences();
 
   scheduleReadmeScreenshotCapture();
 

@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
   "version": "2.3.7",
-  "buildNumber": "84",
+  "buildNumber": "85",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -15,6 +15,8 @@
     "download:cloudflared": "bash scripts/download-cloudflared.sh",
     "smoke:slides-gpu": "electron scripts/slides-presenter-gpu-smoke.cjs",
     "capture:readme-screenshots": "cross-env GSO_README_CAPTURE=1 electron .",
+    "rebuild": "electron-rebuild -f -w macadam",
+    "postinstall": "node scripts/patch-macadam.js",
     "test": "node --test 'tests/**/*.test.js'"
   },
   "keywords": [
@@ -29,15 +31,23 @@
     "url": "https://github.com/TomsFaire/Google-Slides-Controller.git"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
     "cross-env": "^10.1.0",
     "electron": "^33.4.11",
     "electron-builder": "^24.13.3",
     "png-to-ico": "^2.1.8"
   },
+  "optionalDependencies": {
+    "macadam": "2.0.18"
+  },
   "build": {
     "appId": "com.gslide.opener",
     "productName": "Google Slides Opener",
     "publish": null,
+    "asarUnpack": [
+      "node_modules/macadam/**",
+      "!node_modules/macadam/**/.vscode/**"
+    ],
     "files": [
       "main.js",
       "preload.js",

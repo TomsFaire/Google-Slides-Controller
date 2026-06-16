@@ -25,6 +25,7 @@
           <a class="nav-item" data-target="account" role="tab" tabindex="0">Account</a>
           <a class="nav-item" data-target="network" role="tab" tabindex="0">Network</a>
           <a class="nav-item" data-target="monitors" role="tab" tabindex="0">Monitors</a>
+          <a class="nav-item" data-target="decklink" role="tab" tabindex="0">DeckLink</a>
           <a class="nav-item" data-target="presets" role="tab" tabindex="0">Presets</a>
           <a class="nav-item" data-target="remote" role="tab" tabindex="0">Web Remote</a>
         </div>
@@ -333,6 +334,85 @@
               <input type="number" id="default-notes-zoom-steps" class="input-field" min="-10" max="40" value="0" step="1" />
               <p class="field-hint">Extra "Zoom in" clicks in Google Slides when speaker notes open (0 = Slides default). Negative values zoom out.</p>
             </div>
+          </div>
+        </section>
+
+        <!-- DECKLINK TAB -->
+        <section data-tab="decklink" hidden>
+          <h1 class="page-title">DeckLink Output</h1>
+          <div class="panel">
+            <p class="card-description">Send slides and notes as video signals to Blackmagic DeckLink hardware. Requires DeckLink drivers and either the <code>macadam</code> Node module or FFmpeg with DeckLink support.</p>
+
+            <!-- Status row -->
+            <div class="form-group">
+              <label>Provider Status</label>
+              <span id="decklink-provider-status" class="field-hint">Checking…</span>
+            </div>
+
+            <!-- Slides Output -->
+            <h2 class="panel-title">Slides Output</h2>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="decklink-slides-enabled" style="width: auto;" />
+                Enable slides DeckLink output
+              </label>
+            </div>
+            <div class="form-group" id="decklink-slides-config">
+              <label for="decklink-slides-device">Device</label>
+              <select id="decklink-slides-device" class="select-input">
+                <option value="0">DeckLink 0</option>
+              </select>
+              <label for="decklink-slides-mode" style="margin-top: 8px;">Format</label>
+              <select id="decklink-slides-mode" class="select-input">
+                <option value="1080p5994">1080p 59.94fps</option>
+                <option value="1080p60">1080p 60fps</option>
+                <option value="1080p50">1080p 50fps</option>
+                <option value="1080p2997">1080p 29.97fps</option>
+                <option value="1080p25">1080p 25fps</option>
+                <option value="1080p30">1080p 30fps</option>
+                <option value="1080i5994">1080i 59.94fps</option>
+                <option value="720p5994">720p 59.94fps</option>
+                <option value="720p50">720p 50fps</option>
+              </select>
+              <span class="status-indicator" style="margin-top: 8px;">
+                <span class="led" id="decklink-slides-led"></span>
+                <span id="decklink-slides-status-label" class="field-hint">Inactive</span>
+              </span>
+            </div>
+
+            <!-- Notes Output -->
+            <h2 class="panel-title">Notes Output</h2>
+            <div class="form-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="decklink-notes-enabled" style="width: auto;" />
+                Enable notes DeckLink output
+              </label>
+            </div>
+            <div class="form-group" id="decklink-notes-config">
+              <label for="decklink-notes-device">Device</label>
+              <select id="decklink-notes-device" class="select-input">
+                <option value="0">DeckLink 0</option>
+                <option value="1">DeckLink 1</option>
+              </select>
+              <label for="decklink-notes-mode" style="margin-top: 8px;">Format</label>
+              <select id="decklink-notes-mode" class="select-input">
+                <option value="1080p5994">1080p 59.94fps</option>
+                <option value="1080p60">1080p 60fps</option>
+                <option value="1080p50">1080p 50fps</option>
+                <option value="1080p2997">1080p 29.97fps</option>
+                <option value="1080p25">1080p 25fps</option>
+                <option value="1080p30">1080p 30fps</option>
+                <option value="1080i5994">1080i 59.94fps</option>
+                <option value="720p5994">720p 59.94fps</option>
+                <option value="720p50">720p 50fps</option>
+              </select>
+              <span class="status-indicator" style="margin-top: 8px;">
+                <span class="led" id="decklink-notes-led"></span>
+                <span id="decklink-notes-status-label" class="field-hint">Inactive</span>
+              </span>
+            </div>
+
+            <button id="save-decklink-btn" class="btn btn-primary">Save DeckLink Settings</button>
           </div>
         </section>
 

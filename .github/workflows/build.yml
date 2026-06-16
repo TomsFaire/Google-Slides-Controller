@@ -58,6 +58,12 @@ jobs:
           node-version: '20'
           cache: 'yarn'
 
+      - name: Configure git for HTTPS dependency fetch
+        run: |
+          # yarn.lock git deps must fetch over HTTPS on CI (no SSH keys).
+          git config --global url."https://github.com/".insteadOf git@github.com:
+          git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+
       - name: Install dependencies
         run: yarn install --immutable
 

@@ -79,11 +79,20 @@ const wanTunnelPinSaveBtn = document.getElementById('wan-tunnel-pin-save');
 const wanTunnelPinRemoveBtn = document.getElementById('wan-tunnel-pin-remove');
 const wanTunnelPinStatusEl = document.getElementById('wan-tunnel-pin-status');
 const wanPinScopeSelect = document.getElementById('wan-pin-scope');
+const decklinkSlidesEnabled = document.getElementById('decklink-slides-enabled');
+const decklinkSlidesDevice = document.getElementById('decklink-slides-device');
+const decklinkSlidesMode = document.getElementById('decklink-slides-mode');
+const decklinkNotesEnabled = document.getElementById('decklink-notes-enabled');
+const decklinkNotesDevice = document.getElementById('decklink-notes-device');
+const decklinkNotesMode = document.getElementById('decklink-notes-mode');
+const saveDecklinkBtn = document.getElementById('save-decklink-btn');
 
 // Tab switching
 const NAV_ITEMS = document.querySelectorAll('.sidebar-nav [data-target]');
 const TAB_SECTIONS = document.querySelectorAll('.content section[data-tab]');
 const ACTIVE_TAB_KEY = 'desktop-ui:activeTab';
+
+let _decklinkStatusInterval = null;
 
 function switchTab(tabName) {
   TAB_SECTIONS.forEach(s => {
@@ -93,6 +102,14 @@ function switchTab(tabName) {
     a.classList.toggle('active', a.dataset.target === tabName);
   });
   try { localStorage.setItem(ACTIVE_TAB_KEY, tabName); } catch (_) {}
+
+  if (tabName === 'decklink') {
+    updateDecklinkStatus();
+    _decklinkStatusInterval = setInterval(updateDecklinkStatus, 5000);
+  } else {
+    clearInterval(_decklinkStatusInterval);
+    _decklinkStatusInterval = null;
+  }
 }
 
 NAV_ITEMS.forEach(item => {
@@ -650,7 +667,33 @@ async function initDisplays() {
     // preferences.perfectCuePorts is already PortConfig[] after loadPreferences() normalization
     const perfectCuePorts = Array.isArray(preferences.perfectCuePorts) ? preferences.perfectCuePorts : [];
     renderPerfectCuePortList(perfectCuePorts);
-    
+
+    // Restore DeckLink settings
+    await populateDecklinkDevices();
+    await loadDecklinkSettings(preferences);
+    await updateDecklinkStatus();
+
+    if (saveDecklinkBtn) {
+      saveDecklinkBtn.addEventListener('click', async () => {
+        const config = {
+          slides: {
+            enabled: decklinkSlidesEnabled ? decklinkSlidesEnabled.checked : false,
+            deviceIndex: decklinkSlidesDevice ? parseInt(decklinkSlidesDevice.value, 10) : 0,
+            displayMode: decklinkSlidesMode ? decklinkSlidesMode.value : '1080p2997'
+          },
+          notes: {
+            enabled: decklinkNotesEnabled ? decklinkNotesEnabled.checked : false,
+            deviceIndex: decklinkNotesDevice ? parseInt(decklinkNotesDevice.value, 10) : 1,
+            displayMode: decklinkNotesMode ? decklinkNotesMode.value : '1080p2997'
+          }
+        };
+        try {
+          await window.electronAPI.saveDecklinkConfig(config);
+          await updateDecklinkStatus();
+        } catch (e) { /* ignore */ }
+      });
+    }
+
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
     notesDisplay.addEventListener('change', saveMonitorPreferences);
@@ -1970,6 +2013,67 @@ async function displayBuildNumber() {
     if (buildNumberEl) {
       buildNumberEl.textContent = 'v2.2.1.72';
     }
+  }
+}
+
+// DeckLink settings
+async function loadDecklinkSettings(prefs) {
+  if (!decklinkSlidesEnabled) return;
+  const deckPrefs = prefs.decklink || {};
+  const slides = deckPrefs.slides || {};
+  const notes = deckPrefs.notes || {};
+  decklinkSlidesEnabled.checked = !!slides.enabled;
+  if (slides.deviceIndex !== undefined) decklinkSlidesDevice.value = String(slides.deviceIndex);
+  if (slides.displayMode) decklinkSlidesMode.value = slides.displayMode;
+  decklinkNotesEnabled.checked = !!notes.enabled;
+  if (notes.deviceIndex !== undefined) decklinkNotesDevice.value = String(notes.deviceIndex);
+  if (notes.displayMode) decklinkNotesMode.value = notes.displayMode;
+}
+
+async function populateDecklinkDevices() {
+  if (!decklinkSlidesDevice) return;
+  try {
+    const devices = await window.electronAPI.getDecklinkDevices();
+    if (!devices || devices.length === 0) return;
+    const makeOptions = () => devices.map(d => `<option value="${d.index}">${d.name}</option>`).join('');
+    decklinkSlidesDevice.innerHTML = makeOptions();
+    decklinkNotesDevice.innerHTML = makeOptions();
+  } catch (e) { /* hardware not present */ }
+}
+
+async function updateDecklinkStatus() {
+  const providerEl = document.getElementById('decklink-provider-status');
+  const slidesLed = document.getElementById('decklink-slides-led');
+  const slidesLabel = document.getElementById('decklink-slides-status-label');
+  const notesLed = document.getElementById('decklink-notes-led');
+  const notesLabel = document.getElementById('decklink-notes-status-label');
+  if (!providerEl) return;
+  try {
+    const status = await window.electronAPI.getDecklinkStatus();
+    if (status.providerType === 'unavailable') {
+      const errs = status.detectionErrors || {};
+      const detail = [
+        errs.macadam ? `macadam: ${errs.macadam}` : null,
+        errs.ffmpeg  ? `ffmpeg: ${errs.ffmpeg}`   : null,
+      ].filter(Boolean).join(' | ');
+      providerEl.textContent = detail
+        ? `No provider available — ${detail}`
+        : 'No provider available (install macadam or FFmpeg with DeckLink support)';
+    } else {
+      providerEl.textContent = `Provider: ${status.providerType}`;
+    }
+    if (slidesLed) slidesLed.className = `led ${status.slides.active ? 'led-ok' : 'led-neutral'}`;
+    if (slidesLabel) {
+      slidesLabel.textContent = status.slides.active ? 'Active'
+        : (status.slides.error ? `Error: ${status.slides.error}` : 'Inactive');
+    }
+    if (notesLed) notesLed.className = `led ${status.notes.active ? 'led-ok' : 'led-neutral'}`;
+    if (notesLabel) {
+      notesLabel.textContent = status.notes.active ? 'Active'
+        : (status.notes.error ? `Error: ${status.notes.error}` : 'Inactive');
+    }
+  } catch (e) {
+    if (providerEl) providerEl.textContent = 'Status unavailable';
   }
 }
 

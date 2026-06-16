@@ -2,6 +2,16 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.8] - 2026-06-16
+
+### Fixed
+- **Stage timer overlay — persistent toggle** — The desktop settings checkbox now survives app restarts: if the overlay was enabled when the app closed, it is restored on launch with the saved position and size. Enabled state is read from preferences instead of whether the overlay window happens to be open.
+
+### Build
+- **Version 2.3.8**, **build 85**.
+
+---
+
 ## [2.3.7] - 2026-06-15
 
 ### Fixed

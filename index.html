@@ -283,6 +283,43 @@
             </div>
             <!-- Named tunnel fields — shown only when Named Tunnel is selected -->
             <div id="named-tunnel-config" class="form-group" style="display: none; border-left: 2px solid var(--border); padding-left: 14px; margin-top: 4px;">
+
+              <!-- Auto-setup via Cloudflare API -->
+              <div class="form-group">
+                <label style="font-weight: 600;">Auto-setup with Cloudflare API</label>
+                <p class="card-description" style="margin: 4px 0 10px;">Enter your API token and the app creates the tunnel and DNS record automatically.</p>
+              </div>
+              <div class="form-group">
+                <label for="cf-api-token">API Token</label>
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                  <input type="password" id="cf-api-token" class="input-field" placeholder="Cloudflare API token" style="flex: 1; min-width: 180px;" autocomplete="off" />
+                  <button type="button" id="cf-verify-token-btn" class="btn btn-secondary">Verify</button>
+                </div>
+                <small class="field-hint">Needs <strong>Cloudflare Tunnel:Edit</strong> (Account) and <strong>Zone:DNS:Edit</strong> (Zone) permissions. Use a scoped token, not your Global API Key.</small>
+              </div>
+              <div class="form-group">
+                <label for="cf-account-id">Account ID</label>
+                <input type="text" id="cf-account-id" class="input-field" placeholder="32-character hex ID from Cloudflare dashboard" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label for="cf-auto-hostname">Hostname</label>
+                <input type="text" id="cf-auto-hostname" class="input-field" placeholder="slides.pconair.com" />
+                <small class="field-hint">The subdomain to create. Must be under a zone already in your Cloudflare account.</small>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px; flex-wrap: wrap;">
+                <button type="button" id="cf-auto-setup-btn" class="btn">Connect</button>
+                <button type="button" id="cf-auto-save-btn" class="btn btn-secondary">Save Token</button>
+                <button type="button" id="cf-delete-tunnel-btn" class="btn btn-secondary" style="display:none;">Delete Tunnel</button>
+              </div>
+              <div id="cf-auto-status" class="field-hint" style="margin-top: 8px; min-height: 18px;"></div>
+
+              <div style="display: flex; align-items: center; gap: 8px; margin: 14px 0 10px; color: var(--text-muted); font-size: 12px;">
+                <div style="flex:1; height:1px; background: var(--border);"></div>
+                <span>or configure manually</span>
+                <div style="flex:1; height:1px; background: var(--border);"></div>
+              </div>
+
+              <!-- Manual fields -->
               <div class="form-group">
                 <label for="cf-tunnel-name">Tunnel name</label>
                 <input type="text" id="cf-tunnel-name" class="input-field" placeholder="e.g. slides-controller" />

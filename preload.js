@@ -28,6 +28,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('tunnel-url-changed', (_event, url) => callback(url));
   },
 
+  // Cloudflare auto-setup
+  cfVerifyToken: (apiToken) => ipcRenderer.invoke('cf-verify-token', { apiToken }),
+  cfSaveToken: (apiToken, accountId) => ipcRenderer.invoke('cf-save-token', { apiToken, accountId }),
+  cfGetAutoSetupConfig: () => ipcRenderer.invoke('cf-get-auto-setup-config'),
+  cfAutoSetup: (params) => ipcRenderer.invoke('cf-auto-setup', params),
+  cfDeleteTunnel: () => ipcRenderer.invoke('cf-delete-tunnel'),
+  onCfSetupProgress: (callback) => {
+    if (typeof callback !== 'function') return;
+    ipcRenderer.on('cf-setup-progress', (_event, data) => callback(data));
+  },
+
   // Stage Timer Overlay
   stageTimerOverlay: {
     show:           () => ipcRenderer.invoke('show-stage-timer-overlay'),

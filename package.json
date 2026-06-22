@@ -1,6 +1,6 @@
 {
   "name": "gslide-opener",
-  "version": "2.3.8",
+  "version": "2.3.8-named-tunnel",
   "buildNumber": "85",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",

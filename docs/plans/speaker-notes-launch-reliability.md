@@ -112,3 +112,4 @@ A focused unit test for `cancelPendingNotesLaunch()` (token increments, timer cl
 
 ## Status log
 - _2026-06-22_ — Plan drafted (Arch). Root cause confirmed by code reading. Phase 0 complete: branch `bugfix/speaker-notes-launch-reliability` created off `main`, doc saved here. Next: Phase 1 design lock.
+- _2026-06-22_ — Phase 1–3 complete (Arch + Bob + Arch). Six paths wired. PR open for human dual-monitor testing (Phase 4). Temp [NotesLaunch] logging intentionally present for testing; will be removed after Phase 4 pass.

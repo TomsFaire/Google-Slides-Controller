@@ -1093,12 +1093,18 @@ function registerNotesWindowListener(notesDisplay) {
  */
 function startNotesLaunchLoop(capturedWin, token, notesDisplay) {
   let attempts = 0;
+  const startTime = Date.now();
 
   function tick() {
     // bail if superseded, window gone, or already captured
     if (!currentNotesLaunch || token !== currentNotesLaunch.token) return;
     if (!capturedWin || capturedWin.isDestroyed()) return;
     if (notesWindow && !notesWindow.isDestroyed()) return; // already captured
+
+    if (Date.now() - startTime > NOTES_READY_TIMEOUT_MS) {
+      console.warn('[NotesLaunch] token=%d: timed out after %dms', token, NOTES_READY_TIMEOUT_MS);
+      return;
+    }
 
     if (attempts >= NOTES_MAX_ATTEMPTS) {
       console.warn('[NotesLaunch] token=%d: gave up after %d attempts', token, attempts);
@@ -4554,6 +4560,7 @@ function startHttpServer() {
 
           // Initialize centralized launch state, register listener, and start the notes launch loop
           currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+          const withNotesToken = currentNotesLaunch.token;
           registerNotesWindowListener(notesDisplay);
 
           // Listen for page load — start the notes loop after first load
@@ -4585,10 +4592,7 @@ function startHttpServer() {
             }
 
             // Start the notes launch loop (token captured at launch time; loop handles readiness gating)
-            if (currentNotesLaunch) {
-              const token = currentNotesLaunch.token;
-              startNotesLaunchLoop(presentationWindow, token, notesDisplay);
-            }
+            startNotesLaunchLoop(presentationWindow, withNotesToken, notesDisplay);
           });
           
           presentationWindow.on('closed', () => {

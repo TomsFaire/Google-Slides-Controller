@@ -305,6 +305,8 @@ process.on('unhandledRejection', (reason, promise) => {
 let mainWindow;
 let presentationWindow = null;
 let notesWindow = null;
+// shape: { token: number, win: BrowserWindow, retryTimer: ReturnType<typeof setTimeout>|null, listener: Function|null }
+let currentNotesLaunch = null;
 let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
@@ -318,6 +320,13 @@ let lastKeyFillUrls = null; // { fillUrl, keyUrl, fillBgColor, keyBgColor } — 
 let lastGenericUrlBgColor = null; // stored for crash recovery reopen
 let keyFillFillWindow = null;
 let keyFillKeyWindow = null;
+
+// Speaker-notes launch reliability constants
+const NOTES_MAX_ATTEMPTS      = 15;   // ~15 s total window
+const NOTES_VERIFY_MS         = 1000; // wait after s-press before re-pressing
+const NOTES_READY_TIMEOUT_MS  = 20000;// max wait for present-mode gate
+const NOTES_FOCUS_SETTLE_MS   = 80;   // focus-settle delay before s-press
+const NOTES_PRESENT_SETTLE_MS = 250;  // post-navigate settle before first attempt
 
 // Google Slides speaker notes zoom: discrete steps from native baseline (Zoom in / Zoom out toolbar; see /api/zoom-in-notes).
 const NOTES_ZOOM_MIN_STEPS = -10;
@@ -1006,6 +1015,130 @@ function applySpeakerNotesInitialGeometry(window, notesDisplay, overrideBounds) 
     window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window, target));
     window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window, target), 500));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Speaker-notes launch controller
+// ---------------------------------------------------------------------------
+
+/** Cancel any in-flight notes launch (timers + app-level browser-window-created listener). */
+function cancelPendingNotesLaunch() {
+  if (!currentNotesLaunch) return;
+  console.log('[NotesLaunch] cancel: token=%d', currentNotesLaunch.token);
+  currentNotesLaunch.token = -1; // invalidate any running loop
+  if (currentNotesLaunch.retryTimer) {
+    clearTimeout(currentNotesLaunch.retryTimer);
+    currentNotesLaunch.retryTimer = null;
+  }
+  if (currentNotesLaunch.listener) {
+    app.removeListener('browser-window-created', currentNotesLaunch.listener);
+    currentNotesLaunch.listener = null;
+  }
+  currentNotesLaunch = null;
+}
+
+/**
+ * Internal: called when the notes BrowserWindow has been identified.
+ * Removes the app-level listener, wires up the window, and positions it.
+ */
+function adoptNotesWindow(win, notesDisplay, listener) {
+  app.removeListener('browser-window-created', listener);
+  if (currentNotesLaunch) {
+    currentNotesLaunch.listener = null;
+  }
+  notesWindow = win;
+  onNotesWindowCreated(win);
+  attachCrashHandlers(win, 'notes');
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      event.preventDefault();
+      if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+      if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+    }
+  });
+  applySpeakerNotesInitialGeometry(win, notesDisplay, null);
+}
+
+/**
+ * Register a single app-level browser-window-created listener that adopts the
+ * first window whose URL matches the Google Slides speaker-notes popup.
+ * Must be called after currentNotesLaunch is initialised.
+ */
+function registerNotesWindowListener(notesDisplay) {
+  const token = currentNotesLaunch ? currentNotesLaunch.token : 0;
+  console.log('[NotesLaunch] register: token=%d', token);
+  const listener = (event, win) => {
+    if (win === presentationWindow || win === mainWindow) return;
+    const url = win.webContents.getURL();
+    if (!url.includes('speakernotes') && !url.includes('speaker')) {
+      win.webContents.once('did-navigate', (e, u) => {
+        if (!u.includes('speakernotes') && !u.includes('speaker')) return;
+        adoptNotesWindow(win, notesDisplay, listener);
+      });
+      return;
+    }
+    adoptNotesWindow(win, notesDisplay, listener);
+  };
+  if (!currentNotesLaunch) {
+    currentNotesLaunch = { token: 0, win: null, retryTimer: null, listener: null };
+  }
+  currentNotesLaunch.listener = listener;
+  app.on('browser-window-created', listener);
+}
+
+/**
+ * Drive the "press s to open speaker notes" loop.
+ * Checks readiness before each press and verifies success before re-pressing.
+ * Bails immediately if the launch is superseded (token mismatch).
+ */
+function startNotesLaunchLoop(capturedWin, token, notesDisplay) {
+  let attempts = 0;
+
+  function tick() {
+    // bail if superseded, window gone, or already captured
+    if (!currentNotesLaunch || token !== currentNotesLaunch.token) return;
+    if (!capturedWin || capturedWin.isDestroyed()) return;
+    if (notesWindow && !notesWindow.isDestroyed()) return; // already captured
+
+    if (attempts >= NOTES_MAX_ATTEMPTS) {
+      console.warn('[NotesLaunch] token=%d: gave up after %d attempts', token, attempts);
+      return;
+    }
+    attempts++;
+
+    // Wait for present-mode readiness before first press
+    const url = capturedWin.webContents.getURL();
+    const ready = (url.includes('/present/') || url.includes('/localpresent')) &&
+                  !capturedWin.webContents.isLoading();
+
+    if (!ready) {
+      console.log('[NotesLaunch] token=%d attempt=%d: not ready yet, will retry', token, attempts);
+      if (!currentNotesLaunch) return;
+      currentNotesLaunch.retryTimer = setTimeout(tick, NOTES_VERIFY_MS);
+      return;
+    }
+
+    console.log('[NotesLaunch] token=%d attempt=%d: pressing s', token, attempts);
+    capturedWin.focus();
+    capturedWin.webContents.focus();
+    capturedWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 's' });
+    capturedWin.webContents.sendInputEvent({ type: 'char',    keyCode: 's' });
+    capturedWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 's' });
+
+    // Wait NOTES_VERIFY_MS then check if notes appeared before re-pressing
+    if (!currentNotesLaunch) return;
+    currentNotesLaunch.retryTimer = setTimeout(() => {
+      if (!currentNotesLaunch || token !== currentNotesLaunch.token) return;
+      if (notesWindow && !notesWindow.isDestroyed()) {
+        console.log('[NotesLaunch] token=%d: captured on attempt %d', token, attempts);
+        return; // success
+      }
+      tick(); // re-press
+    }, NOTES_VERIFY_MS);
+  }
+
+  // Start after present-mode settle
+  setTimeout(tick, NOTES_PRESENT_SETTLE_MS);
 }
 
 // Capture "current slide" and "next slide" preview images from the speaker notes (Presenter View) window.
@@ -2238,6 +2371,9 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
       ? clampNotesZoomSteps(savedNotesZoomSteps)
       : getDefaultNotesZoomStepsFromPrefs();
 
+  // Cancel any in-flight notes launch before closing old windows
+  cancelPendingNotesLaunch();
+
   if (notesWindow && !notesWindow.isDestroyed()) {
     notesWindow.removeAllListeners('closed');
     notesWindow.close();
@@ -2269,27 +2405,14 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
 
-  const windowCreatedListener = (event, window) => {
-    if (window !== presentationWindow && window !== mainWindow) {
-      notesWindow = window;
-      onNotesWindowCreated(window);
-      attachCrashHandlers(window, 'notes');
-      window.webContents.on('before-input-event', (event, input) => {
-        if (input.key === 'Escape' && input.type === 'keyDown') {
-          event.preventDefault();
-          if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-          if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-        }
-      });
-      const fromReload =
-        savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0
-          ? savedNotesBounds
-          : null;
-      applySpeakerNotesInitialGeometry(window, notesDisplay, fromReload);
-      app.removeListener('browser-window-created', windowCreatedListener);
-    }
-  };
-  app.on('browser-window-created', windowCreatedListener);
+  // Initialize centralized launch state and register notes window listener
+  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+  registerNotesWindowListener(notesDisplay);
+
+  if (notesWereOpen) {
+    const token = currentNotesLaunch.token;
+    startNotesLaunchLoop(presentationWindow, token, notesDisplay);
+  }
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
@@ -2341,17 +2464,6 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
       }
     }
   });
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    if (presentationWindow && !presentationWindow.isDestroyed()) {
-      presentationWindow.focus();
-      await new Promise(resolve => setTimeout(resolve, 200));
-      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-      presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-    }
-  }
   if (presentationWindow && !presentationWindow.isDestroyed()) {
     setTimeout(() => presentationWindow.focus(), 500);
   }
@@ -3391,34 +3503,37 @@ ipcMain.handle('google-signout', async () => {
 // Open test presentation (present URL opens directly in presentation/slideshow mode)
 ipcMain.handle('open-test-presentation', async () => {
   const testUrl = 'https://docs.google.com/presentation/d/1qKhywpFhjG4tAtA1e2Rk9dB2lVk_uu5_Ol5TaBhvvPo/present';
-  
+
+  // Cancel any in-flight notes launch before opening new windows
+  cancelPendingNotesLaunch();
+
   // Load preferences to get selected displays
   const prefs = loadPreferences();
   logDebug('[Test] Loaded preferences:', safeStringify(prefs));
-  
+
   const displays = screen.getAllDisplays();
   logDebug('[Test] All available displays:');
   displays.forEach((display, index) => {
     logDebug(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${safeStringify(display.bounds)}`);
   });
-  
+
   // Convert IDs to numbers for comparison (they might be saved as strings)
   const presentationDisplayId = Number(prefs.presentationDisplayId);
   const notesDisplayId = Number(prefs.notesDisplayId);
-  
+
   const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
   const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-  
+
   logDebug('[Test] Selected presentation display ID:', prefs.presentationDisplayId, '(converted to:', presentationDisplayId, ')');
   logDebug('[Test] Resolved presentation display:', presentationDisplay.id, 'Bounds:', presentationDisplay.bounds);
   logDebug('[Test] Selected notes display ID:', prefs.notesDisplayId, '(converted to:', notesDisplayId, ')');
   logDebug('[Test] Resolved notes display:', notesDisplay.id, 'Bounds:', notesDisplay.bounds);
-  
+
   if (!presentationWindow) {
     // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
     // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
     presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-    
+
     // Set simple fullscreen on macOS to avoid Spaces conflicts
     if (process.platform === 'darwin') {
       applyPresentationFullscreenChrome(presentationWindow, prefs);
@@ -3429,7 +3544,7 @@ ipcMain.handle('open-test-presentation', async () => {
       presentationWindow = null;
       currentSlide = null;
     });
-    
+
     // Listen for Escape key to close both windows
     presentationWindow.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'Escape' && input.type === 'keyDown') {
@@ -3446,35 +3561,10 @@ ipcMain.handle('open-test-presentation', async () => {
       const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
       return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
     });
-    
-    // Listen for new windows being created (this will be the notes window)
-    const testWindowCreatedListener = (event, window) => {
-      if (window !== presentationWindow && window !== mainWindow) {
-        logDebug('[Test] Notes window created');
-        logDebug('[Test] Presentation display ID:', presentationDisplay.id);
-        logDebug('[Test] Notes display ID:', notesDisplay.id);
-        notesWindow = window;
-        onNotesWindowCreated(window);
-        attachCrashHandlers(window, 'notes');
-        const initialBounds = window.getBounds();
-        logDebug('[Test] Initial window bounds:', initialBounds);
-        
-        // Add Escape key handler to notes window as well
-        window.webContents.on('before-input-event', (event, input) => {
-          if (input.key === 'Escape' && input.type === 'keyDown') {
-            logDebug('[Test] Escape pressed in notes window, closing all windows');
-            event.preventDefault();
-            if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-            if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-          }
-        });
-        
-        applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-        app.removeListener('browser-window-created', testWindowCreatedListener);
-      }
-    };
-    app.on('browser-window-created', testWindowCreatedListener);
+    // Register centralized notes window listener (no loop — test path is plain launch)
+    currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+    registerNotesWindowListener(notesDisplay);
   }
 
   lastPresentationUrl = testUrl; // Store for reload
@@ -3530,6 +3620,9 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     return { success: false, message: 'Invalid presentation display' };
   }
 
+  // Cancel any in-flight notes launch before closing old windows
+  cancelPendingNotesLaunch();
+
   // Close existing windows if any
   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
   if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
@@ -3539,7 +3632,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
   // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
   presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-  
+
   // Set simple fullscreen on macOS to avoid Spaces conflicts
   if (process.platform === 'darwin') {
     applyPresentationFullscreenChrome(presentationWindow, loadPreferences());
@@ -3552,39 +3645,10 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
-  
-  // Listen for new windows being created (this will be the notes window)
-  const windowCreatedListener = (event, window) => {
-    // Check if this is not the presentation window or main window
-    if (window !== presentationWindow && window !== mainWindow) {
-      logDebug('[Multi-Monitor] Notes window created');
-      logDebug('[Multi-Monitor] Presentation display ID:', presentationDisplayIdNum);
-      logDebug('[Multi-Monitor] Notes display ID:', notesDisplayIdNum);
-      logDebug('[Multi-Monitor] Notes display object:', notesDisplay);
-      notesWindow = window;
-      onNotesWindowCreated(window);
-      attachCrashHandlers(window, 'notes');
-      // Get initial window bounds
-      const initialBounds = window.getBounds();
-      logDebug('[Multi-Monitor] Initial window bounds:', initialBounds);
-      
-      // Add Escape key handler to notes window as well
-      window.webContents.on('before-input-event', (event, input) => {
-        if (input.key === 'Escape' && input.type === 'keyDown') {
-          logDebug('[Multi-Monitor] Escape pressed in notes window, closing all windows');
-          event.preventDefault();
-          if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-          if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-        }
-      });
-      
-      applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-      // Remove listener after notes window is created
-      app.removeListener('browser-window-created', windowCreatedListener);
-    }
-  };
-  app.on('browser-window-created', windowCreatedListener);
+  // Register centralized notes window listener (no loop — plain launch, no auto-press)
+  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+  registerNotesWindowListener(notesDisplay);
 
   // Load presentation URL
   lastPresentationUrl = url; // Store for reload
@@ -4302,7 +4366,10 @@ function startHttpServer() {
           }
           
           console.log('[API] Opening presentation:', url);
-          
+
+          // Cancel any in-flight notes launch before closing old windows
+          cancelPendingNotesLaunch();
+
           // Close any existing presentation windows
           try {
             if (notesWindow && !notesWindow.isDestroyed()) {
@@ -4321,69 +4388,41 @@ function startHttpServer() {
           } catch (error) {
             console.error('[API] Error closing existing windows:', error.message);
           }
-          
+
           // Load preferences for monitor selection
           const prefs = loadPreferences();
           const displays = screen.getAllDisplays();
-          
+
           const presentationDisplayId = Number(prefs.presentationDisplayId);
           const notesDisplayId = Number(prefs.notesDisplayId);
-          
+
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-          
+
           console.log('[API] Using presentation display:', presentationDisplay.id);
           console.log('[API] Using notes display:', notesDisplay.id);
-          
+
           // Open the presentation using the same logic as the IPC handler
           // Create the presentation window
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-          
+
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
             applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
-          
+
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
-          
-          // Listen for notes window creation
-          const windowCreatedListener = (event, window) => {
-            if (window !== presentationWindow && window !== mainWindow) {
-              console.log('[API] Notes window created');
-              notesWindow = window;
-              onNotesWindowCreated(window);
-              attachCrashHandlers(window, 'notes');
-              // Add Escape key handler to notes window
-              window.webContents.on('before-input-event', (event, input) => {
-                if (input.key === 'Escape' && input.type === 'keyDown') {
-                  console.log('[API] Escape pressed in notes window, closing all windows');
-                  event.preventDefault();
-                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-                }
-              });
 
-              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
-
-              app.removeListener('browser-window-created', windowCreatedListener);
-            }
-          };
-          app.on('browser-window-created', windowCreatedListener);
-
-          // Navigation listener (no auto-launch of notes - user must manually start notes)
-          const navigationListener = async (event, navUrl) => {
-            console.log('[API] Navigated to:', navUrl);
-            // Just log navigation, don't auto-launch notes
-          };
-          
-          presentationWindow.webContents.on('did-navigate', navigationListener);
+          // Register centralized notes window listener (no loop — plain launch, no auto-press)
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+          registerNotesWindowListener(notesDisplay);
           
           // Listen for page load
           presentationWindow.webContents.once('did-finish-load', async () => {
@@ -4460,7 +4499,10 @@ function startHttpServer() {
           }
           
           console.log('[API] Opening presentation with notes:', url);
-          
+
+          // Cancel any in-flight notes launch before closing old windows
+          cancelPendingNotesLaunch();
+
           // Close any existing presentation windows
           try {
             if (notesWindow && !notesWindow.isDestroyed()) {
@@ -4479,105 +4521,43 @@ function startHttpServer() {
           } catch (error) {
             console.error('[API] Error closing existing windows:', error.message);
           }
-          
+
           // Load preferences for monitor selection
           const prefs = loadPreferences();
           const displays = screen.getAllDisplays();
-          
+
           const presentationDisplayId = Number(prefs.presentationDisplayId);
           const notesDisplayId = Number(prefs.notesDisplayId);
-          
+
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-          
+
           console.log('[API] Using presentation display:', presentationDisplay.id);
           console.log('[API] Using notes display:', notesDisplay.id);
-          
+
           // Create the presentation window
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-          
+
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
             applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
-          
+
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
-          
-          // Listen for notes window creation
-          const windowCreatedListener = (event, window) => {
-            if (window !== presentationWindow && window !== mainWindow) {
-              console.log('[API] Notes window created');
-              notesWindow = window;
-              onNotesWindowCreated(window);
-              attachCrashHandlers(window, 'notes');
-              window.webContents.on('before-input-event', (event, input) => {
-                if (input.key === 'Escape' && input.type === 'keyDown') {
-                  event.preventDefault();
-                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-                }
-              });
-              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-              app.removeListener('browser-window-created', windowCreatedListener);
-            }
-          };
-          app.on('browser-window-created', windowCreatedListener);
+          // Initialize centralized launch state, register listener, and start the notes launch loop
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+          registerNotesWindowListener(notesDisplay);
 
-          // Auto-launch speaker notes reliably (some decks load fast and can miss a single 's' press).
-          // We'll retry a few times until the notes window is created.
-          let notesAttempts = 0;
-          const maxNotesAttempts = 8;
-          let notesRetryTimer = null;
-
-          const sendSpeakerNotesKey = async (reason) => {
-            if (!presentationWindow || presentationWindow.isDestroyed()) return false;
-            if (notesWindow && !notesWindow.isDestroyed()) return true;
-            if (notesAttempts >= maxNotesAttempts) return false;
-
-            notesAttempts += 1;
-            try {
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 80));
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-              console.log(`[API] Speaker notes attempt ${notesAttempts}/${maxNotesAttempts} (${reason}) - sent "s" key`);
-            } catch (error) {
-              console.error('[API] Error sending "s" key for speaker notes:', error);
-            }
-
-            // Schedule another attempt if notes window hasn't appeared yet
-            if (!notesWindow || notesWindow.isDestroyed()) {
-              if (notesRetryTimer) clearTimeout(notesRetryTimer);
-              notesRetryTimer = setTimeout(() => {
-                sendSpeakerNotesKey('retry');
-              }, 700);
-            }
-
-            return true;
-          };
-
-          const navigationListener = async (event, navUrl) => {
-            // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
-            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('/localpresent')) && !navUrl.includes('/presentation/');
-            if (isPresentMode) {
-              // Slight delay to allow the presentation UI to become interactive
-              await new Promise(resolve => setTimeout(resolve, 250));
-              await sendSpeakerNotesKey('did-navigate');
-            }
-          };
-
-          presentationWindow.webContents.on('did-navigate', navigationListener);
-          
-          // Listen for page load
+          // Listen for page load — start the notes loop after first load
+          // (the loop itself handles readiness gating; no need for separate did-navigate trigger)
           presentationWindow.webContents.once('did-finish-load', async () => {
             console.log('[API] Page finished loading');
             if (!presentationWindow || presentationWindow.isDestroyed()) {
@@ -4595,7 +4575,7 @@ function startHttpServer() {
                 if (presentationWindow && !presentationWindow.isDestroyed()) {
                   console.log('[API] Not in present mode yet, triggering Ctrl+Shift+F5...');
                   presentationWindow.focus();
-                  await new Promise(resolve => setTimeout(resolve, 80));
+                  await new Promise(resolve => setTimeout(resolve, NOTES_FOCUS_SETTLE_MS));
                   presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
                   presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
                 }
@@ -4604,10 +4584,11 @@ function startHttpServer() {
               // ignore
             }
 
-            // Always attempt notes after load (covers cases where did-navigate isn't fired as expected).
-            setTimeout(() => {
-              sendSpeakerNotesKey('did-finish-load');
-            }, 650);
+            // Start the notes launch loop (token captured at launch time; loop handles readiness gating)
+            if (currentNotesLaunch) {
+              const token = currentNotesLaunch.token;
+              startNotesLaunchLoop(presentationWindow, token, notesDisplay);
+            }
           });
           
           presentationWindow.on('closed', () => {
@@ -6081,7 +6062,10 @@ function startHttpServer() {
           // Forward to open-presentation endpoint logic
           // We'll reuse the same code path
           console.log(`[API] Opening preset ${presetNumber}: ${url}`);
-          
+
+          // Cancel any in-flight notes launch before closing old windows
+          cancelPendingNotesLaunch();
+
           // Close any existing presentation windows
           try {
             if (notesWindow && !notesWindow.isDestroyed()) {
@@ -6100,71 +6084,39 @@ function startHttpServer() {
           } catch (error) {
             console.error('[API] Error closing existing windows:', error.message);
           }
-          
+
           // Load preferences for monitor selection
           const displays = screen.getAllDisplays();
           const presentationDisplayId = Number(prefs.presentationDisplayId);
           const notesDisplayId = Number(prefs.notesDisplayId);
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-          
+
           console.log('[API] Using presentation display:', presentationDisplay.id);
           console.log('[API] Using notes display:', notesDisplay.id);
-          
+
           // Create the presentation window (reuse open-presentation logic)
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-          
+
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
             applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
-          
+
           // Set up window handlers (same as open-presentation; notes open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
-          
-          const windowCreatedListener = (event, window) => {
-            if (window !== presentationWindow && window !== mainWindow) {
-              notesWindow = window;
-              onNotesWindowCreated(window);
-              attachCrashHandlers(window, 'notes');
-              window.webContents.on('before-input-event', (event, input) => {
-                if (input.key === 'Escape' && input.type === 'keyDown') {
-                  event.preventDefault();
-                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-                }
-              });
-              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-              app.removeListener('browser-window-created', windowCreatedListener);
-            }
-          };
-          app.on('browser-window-created', windowCreatedListener);
+          // Initialize centralized launch state, register listener, and start the notes launch loop
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+          const presetNotesToken = currentNotesLaunch.token;
+          registerNotesWindowListener(notesDisplay);
 
-          let sKeyPressed = false;
-          const navigationListener = async (event, navUrl) => {
-            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
-            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              sKeyPressed = true;
-              await new Promise(resolve => setTimeout(resolve, 300));
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                presentationWindow.focus();
-                await new Promise(resolve => setTimeout(resolve, 50));
-                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
-            }
-          };
-          presentationWindow.webContents.on('did-navigate', navigationListener);
-          
           presentationWindow.webContents.once('did-finish-load', async () => {
             if (!presentationWindow || presentationWindow.isDestroyed()) return;
             await new Promise(resolve => setTimeout(resolve, 200));
@@ -6174,21 +6126,9 @@ function startHttpServer() {
               presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
               presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
             }
+            // Start the notes launch loop after triggering present mode
+            startNotesLaunchLoop(presentationWindow, presetNotesToken, notesDisplay);
           });
-          
-          setTimeout(async () => {
-            if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              sKeyPressed = true;
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 50));
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
-            }
-          }, 1000);
           
           presentationWindow.on('closed', () => {
             presentationWindow = null;

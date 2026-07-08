@@ -1773,9 +1773,24 @@ function isAllowedByControllerEntry(entry, remoteIp) {
   return e === r;
 }
 
+function getEffectiveClientIp(req) {
+  // When a named CF tunnel is active, cloudflared connects from 127.0.0.1 and
+  // passes the real client IP in CF-Connecting-IP. Use that header so the
+  // allowlist evaluates the actual remote user, not the tunnel proxy.
+  const socketAddr = normalizeRemoteAddress(req?.socket?.remoteAddress);
+  if (isLocalhostAddress(socketAddr) && cloudflaredProcess) {
+    const prefs = loadPreferences();
+    if (prefs.tunnelMode === 'named') {
+      const cfIp = req.headers?.['cf-connecting-ip'];
+      if (cfIp) return normalizeRemoteAddress(cfIp);
+    }
+  }
+  return socketAddr;
+}
+
 function isControllerAllowedRequest(req, prefs) {
   // Always allow local requests (desktop app UI and local tooling)
-  const remote = normalizeRemoteAddress(req?.socket?.remoteAddress);
+  const remote = getEffectiveClientIp(req);
   if (isLocalhostAddress(remote)) return true;
 
   const allowlist = getControllerIpsFromPrefs(prefs);
@@ -3178,6 +3193,19 @@ ipcMain.handle('show-open-key-dialog', async () => {
   return { canceled: false, filePath: result.filePaths[0] };
 });
 
+ipcMain.handle('show-open-credentials-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select Cloudflare tunnel credentials file',
+    properties: ['openFile'],
+    filters: [{ name: 'Cloudflare Credentials', extensions: ['json'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
 // Template CSS for Web UI white-label (colors only, no layout)
 const WEB_UI_CSS_TEMPLATE = `/*
   Web UI Custom Style Template
@@ -4150,6 +4178,51 @@ function startHttpServer() {
       stopCloudflaredTunnel();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'Tunnel disabled' }));
+      return;
+    }
+
+    // GET /api/tunnel-config — return named tunnel configuration fields
+    if (req.method === 'GET' && req.url === '/api/tunnel-config') {
+      const p = loadPreferences();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        tunnelMode: p.tunnelMode || 'quick',
+        cfTunnelName: p.cfTunnelName || '',
+        cfTunnelHostname: p.cfTunnelHostname || '',
+        cfCredentialsPath: p.cfCredentialsPath || ''
+      }));
+      return;
+    }
+
+    // POST /api/tunnel-config — save named tunnel config; restart tunnel if currently running
+    if (req.method === 'POST' && req.url === '/api/tunnel-config') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const p = loadPreferences();
+          if (data.tunnelMode !== undefined) p.tunnelMode = data.tunnelMode === 'named' ? 'named' : 'quick';
+          if (data.cfTunnelName !== undefined) p.cfTunnelName = String(data.cfTunnelName);
+          if (data.cfTunnelHostname !== undefined) p.cfTunnelHostname = String(data.cfTunnelHostname);
+          if (data.cfCredentialsPath !== undefined) p.cfCredentialsPath = String(data.cfCredentialsPath);
+          savePreferences(p);
+          if (p.cloudflaredEnabled && cloudflaredProcess) {
+            stopCloudflaredTunnel();
+            setTimeout(() => startCloudflaredTunnel(), 500);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
       return;
     }
 
@@ -6465,6 +6538,289 @@ function updateStageTimerOverlaySettings({ position, size }) {
 
 // --- End Stage Timer Overlay ---
 
+// ─── Cloudflare API helpers ───────────────────────────────────────────────────
+
+function cfApiRequest(method, endpoint, apiToken, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const options = {
+      hostname: 'api.cloudflare.com',
+      port: 443,
+      path: `/client/v4${endpoint}`,
+      method,
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {})
+      },
+      timeout: 10000
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error(`CF API parse error: ${e.message}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('CF API request timed out')); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function verifyCfToken(apiToken) {
+  const result = await cfApiRequest('GET', '/user/tokens/verify', apiToken);
+  if (!result.success) throw new Error(result.errors?.[0]?.message || 'Token invalid');
+  return result.result;
+}
+
+async function getCfZoneId(apiToken, hostname) {
+  const parts = hostname.split('.');
+  // try progressively shorter suffixes to find the zone
+  for (let i = parts.length - 2; i >= 0; i--) {
+    const domain = parts.slice(i).join('.');
+    const result = await cfApiRequest('GET', `/zones?name=${encodeURIComponent(domain)}&status=active`, apiToken);
+    if (result.success && result.result && result.result.length > 0) {
+      return result.result[0].id;
+    }
+  }
+  throw new Error(`No active Cloudflare zone found for hostname: ${hostname}`);
+}
+
+async function createOrGetCfTunnel(apiToken, accountId, tunnelName) {
+  // Check for existing tunnel with this name
+  const list = await cfApiRequest('GET', `/accounts/${accountId}/cfd_tunnel?name=${encodeURIComponent(tunnelName)}&is_deleted=false`, apiToken);
+  if (list.success && list.result && list.result.length > 0) {
+    return list.result[0];
+  }
+  // Create new tunnel
+  const secret = crypto.randomBytes(32).toString('base64');
+  const create = await cfApiRequest('POST', `/accounts/${accountId}/cfd_tunnel`, apiToken, {
+    name: tunnelName,
+    tunnel_secret: secret,
+    config_src: 'cloudflare'
+  });
+  if (!create.success) throw new Error(create.errors?.[0]?.message || 'Failed to create tunnel');
+  return create.result;
+}
+
+async function configureCfTunnelIngress(apiToken, accountId, tunnelId, hostname, localPort) {
+  const config = await cfApiRequest('PUT', `/accounts/${accountId}/cfd_tunnel/${tunnelId}/configurations`, apiToken, {
+    config: {
+      ingress: [
+        { hostname, service: `http://localhost:${localPort}` },
+        { service: 'http_status:404' }
+      ]
+    }
+  });
+  if (!config.success) throw new Error(config.errors?.[0]?.message || 'Failed to configure ingress');
+  return config.result;
+}
+
+async function createOrUpdateCfDnsRecord(apiToken, zoneId, hostname, tunnelId) {
+  const cname = `${tunnelId}.cfargotunnel.com`;
+  const subdomain = hostname.split('.')[0];
+  // Check if record already exists
+  const list = await cfApiRequest('GET', `/zones/${zoneId}/dns_records?name=${encodeURIComponent(hostname)}&type=CNAME`, apiToken);
+  if (list.success && list.result && list.result.length > 0) {
+    const recordId = list.result[0].id;
+    const patch = await cfApiRequest('PATCH', `/zones/${zoneId}/dns_records/${recordId}`, apiToken, {
+      content: cname, proxied: true
+    });
+    if (!patch.success) throw new Error(patch.errors?.[0]?.message || 'Failed to update DNS record');
+    return patch.result;
+  }
+  const create = await cfApiRequest('POST', `/zones/${zoneId}/dns_records`, apiToken, {
+    type: 'CNAME', name: subdomain, content: cname, proxied: true, ttl: 1
+  });
+  if (!create.success) throw new Error(create.errors?.[0]?.message || 'Failed to create DNS record');
+  return create.result;
+}
+
+async function deleteCfTunnelAndDns(apiToken, accountId, zoneId, tunnelId, hostname) {
+  // Delete DNS record first
+  const list = await cfApiRequest('GET', `/zones/${zoneId}/dns_records?name=${encodeURIComponent(hostname)}&type=CNAME`, apiToken);
+  if (list.success && list.result && list.result.length > 0) {
+    await cfApiRequest('DELETE', `/zones/${zoneId}/dns_records/${list.result[0].id}`, apiToken);
+  }
+  // Clean delete (requires tunnel to not be running)
+  await cfApiRequest('DELETE', `/accounts/${accountId}/cfd_tunnel/${tunnelId}`, apiToken);
+}
+
+// safeStorage wrappers — only usable after app ready
+function encryptCfToken(plaintext) {
+  const { safeStorage } = require('electron');
+  if (!safeStorage.isEncryptionAvailable()) return plaintext; // fallback: store as-is
+  return safeStorage.encryptString(plaintext).toString('base64');
+}
+
+function decryptCfToken(stored) {
+  if (!stored) return '';
+  const { safeStorage } = require('electron');
+  if (!safeStorage.isEncryptionAvailable()) return stored;
+  try {
+    return safeStorage.decryptString(Buffer.from(stored, 'base64'));
+  } catch (_) {
+    return '';
+  }
+}
+
+// Save CF credentials JSON to userData so cloudflared can use it
+function saveCfCredentialsFile(tunnelId, tunnelSecret, accountId) {
+  const filePath = path.join(app.getPath('userData'), `cf-tunnel-${tunnelId}.json`);
+  const creds = { AccountTag: accountId, TunnelID: tunnelId, TunnelSecret: tunnelSecret };
+  fs.writeFileSync(filePath, JSON.stringify(creds, null, 2), 'utf8');
+  return filePath;
+}
+
+// IPC: verify CF API token
+ipcMain.handle('cf-verify-token', async (_event, { apiToken }) => {
+  try {
+    const result = await verifyCfToken(apiToken);
+    return { success: true, status: result.status };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// IPC: save CF API token (encrypted) + account ID
+ipcMain.handle('cf-save-token', async (_event, { apiToken, accountId }) => {
+  try {
+    const prefs = loadPreferences();
+    prefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    prefs.cfAccountId = accountId || prefs.cfAccountId || '';
+    savePreferences(prefs);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// IPC: load CF auto-setup settings (token placeholder + accountId)
+ipcMain.handle('cf-get-auto-setup-config', async () => {
+  const prefs = loadPreferences();
+  const hasToken = !!(prefs.cfApiTokenEncrypted);
+  return {
+    hasToken,
+    accountId: prefs.cfAccountId || '',
+    hostname: prefs.cfTunnelHostname || '',
+    tunnelId: prefs.cfTunnelId || ''
+  };
+});
+
+// IPC: run full auto-setup flow
+ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname }) => {
+  const send = (phase, message) => {
+    try { event.sender.send('cf-setup-progress', { phase, message }); } catch (_) {}
+  };
+
+  try {
+    send('verifying', 'Verifying API token…');
+    await verifyCfToken(apiToken);
+
+    send('zone', 'Looking up DNS zone…');
+    const zoneId = await getCfZoneId(apiToken, hostname);
+
+    const tunnelName = `slides-controller`;
+    send('tunnel', 'Creating or retrieving tunnel…');
+    const tunnel = await createOrGetCfTunnel(apiToken, accountId, tunnelName);
+    const tunnelId = tunnel.id;
+    const tunnelSecret = tunnel.tunnel_secret || tunnel.credentials?.TunnelSecret || null;
+
+    const prefs = loadPreferences();
+    const webUiPort = prefs.webUiPort || 80;
+
+    send('ingress', 'Configuring tunnel ingress rules…');
+    await configureCfTunnelIngress(apiToken, accountId, tunnelId, hostname, webUiPort);
+
+    send('dns', `Creating DNS record for ${hostname}…`);
+    await createOrUpdateCfDnsRecord(apiToken, zoneId, hostname, tunnelId);
+
+    // Save credentials file so cloudflared can authenticate
+    let credentialsPath = null;
+    if (tunnelSecret) {
+      send('credentials', 'Saving credentials file…');
+      credentialsPath = saveCfCredentialsFile(tunnelId, tunnelSecret, accountId);
+    } else {
+      // Tunnel already existed — fetch the token directly
+      const tokenResult = await cfApiRequest('GET', `/accounts/${accountId}/cfd_tunnel/${tunnelId}/token`, apiToken);
+      if (tokenResult.success) {
+        const tokenStr = tokenResult.result;
+        const credPath = path.join(app.getPath('userData'), `cf-tunnel-${tunnelId}.json`);
+        // token-based run: use --token flag instead of credentials file
+        // store token encrypted, flag as token-mode
+        const updatedPrefs = loadPreferences();
+        updatedPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+        updatedPrefs.cfAccountId = accountId;
+        updatedPrefs.cfTunnelId = tunnelId;
+        updatedPrefs.cfZoneId = zoneId;
+        updatedPrefs.cfTunnelName = tunnelName;
+        updatedPrefs.cfTunnelHostname = hostname;
+        updatedPrefs.cfTunnelToken = encryptCfToken(tokenStr);
+        updatedPrefs.cfCredentialsPath = '';
+        updatedPrefs.tunnelMode = 'named';
+        savePreferences(updatedPrefs);
+        send('done', `Connected — https://${hostname}`);
+        return { success: true, tunnelId, hostname, useToken: true };
+      }
+    }
+
+    // Persist everything
+    const finalPrefs = loadPreferences();
+    finalPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    finalPrefs.cfAccountId = accountId;
+    finalPrefs.cfTunnelId = tunnelId;
+    finalPrefs.cfZoneId = zoneId;
+    finalPrefs.cfTunnelName = tunnelName;
+    finalPrefs.cfTunnelHostname = hostname;
+    if (credentialsPath) finalPrefs.cfCredentialsPath = credentialsPath;
+    finalPrefs.tunnelMode = 'named';
+    savePreferences(finalPrefs);
+
+    send('done', `Connected — https://${hostname}`);
+    return { success: true, tunnelId, hostname, credentialsPath };
+
+  } catch (e) {
+    logError('[CF Auto-setup] Error:', e.message);
+    send('error', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+// IPC: delete CF tunnel + DNS record
+ipcMain.handle('cf-delete-tunnel', async () => {
+  const prefs = loadPreferences();
+  const apiToken = decryptCfToken(prefs.cfApiTokenEncrypted);
+  if (!apiToken) return { success: false, error: 'No API token saved' };
+  if (!prefs.cfTunnelId) return { success: false, error: 'No tunnel ID saved' };
+  try {
+    stopCloudflaredTunnel();
+    if (prefs.cfZoneId && prefs.cfTunnelHostname) {
+      await deleteCfTunnelAndDns(apiToken, prefs.cfAccountId, prefs.cfZoneId, prefs.cfTunnelId, prefs.cfTunnelHostname);
+    }
+    const updated = loadPreferences();
+    updated.cfTunnelId = '';
+    updated.cfZoneId = '';
+    updated.cfTunnelToken = '';
+    updated.cfCredentialsPath = '';
+    updated.cfTunnelName = '';
+    updated.cfTunnelHostname = '';
+    updated.tunnelMode = 'quick';
+    savePreferences(updated);
+    return { success: true };
+  } catch (e) {
+    logError('[CF Delete Tunnel] Error:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+// ─── End Cloudflare API helpers ───────────────────────────────────────────────
+
 function stopCloudflaredTunnel() {
   hideTunnelQrOverlay();
   if (cloudflaredKillTimer) {
@@ -6517,11 +6873,39 @@ function startCloudflaredTunnel() {
 
   if (cloudflaredProcess) return;
 
-  const origin = getWebUiLocalOriginForTunnel();
-  // Web UI often uses a self-signed cert; cloudflared rejects it without this → edge returns 502
-  const tunnelArgs = ['tunnel', '--url', origin];
-  if (origin.startsWith('https://')) {
-    tunnelArgs.push('--no-tls-verify');
+  const tunnelMode = prefs.tunnelMode || 'quick';
+  const isNamed = tunnelMode === 'named';
+  let tunnelArgs;
+  let namedHostname = '';
+
+  if (isNamed) {
+    namedHostname = prefs.cfTunnelHostname || '';
+    const cfTunnelToken = prefs.cfTunnelToken ? decryptCfToken(prefs.cfTunnelToken) : '';
+    const cfCredentialsPath = prefs.cfCredentialsPath || '';
+    const cfTunnelName = prefs.cfTunnelName || '';
+    if (!namedHostname) {
+      logError('[Tunnel] Named tunnel mode requires hostname to be configured.');
+      broadcastTunnelUrl(null);
+      return;
+    }
+    if (cfTunnelToken) {
+      // Auto-setup path: use run token directly
+      tunnelArgs = ['tunnel', 'run', '--token', cfTunnelToken];
+    } else if (cfCredentialsPath && cfTunnelName) {
+      // Manual path: use credentials file
+      tunnelArgs = ['tunnel', '--credentials-file', cfCredentialsPath, 'run', cfTunnelName];
+    } else {
+      logError('[Tunnel] Named tunnel requires either a tunnel token (auto-setup) or credentials file + tunnel name (manual).');
+      broadcastTunnelUrl(null);
+      return;
+    }
+  } else {
+    const origin = getWebUiLocalOriginForTunnel();
+    // Web UI often uses a self-signed cert; cloudflared rejects it without this → edge returns 502
+    tunnelArgs = ['tunnel', '--url', origin];
+    if (origin.startsWith('https://')) {
+      tunnelArgs.push('--no-tls-verify');
+    }
   }
 
   try {
@@ -6535,13 +6919,22 @@ function startCloudflaredTunnel() {
   }
 
   const onData = (data) => {
-    const found = extractTrycloudflareUrl(data);
-    if (found && !tunnelUrl) {
-      tunnelUrl = found;
-      logInfo('[Tunnel] URL:', tunnelUrl);
-      broadcastTunnelUrl(tunnelUrl);
+    const str = data.toString();
+    if (isNamed) {
+      if (!tunnelUrl && str.includes('Registered tunnel connection')) {
+        tunnelUrl = namedHostname.startsWith('http') ? namedHostname : `https://${namedHostname}`;
+        logInfo('[Tunnel] Named tunnel connected, URL:', tunnelUrl);
+        broadcastTunnelUrl(tunnelUrl);
+      }
+    } else {
+      const found = extractTrycloudflareUrl(data);
+      if (found && !tunnelUrl) {
+        tunnelUrl = found;
+        logInfo('[Tunnel] URL:', tunnelUrl);
+        broadcastTunnelUrl(tunnelUrl);
+      }
     }
-    logDebug('[Tunnel]', data.toString().slice(0, 240));
+    logDebug('[Tunnel]', str.slice(0, 240));
   };
 
   cloudflaredProcess.stdout.on('data', onData);

@@ -72,7 +72,25 @@ const openCrashReportsFolderBtn = document.getElementById('open-crash-reports-fo
 const wanEnabledCheckbox = document.getElementById('wan-enabled');
 const wanStatusRow = document.getElementById('wan-status-row');
 const wanUrlDisplay = document.getElementById('wan-url-display');
+const wanUrlHint = document.getElementById('wan-url-hint');
 const wanCopyBtn = document.getElementById('wan-copy-btn');
+const tunnelModeQuickRadio = document.getElementById('tunnel-mode-quick');
+const tunnelModeNamedRadio = document.getElementById('tunnel-mode-named');
+const namedTunnelConfig = document.getElementById('named-tunnel-config');
+const cfTunnelNameInput = document.getElementById('cf-tunnel-name');
+const cfTunnelHostnameInput = document.getElementById('cf-tunnel-hostname');
+const cfCredentialsPathInput = document.getElementById('cf-credentials-path');
+const cfCredentialsBrowseBtn = document.getElementById('cf-credentials-browse');
+const namedTunnelSaveBtn = document.getElementById('named-tunnel-save');
+const namedTunnelStatus = document.getElementById('named-tunnel-status');
+const cfApiTokenInput = document.getElementById('cf-api-token');
+const cfVerifyTokenBtn = document.getElementById('cf-verify-token-btn');
+const cfAccountIdInput = document.getElementById('cf-account-id');
+const cfAutoHostnameInput = document.getElementById('cf-auto-hostname');
+const cfAutoSetupBtn = document.getElementById('cf-auto-setup-btn');
+const cfAutoSaveBtn = document.getElementById('cf-auto-save-btn');
+const cfDeleteTunnelBtn = document.getElementById('cf-delete-tunnel-btn');
+const cfAutoStatus = document.getElementById('cf-auto-status');
 const wanTunnelPinNewInput = document.getElementById('wan-tunnel-pin-new');
 const wanTunnelPinConfirmInput = document.getElementById('wan-tunnel-pin-confirm');
 const wanTunnelPinSaveBtn = document.getElementById('wan-tunnel-pin-save');
@@ -920,6 +938,143 @@ async function initDisplays() {
       });
     }
 
+    // Named tunnel: radio toggle show/hide
+    [tunnelModeQuickRadio, tunnelModeNamedRadio].forEach(radio => {
+      if (!radio) return;
+      radio.addEventListener('change', () => {
+        const isNamed = tunnelModeNamedRadio && tunnelModeNamedRadio.checked;
+        if (namedTunnelConfig) namedTunnelConfig.style.display = isNamed ? '' : 'none';
+        if (wanUrlHint) {
+          wanUrlHint.textContent = isNamed
+            ? 'Fixed URL — does not change between app restarts.'
+            : 'The URL changes each time the app starts. Requires internet access.';
+        }
+      });
+    });
+
+    // Named tunnel: Browse credentials file
+    if (cfCredentialsBrowseBtn && window.electronAPI.showOpenCredentialsDialog) {
+      cfCredentialsBrowseBtn.addEventListener('click', async () => {
+        const result = await window.electronAPI.showOpenCredentialsDialog();
+        if (!result.canceled && result.filePath && cfCredentialsPathInput) {
+          cfCredentialsPathInput.value = result.filePath;
+        }
+      });
+    }
+
+    // Named tunnel: Save config
+    if (namedTunnelSaveBtn) {
+      namedTunnelSaveBtn.addEventListener('click', async () => {
+        const tunnelMode = (tunnelModeNamedRadio && tunnelModeNamedRadio.checked) ? 'named' : 'quick';
+        const cfg = {
+          tunnelMode,
+          cfTunnelName: cfTunnelNameInput ? cfTunnelNameInput.value.trim() : '',
+          cfTunnelHostname: cfTunnelHostnameInput ? cfTunnelHostnameInput.value.trim() : '',
+          cfCredentialsPath: cfCredentialsPathInput ? cfCredentialsPathInput.value.trim() : ''
+        };
+        if (tunnelMode === 'named' && (!cfg.cfTunnelName || !cfg.cfTunnelHostname || !cfg.cfCredentialsPath)) {
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Please fill in all named tunnel fields.';
+          return;
+        }
+        try {
+          await window.electronAPI.savePreferences(cfg);
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Saved.';
+          setTimeout(() => { if (namedTunnelStatus) namedTunnelStatus.textContent = ''; }, 2500);
+          // Restart tunnel if currently running so the new config takes effect
+          if (wanEnabledCheckbox && wanEnabledCheckbox.checked) {
+            await window.electronAPI.setTunnelEnabled(false);
+            await window.electronAPI.setTunnelEnabled(true);
+            if (wanUrlDisplay) wanUrlDisplay.value = 'Connecting…';
+          }
+        } catch (e) {
+          console.error('save named tunnel config:', e);
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Save failed.';
+        }
+      });
+    }
+
+    // CF auto-setup: verify token
+    if (cfVerifyTokenBtn) {
+      cfVerifyTokenBtn.addEventListener('click', async () => {
+        const token = cfApiTokenInput ? cfApiTokenInput.value.trim() : '';
+        if (!token) { setCfAutoStatus('Enter an API token first.', 'error'); return; }
+        setCfAutoStatus('Verifying…');
+        const result = await window.electronAPI.cfVerifyToken(token);
+        if (result.success) {
+          setCfAutoStatus('Token is valid.', 'ok');
+        } else {
+          setCfAutoStatus(`Invalid token: ${result.error}`, 'error');
+        }
+      });
+    }
+
+    // CF auto-setup: save token only
+    if (cfAutoSaveBtn) {
+      cfAutoSaveBtn.addEventListener('click', async () => {
+        const token = cfApiTokenInput ? cfApiTokenInput.value.trim() : '';
+        const accountId = cfAccountIdInput ? cfAccountIdInput.value.trim() : '';
+        if (!token) { setCfAutoStatus('Enter an API token first.', 'error'); return; }
+        const result = await window.electronAPI.cfSaveToken(token, accountId);
+        if (result.success) {
+          setCfAutoStatus('Token saved.', 'ok');
+          if (cfApiTokenInput) cfApiTokenInput.value = '';
+        } else {
+          setCfAutoStatus(`Save failed: ${result.error}`, 'error');
+        }
+      });
+    }
+
+    // CF auto-setup: full connect flow
+    if (cfAutoSetupBtn) {
+      cfAutoSetupBtn.addEventListener('click', async () => {
+        const token = cfApiTokenInput ? cfApiTokenInput.value.trim() : '';
+        const accountId = cfAccountIdInput ? cfAccountIdInput.value.trim() : '';
+        const hostname = cfAutoHostnameInput ? cfAutoHostnameInput.value.trim() : '';
+        if (!token) { setCfAutoStatus('Enter an API token.', 'error'); return; }
+        if (!accountId) { setCfAutoStatus('Enter your Cloudflare Account ID.', 'error'); return; }
+        if (!hostname) { setCfAutoStatus('Enter a hostname (e.g. slides.pconair.com).', 'error'); return; }
+        cfAutoSetupBtn.disabled = true;
+        setCfAutoStatus('Starting…');
+        window.electronAPI.onCfSetupProgress(({ phase, message }) => {
+          setCfAutoStatus(message, phase === 'error' ? 'error' : 'info');
+        });
+        const result = await window.electronAPI.cfAutoSetup({ apiToken: token, accountId, hostname });
+        cfAutoSetupBtn.disabled = false;
+        if (result.success) {
+          setCfAutoStatus(`Connected — https://${hostname}`, 'ok');
+          if (cfApiTokenInput) cfApiTokenInput.value = '';
+          // Reflect new hostname in the manual fields too
+          if (cfTunnelHostnameInput) cfTunnelHostnameInput.value = hostname;
+          if (cfDeleteTunnelBtn) cfDeleteTunnelBtn.style.display = '';
+          // Restart tunnel with new config if WAN is enabled
+          if (wanEnabledCheckbox && wanEnabledCheckbox.checked) {
+            await window.electronAPI.setTunnelEnabled(false);
+            await window.electronAPI.setTunnelEnabled(true);
+          }
+        } else {
+          setCfAutoStatus(`Setup failed: ${result.error}`, 'error');
+        }
+      });
+    }
+
+    // CF auto-setup: delete tunnel
+    if (cfDeleteTunnelBtn) {
+      cfDeleteTunnelBtn.addEventListener('click', async () => {
+        if (!confirm('Delete the Cloudflare tunnel and DNS record? This cannot be undone.')) return;
+        setCfAutoStatus('Deleting…');
+        const result = await window.electronAPI.cfDeleteTunnel();
+        if (result.success) {
+          setCfAutoStatus('Tunnel deleted.', 'ok');
+          if (cfDeleteTunnelBtn) cfDeleteTunnelBtn.style.display = 'none';
+          if (cfTunnelHostnameInput) cfTunnelHostnameInput.value = '';
+          if (cfCredentialsPathInput) cfCredentialsPathInput.value = '';
+          if (cfTunnelNameInput) cfTunnelNameInput.value = '';
+        } else {
+          setCfAutoStatus(`Delete failed: ${result.error}`, 'error');
+        }
+      });
+    }
+
     if (wanTunnelPinSaveBtn) {
       wanTunnelPinSaveBtn.addEventListener('click', () => {
         saveWanTunnelPinFromDesktop();
@@ -1331,7 +1486,10 @@ async function savePerfectCuePrefs() {
 async function loadTunnelStatus() {
   if (!wanEnabledCheckbox || !window.electronAPI.getTunnelStatus) return;
   try {
-    const status = await window.electronAPI.getTunnelStatus();
+    const [status, prefs] = await Promise.all([
+      window.electronAPI.getTunnelStatus(),
+      window.electronAPI.getPreferences()
+    ]);
     wanEnabledCheckbox.checked = !!status.enabled;
     if (wanStatusRow) {
       wanStatusRow.style.display = status.enabled ? '' : 'none';
@@ -1339,10 +1497,44 @@ async function loadTunnelStatus() {
     if (wanUrlDisplay) {
       wanUrlDisplay.value = status.url || (status.running ? 'Connecting\u2026' : '');
     }
+    applyTunnelConfig(prefs);
     updateStatusBar();
     syncDashboardWan();
   } catch (err) {
     console.error('Failed to load tunnel status:', err);
+  }
+}
+
+function setCfAutoStatus(message, type) {
+  if (!cfAutoStatus) return;
+  cfAutoStatus.textContent = message;
+  cfAutoStatus.style.color = type === 'error' ? 'var(--color-error, #c0392b)'
+    : type === 'ok' ? 'var(--color-success, #27ae60)'
+    : 'var(--text-muted)';
+}
+
+function applyTunnelConfig(prefs) {
+  const mode = prefs.tunnelMode || 'quick';
+  if (tunnelModeQuickRadio) tunnelModeQuickRadio.checked = mode !== 'named';
+  if (tunnelModeNamedRadio) tunnelModeNamedRadio.checked = mode === 'named';
+  if (namedTunnelConfig) namedTunnelConfig.style.display = mode === 'named' ? '' : 'none';
+  if (cfTunnelNameInput) cfTunnelNameInput.value = prefs.cfTunnelName || '';
+  if (cfTunnelHostnameInput) cfTunnelHostnameInput.value = prefs.cfTunnelHostname || '';
+  if (cfCredentialsPathInput) cfCredentialsPathInput.value = prefs.cfCredentialsPath || '';
+  if (wanUrlHint) {
+    wanUrlHint.textContent = mode === 'named'
+      ? 'Fixed URL \u2014 does not change between app restarts.'
+      : 'The URL changes each time the app starts. Requires internet access.';
+  }
+  // Load auto-setup fields
+  if (window.electronAPI.cfGetAutoSetupConfig) {
+    window.electronAPI.cfGetAutoSetupConfig().then(cfg => {
+      if (cfAccountIdInput) cfAccountIdInput.value = cfg.accountId || '';
+      if (cfAutoHostnameInput) cfAutoHostnameInput.value = cfg.hostname || '';
+      if (cfApiTokenInput) cfApiTokenInput.placeholder = cfg.hasToken ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022  (saved)' : 'Cloudflare API token';
+      if (cfDeleteTunnelBtn) cfDeleteTunnelBtn.style.display = cfg.tunnelId ? '' : 'none';
+      if (cfg.tunnelId && cfg.hostname) setCfAutoStatus(`Tunnel configured \u2014 https://${cfg.hostname}`, 'ok');
+    }).catch(() => {});
   }
 }
 

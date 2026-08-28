@@ -9995,6 +9995,14 @@ function startWebUiServer() {
             </svg>
             Reload Presentation
           </button>
+          ${showVideoControl ? `<button type="button" class="btn-control" id="btn-toggle-video" data-tooltip="Play or pause video on the current slide">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
+              <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+              <rect x="19" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+            </svg>
+            Play / Pause Video
+          </button>` : ``}
           <button type="button" class="btn-control" id="btn-close-presentation" data-tooltip="Close current presentation">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -10421,6 +10429,13 @@ function startWebUiServer() {
     }
     
     // Set up control buttons
+    // Conditionally rendered — null guard required, same reason as remote-btn-video.
+    const controlsVideoBtn = document.getElementById('btn-toggle-video');
+    if (controlsVideoBtn) {
+      controlsVideoBtn.addEventListener('click', () => {
+        apiCall('/api/toggle-video');
+      });
+    }
     document.getElementById('btn-prev-slide').addEventListener('click', () => {
       apiCall('/api/previous-slide').then(() => {
         updateSlideButtons();

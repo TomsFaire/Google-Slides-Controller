@@ -7768,6 +7768,12 @@ function startWebUiServer() {
       background: #5568d3;
       transform: scale(1.02);
     }
+    .remote-btn.remote-btn-video .remote-btn-label {
+      display: none;
+    }
+    body.theme-light .remote-btn.remote-btn-video .remote-btn-label {
+      display: block;
+    }
     .remote-btn:active {
       transform: scale(0.98);
     }

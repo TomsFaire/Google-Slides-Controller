@@ -7723,7 +7723,7 @@ function startWebUiServer() {
       gap: 20px;
     }
     .remote-btn {
-      flex: 0 0 calc(50% - 10px);
+      flex: 1 1 0;
       padding: 40px 20px;
       font-size: 24px;
       font-weight: 700;
@@ -7756,6 +7756,15 @@ function startWebUiServer() {
       color: white;
     }
     .remote-btn-next:hover {
+      background: #5568d3;
+      transform: scale(1.02);
+    }
+    .remote-btn-video {
+      flex: 0 0 96px;
+      background: #667eea;
+      color: white;
+    }
+    .remote-btn-video:hover {
       background: #5568d3;
       transform: scale(1.02);
     }
@@ -8689,6 +8698,12 @@ function startWebUiServer() {
       border: 1px solid var(--faire-text);
       color: var(--faire-surface);
     }
+    body.theme-light .remote-btn-video {
+      flex: 0 0 92px;
+      background: var(--faire-surface);
+      border: 1px solid var(--faire-border);
+      color: var(--faire-text);
+    }
     body.theme-light .bottom-tabs {
       display: flex;
       position: fixed;
@@ -8936,7 +8951,7 @@ function startWebUiServer() {
     body.theme-dark h1, body.theme-dark h2, body.theme-dark h3 { color: rgba(255,255,255,0.92); }
     body.theme-dark .tab-btn { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); border: 1px solid rgba(255,255,255,0.15); }
     body.theme-dark .tab-btn.active { background: rgba(255,255,255,0.2); }
-    body.theme-dark .remote-btn-prev, body.theme-dark .remote-btn-next { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
+    body.theme-dark .remote-btn-prev, body.theme-dark .remote-btn-next, body.theme-dark .remote-btn-video { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
     body.theme-dark .remote-btn:hover { background: rgba(255,255,255,0.25); }
     body.theme-dark .slide-previews-grid, body.theme-dark .speaker-notes-content-wrapper { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); }
     body.theme-dark .speaker-notes-content { color: rgba(255,255,255,0.88); }
@@ -9058,6 +9073,7 @@ function startWebUiServer() {
     body.theme-touch .container { background: #fff; border-radius: var(--faire-radius); box-shadow: 0 8px 32px rgba(0,0,0,0.12); max-width: 90%; padding: 28px; }
     body.theme-touch .remote-btn { min-height: 80px; padding: 24px 28px; font-size: 22px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .remote-btn:active { transform: scale(0.97); }
+    body.theme-touch .remote-btn-video { flex: 0 0 110px; padding-left: 12px; padding-right: 12px; }
     body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
     body.theme-touch .keyboard-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
@@ -9124,7 +9140,8 @@ function startWebUiServer() {
     body.theme-thumb .speaker-notes-container { order: 2; flex: 1 1 auto; min-height: 0; }
     body.theme-thumb .remote-controls { order: 3; flex-shrink: 0; margin-top: 12px; }
     body.theme-thumb .remote-btn { min-height: 72px; padding: 20px 24px; font-size: 20px; -webkit-tap-highlight-color: transparent; }
-    body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next, body.theme-thumb .remote-btn-video { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    body.theme-thumb .remote-btn-video { flex: 0 0 110px; padding-left: 12px; padding-right: 12px; }
     body.theme-thumb .remote-btn:hover { background: rgba(255,255,255,0.35); }
     body.theme-thumb .remote-btn:active { transform: scale(0.98); }
     body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); color: rgba(255,255,255,0.9); }

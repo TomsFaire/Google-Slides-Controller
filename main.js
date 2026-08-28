@@ -7723,7 +7723,7 @@ function startWebUiServer() {
       gap: 20px;
     }
     .remote-btn {
-      flex: 1 1 0;
+      flex: 0 0 calc(50% - 10px);
       padding: 40px 20px;
       font-size: 24px;
       font-weight: 700;
@@ -7736,6 +7736,12 @@ function startWebUiServer() {
       justify-content: center;
       gap: 12px;
       min-height: 120px;
+    }
+    /* Three-button row (video preference on) needs to shrink; the two-button
+       default above must stay flex: 0 0 calc(50% - 10px) for exact pixel parity
+       with the pre-video-button layout. Scoped to .has-video only. */
+    .remote-controls.has-video .remote-btn {
+      flex: 1 1 0;
     }
     .remote-controls.with-notes .remote-btn,
     .remote-controls.with-panel .remote-btn {
@@ -7789,6 +7795,14 @@ function startWebUiServer() {
       body:not(.theme-light) .remote-controls.has-video .remote-btn-prev .remote-btn-label,
       body:not(.theme-light) .remote-controls.has-video .remote-btn-next .remote-btn-label {
         display: none;
+      }
+      /* touch/thumb still clip below ~380px even with labels hidden; trim their
+         horizontal padding in the three-button row to bring min-content down
+         further (measured to fit to roughly a 300px viewport). */
+      body.theme-touch .remote-controls.has-video .remote-btn,
+      body.theme-thumb .remote-controls.has-video .remote-btn {
+        padding-left: 8px;
+        padding-right: 8px;
       }
     }
     .remote-btn:active {
@@ -9838,13 +9852,13 @@ function startWebUiServer() {
         </div>
       </div>
       <div class="remote-controls${showVideoControl ? ' has-video' : ''}" id="remote-controls">
-        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
+        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev" aria-label="Previous">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
           <span class="remote-btn-label">Previous</span>
         </button>
-        ${showVideoControl ? `<button type="button" class="remote-btn remote-btn-video" id="remote-btn-video" title="Play or pause video on the current slide" aria-label="Play or pause video on the current slide">
+        ${showVideoControl ? `<button type="button" class="remote-btn remote-btn-video" id="remote-btn-video" title="Play or pause video on the current slide">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
             <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
@@ -9852,7 +9866,7 @@ function startWebUiServer() {
           </svg>
           <span class="remote-btn-label">Video</span>
         </button>` : ``}
-        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next">
+        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next" aria-label="Next slide">
           <span class="remote-btn-label">Next slide</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="9 18 15 12 9 6"></polyline>

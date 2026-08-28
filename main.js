@@ -7774,6 +7774,23 @@ function startWebUiServer() {
     body.theme-light .remote-btn.remote-btn-video .remote-btn-label {
       display: block;
     }
+    /* Narrow phone widths + video button on: Previous/Next can't shrink below their
+       content minimum (icon + label), so hide their labels and tighten the row gap
+       to keep all three buttons on one row. Scoped to .has-video (added only when the
+       video control preference is on) so the default two-button row is never affected,
+       and to body:not(.theme-light) so light's already-fitting column layout keeps
+       its labels. Selector specificity here intentionally exceeds
+       .remote-btn .remote-btn-label (0,0,2,0) and only targets prev/next labels, never
+       .remote-btn-video's own label (handled separately above). */
+    @media (max-width: 600px) {
+      body:not(.theme-light) .remote-controls.has-video {
+        gap: 10px;
+      }
+      body:not(.theme-light) .remote-controls.has-video .remote-btn-prev .remote-btn-label,
+      body:not(.theme-light) .remote-controls.has-video .remote-btn-next .remote-btn-label {
+        display: none;
+      }
+    }
     .remote-btn:active {
       transform: scale(0.98);
     }
@@ -9079,7 +9096,7 @@ function startWebUiServer() {
     body.theme-touch .container { background: #fff; border-radius: var(--faire-radius); box-shadow: 0 8px 32px rgba(0,0,0,0.12); max-width: 90%; padding: 28px; }
     body.theme-touch .remote-btn { min-height: 80px; padding: 24px 28px; font-size: 22px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .remote-btn:active { transform: scale(0.97); }
-    body.theme-touch .remote-btn-video { flex: 0 0 110px; padding-left: 12px; padding-right: 12px; }
+    body.theme-touch .remote-btn-video { flex: 0 0 96px; padding-left: 12px; padding-right: 12px; }
     body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
     body.theme-touch .keyboard-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
@@ -9147,7 +9164,7 @@ function startWebUiServer() {
     body.theme-thumb .remote-controls { order: 3; flex-shrink: 0; margin-top: 12px; }
     body.theme-thumb .remote-btn { min-height: 72px; padding: 20px 24px; font-size: 20px; -webkit-tap-highlight-color: transparent; }
     body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next, body.theme-thumb .remote-btn-video { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
-    body.theme-thumb .remote-btn-video { flex: 0 0 110px; padding-left: 12px; padding-right: 12px; }
+    body.theme-thumb .remote-btn-video { flex: 0 0 96px; padding-left: 12px; padding-right: 12px; }
     body.theme-thumb .remote-btn:hover { background: rgba(255,255,255,0.35); }
     body.theme-thumb .remote-btn:active { transform: scale(0.98); }
     body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); color: rgba(255,255,255,0.9); }
@@ -9820,7 +9837,7 @@ function startWebUiServer() {
           <div id="notes-encoding-warning" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#b26a00; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); border-radius:6px;">Line break encoding issues detected on this slide. Notes are displayed with corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the <a href="https://github.com/TomsFaire/Google-Slides-Controller/blob/main/docs/fix-speaker-notes.gs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">cleanup script</a>.</div>
         </div>
       </div>
-      <div class="remote-controls" id="remote-controls">
+      <div class="remote-controls${showVideoControl ? ' has-video' : ''}" id="remote-controls">
         <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="15 18 9 12 15 6"></polyline>

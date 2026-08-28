@@ -4382,6 +4382,9 @@ function startHttpServer() {
             delete data.controllerIps;
             // Also desktop-only: web UI debug console gating
             delete data.webUiDebugConsoleEnabled;
+            // Video control gating is desktop-only (IPC); a web remote client must not be
+            // able to enable its own hidden control over HTTP
+            delete data.webUiVideoControlEnabled;
             // WAN tunnel toggle is desktop-only (IPC); do not allow enabling via HTTP API
             delete data.cloudflaredEnabled;
             // Tunnel PIN is desktop-only (IPC)

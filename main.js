@@ -7154,6 +7154,7 @@ function startWebUiServer() {
       const showLogo = webUiTheme !== 'max' && webUiLogoPath && fs.existsSync(webUiLogoPath);
       const webUiRestrictedTunnelClient = isWebUiRestrictedTunnelClient(req, prefs);
       const showOpenUrlSection = prefs.allowArbitraryUrl === true && !webUiRestrictedTunnelClient;
+      const showVideoControl = prefs.webUiVideoControlEnabled === true;
 
       // Get version and build number
       const versionString = `v${appBuildInfo.version}.${appBuildInfo.buildNumber}`;
@@ -9803,6 +9804,14 @@ function startWebUiServer() {
           </svg>
           <span class="remote-btn-label">Previous</span>
         </button>
+        ${showVideoControl ? `<button type="button" class="remote-btn remote-btn-video" id="remote-btn-video" title="Play or pause video on the current slide" aria-label="Play or pause video on the current slide">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
+            <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+            <rect x="19" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+          </svg>
+          <span class="remote-btn-label">Video</span>
+        </button>` : ``}
         <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next">
           <span class="remote-btn-label">Next slide</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
@@ -10839,7 +10848,17 @@ function startWebUiServer() {
         updateSlideButtons();
       });
     });
-    
+
+    // Conditionally rendered — the null guard is required. Without it this throws when
+    // webUiVideoControlEnabled is off, aborting every listener registered after it.
+    const remoteVideoBtn = document.getElementById('remote-btn-video');
+    if (remoteVideoBtn) {
+      remoteVideoBtn.addEventListener('click', () => {
+        triggerHapticFeedback();
+        apiCall('/api/toggle-video');
+      });
+    }
+
     // Clickable preview images: current → previous slide, next → next slide
     function refreshAfterSlideChange() {
       if (notesVisible) loadSpeakerNotes();

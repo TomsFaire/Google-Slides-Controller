@@ -4382,6 +4382,9 @@ function startHttpServer() {
             delete data.controllerIps;
             // Also desktop-only: web UI debug console gating
             delete data.webUiDebugConsoleEnabled;
+            // Video control gating is desktop-only (IPC); a web remote client must not be
+            // able to enable its own hidden control over HTTP
+            delete data.webUiVideoControlEnabled;
             // WAN tunnel toggle is desktop-only (IPC); do not allow enabling via HTTP API
             delete data.cloudflaredEnabled;
             // Tunnel PIN is desktop-only (IPC)
@@ -7151,6 +7154,7 @@ function startWebUiServer() {
       const showLogo = webUiTheme !== 'max' && webUiLogoPath && fs.existsSync(webUiLogoPath);
       const webUiRestrictedTunnelClient = isWebUiRestrictedTunnelClient(req, prefs);
       const showOpenUrlSection = prefs.allowArbitraryUrl === true && !webUiRestrictedTunnelClient;
+      const showVideoControl = prefs.webUiVideoControlEnabled === true;
 
       // Get version and build number
       const versionString = `v${appBuildInfo.version}.${appBuildInfo.buildNumber}`;
@@ -7733,6 +7737,28 @@ function startWebUiServer() {
       gap: 12px;
       min-height: 120px;
     }
+    /* Three-button row (video preference on): Previous/Next share the remaining
+       space equally; the two-button default above must stay flex: 0 0 calc(50% - 10px)
+       for exact pixel parity with the pre-video-button layout. Scoped to .has-video only. */
+    .remote-controls.has-video .remote-btn-prev,
+    .remote-controls.has-video .remote-btn-next {
+      flex: 1 1 0;
+    }
+    /* Pin the video button's own width so it isn't stretched by the rule above —
+       a bare .remote-btn-video selector (0,0,1,0) is too weak to beat the prev/next
+       rule's .remote-btn (0,0,2,0) once both match the video button too, since it
+       also carries the .remote-btn class. The old flex declarations on the base and
+       themed .remote-btn-video rules below are dead now that this .has-video rule
+       always wins; they were removed rather than left, since dead flex values sitting
+       next to live ones is exactly the trap that caused this bug. flex-shrink stays 1
+       (not 0) so the button can still yield space at narrow widths instead of
+       reintroducing the row overflow this branch already fixed once. */
+    .remote-controls.has-video .remote-btn-video {
+      flex: 0 1 96px;
+    }
+    body.theme-light .remote-controls.has-video .remote-btn-video {
+      flex: 0 1 92px;
+    }
     .remote-controls.with-notes .remote-btn,
     .remote-controls.with-panel .remote-btn {
       padding: 20px 16px;
@@ -7754,6 +7780,45 @@ function startWebUiServer() {
     .remote-btn-next:hover {
       background: #5568d3;
       transform: scale(1.02);
+    }
+    .remote-btn-video {
+      background: #667eea;
+      color: white;
+    }
+    .remote-btn-video:hover {
+      background: #5568d3;
+      transform: scale(1.02);
+    }
+    .remote-btn.remote-btn-video .remote-btn-label {
+      display: none;
+    }
+    body.theme-light .remote-btn.remote-btn-video .remote-btn-label {
+      display: block;
+    }
+    /* Narrow phone widths + video button on: Previous/Next can't shrink below their
+       content minimum (icon + label), so hide their labels and tighten the row gap
+       to keep all three buttons on one row. Scoped to .has-video (added only when the
+       video control preference is on) so the default two-button row is never affected,
+       and to body:not(.theme-light) so light's already-fitting column layout keeps
+       its labels. Selector specificity here intentionally exceeds
+       .remote-btn .remote-btn-label (0,0,2,0) and only targets prev/next labels, never
+       .remote-btn-video's own label (handled separately above). */
+    @media (max-width: 600px) {
+      body:not(.theme-light) .remote-controls.has-video {
+        gap: 10px;
+      }
+      body:not(.theme-light) .remote-controls.has-video .remote-btn-prev .remote-btn-label,
+      body:not(.theme-light) .remote-controls.has-video .remote-btn-next .remote-btn-label {
+        display: none;
+      }
+      /* touch/thumb still clip below ~380px even with labels hidden; trim their
+         horizontal padding in the three-button row to bring min-content down
+         further (measured to fit to roughly a 300px viewport). */
+      body.theme-touch .remote-controls.has-video .remote-btn,
+      body.theme-thumb .remote-controls.has-video .remote-btn {
+        padding-left: 8px;
+        padding-right: 8px;
+      }
     }
     .remote-btn:active {
       transform: scale(0.98);
@@ -8685,6 +8750,11 @@ function startWebUiServer() {
       border: 1px solid var(--faire-text);
       color: var(--faire-surface);
     }
+    body.theme-light .remote-btn-video {
+      background: var(--faire-surface);
+      border: 1px solid var(--faire-border);
+      color: var(--faire-text);
+    }
     body.theme-light .bottom-tabs {
       display: flex;
       position: fixed;
@@ -8932,7 +9002,7 @@ function startWebUiServer() {
     body.theme-dark h1, body.theme-dark h2, body.theme-dark h3 { color: rgba(255,255,255,0.92); }
     body.theme-dark .tab-btn { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); border: 1px solid rgba(255,255,255,0.15); }
     body.theme-dark .tab-btn.active { background: rgba(255,255,255,0.2); }
-    body.theme-dark .remote-btn-prev, body.theme-dark .remote-btn-next { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
+    body.theme-dark .remote-btn-prev, body.theme-dark .remote-btn-next, body.theme-dark .remote-btn-video { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
     body.theme-dark .remote-btn:hover { background: rgba(255,255,255,0.25); }
     body.theme-dark .slide-previews-grid, body.theme-dark .speaker-notes-content-wrapper { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); }
     body.theme-dark .speaker-notes-content { color: rgba(255,255,255,0.88); }
@@ -9054,6 +9124,7 @@ function startWebUiServer() {
     body.theme-touch .container { background: #fff; border-radius: var(--faire-radius); box-shadow: 0 8px 32px rgba(0,0,0,0.12); max-width: 90%; padding: 28px; }
     body.theme-touch .remote-btn { min-height: 80px; padding: 24px 28px; font-size: 22px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .remote-btn:active { transform: scale(0.97); }
+    body.theme-touch .remote-btn-video { padding-left: 12px; padding-right: 12px; }
     body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
     body.theme-touch .keyboard-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
@@ -9120,7 +9191,8 @@ function startWebUiServer() {
     body.theme-thumb .speaker-notes-container { order: 2; flex: 1 1 auto; min-height: 0; }
     body.theme-thumb .remote-controls { order: 3; flex-shrink: 0; margin-top: 12px; }
     body.theme-thumb .remote-btn { min-height: 72px; padding: 20px 24px; font-size: 20px; -webkit-tap-highlight-color: transparent; }
-    body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next, body.theme-thumb .remote-btn-video { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    body.theme-thumb .remote-btn-video { padding-left: 12px; padding-right: 12px; }
     body.theme-thumb .remote-btn:hover { background: rgba(255,255,255,0.35); }
     body.theme-thumb .remote-btn:active { transform: scale(0.98); }
     body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); color: rgba(255,255,255,0.9); }
@@ -9793,14 +9865,22 @@ function startWebUiServer() {
           <div id="notes-encoding-warning" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#b26a00; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); border-radius:6px;">Line break encoding issues detected on this slide. Notes are displayed with corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the <a href="https://github.com/TomsFaire/Google-Slides-Controller/blob/main/docs/fix-speaker-notes.gs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">cleanup script</a>.</div>
         </div>
       </div>
-      <div class="remote-controls" id="remote-controls">
-        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
+      <div class="remote-controls${showVideoControl ? ' has-video' : ''}" id="remote-controls">
+        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev" aria-label="Previous">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
           <span class="remote-btn-label">Previous</span>
         </button>
-        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next">
+        ${showVideoControl ? `<button type="button" class="remote-btn remote-btn-video" id="remote-btn-video" title="Play or pause video on the current slide" aria-label="Video">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
+            <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+            <rect x="19" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+          </svg>
+          <span class="remote-btn-label">Video</span>
+        </button>` : ``}
+        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next" aria-label="Next slide">
           <span class="remote-btn-label">Next slide</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="9 18 15 12 9 6"></polyline>
@@ -9960,6 +10040,14 @@ function startWebUiServer() {
             </svg>
             Reload Presentation
           </button>
+          ${showVideoControl ? `<button type="button" class="btn-control" id="btn-toggle-video" data-tooltip="Play or pause video on the current slide">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
+              <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+              <rect x="19" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+            </svg>
+            Play / Pause Video
+          </button>` : ``}
           <button type="button" class="btn-control" id="btn-close-presentation" data-tooltip="Close current presentation">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -10386,6 +10474,13 @@ function startWebUiServer() {
     }
     
     // Set up control buttons
+    // Conditionally rendered — null guard required, same reason as remote-btn-video.
+    const controlsVideoBtn = document.getElementById('btn-toggle-video');
+    if (controlsVideoBtn) {
+      controlsVideoBtn.addEventListener('click', () => {
+        apiCall('/api/toggle-video');
+      });
+    }
     document.getElementById('btn-prev-slide').addEventListener('click', () => {
       apiCall('/api/previous-slide').then(() => {
         updateSlideButtons();
@@ -10836,7 +10931,17 @@ function startWebUiServer() {
         updateSlideButtons();
       });
     });
-    
+
+    // Conditionally rendered — the null guard is required. Without it this throws when
+    // webUiVideoControlEnabled is off, aborting every listener registered after it.
+    const remoteVideoBtn = document.getElementById('remote-btn-video');
+    if (remoteVideoBtn) {
+      remoteVideoBtn.addEventListener('click', () => {
+        triggerHapticFeedback();
+        apiCall('/api/toggle-video');
+      });
+    }
+
     // Clickable preview images: current → previous slide, next → next slide
     function refreshAfterSlideChange() {
       if (notesVisible) loadSpeakerNotes();

@@ -34,6 +34,7 @@ const savePerfectCueBtn = document.getElementById('save-perfectcue-btn');
 const verboseLoggingCheckbox = document.getElementById('verbose-logging');
 const webUiDebugConsoleEnabledCheckbox = document.getElementById('web-ui-debug-console-enabled');
 const allowArbitraryUrlCheckbox = document.getElementById('allow-arbitrary-url');
+const webUiVideoControlEnabledCheckbox = document.getElementById('web-ui-video-control-enabled');
 const genericUrlBgColorPicker = document.getElementById('generic-url-background-color');
 const genericUrlBgColorHex = document.getElementById('generic-url-background-color-hex');
 const webUiThemeSelect = document.getElementById('web-ui-theme');
@@ -602,6 +603,9 @@ async function initDisplays() {
     if (allowArbitraryUrlCheckbox) {
       allowArbitraryUrlCheckbox.checked = preferences.allowArbitraryUrl === true;
     }
+    if (webUiVideoControlEnabledCheckbox) {
+      webUiVideoControlEnabledCheckbox.checked = preferences.webUiVideoControlEnabled === true;
+    }
     const savedBgColor = /^#[0-9a-fA-F]{6}$/.test(preferences.genericUrlBackgroundColor)
       ? preferences.genericUrlBackgroundColor : '#000000';
     if (genericUrlBgColorPicker) genericUrlBgColorPicker.value = savedBgColor;
@@ -764,6 +768,9 @@ async function initDisplays() {
     }
     if (allowArbitraryUrlCheckbox) {
       allowArbitraryUrlCheckbox.addEventListener('change', saveAllowArbitraryUrlPreference);
+    }
+    if (webUiVideoControlEnabledCheckbox) {
+      webUiVideoControlEnabledCheckbox.addEventListener('change', saveWebUiVideoControlPreference);
     }
     if (genericUrlBgColorPicker) {
       genericUrlBgColorPicker.addEventListener('input', () => {
@@ -1739,6 +1746,18 @@ async function saveAllowArbitraryUrlPreference() {
     showStatus('Web remote features saved', 'info');
   } catch (error) {
     console.error('Failed to save allow arbitrary URL preference:', error);
+    showStatus('Failed to save web remote features setting', 'error');
+  }
+}
+
+async function saveWebUiVideoControlPreference() {
+  try {
+    await window.electronAPI.savePreferences({
+      webUiVideoControlEnabled: webUiVideoControlEnabledCheckbox && webUiVideoControlEnabledCheckbox.checked === true
+    });
+    showStatus('Web remote features saved', 'info');
+  } catch (error) {
+    console.error('Failed to save video control preference:', error);
     showStatus('Failed to save web remote features setting', 'error');
   }
 }

@@ -2,6 +2,22 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [Unreleased]
+
+### Added
+- **Video play/pause control on the web remote** — Presenters can start and stop a video on the current slide from the web remote instead of reaching for the presentation machine's keyboard. A `Video` button appears on the Remote tab between Previous and Next, and a `Play / Pause Video` entry appears in the Controls tab grid. Both call the existing `POST /api/toggle-video` endpoint, which sends the `k` keystroke Google Slides maps to play/pause and broadcasts to backup machines.
+- **`webUiVideoControlEnabled` preference** — New admin toggle in desktop settings under **Web Remote Features** ("Show video play/pause control"), **disabled by default**. Enable it for events that use embedded video. Desktop-only: the key is stripped from `POST /api/preferences`, so a web remote client cannot enable its own control over HTTP. The web remote must be reloaded for a change to take effect.
+
+### Notes
+- The button is a stateless toggle showing a fixed combined play/pause glyph. Google Slides exposes no readable playback state — Drive-hosted videos render as `<video>` elements but YouTube embeds sit in a cross-origin iframe — so a state-swapping icon would desync and mislead a presenter mid-show.
+- `POST /api/toggle-video` is deliberately **not** gated by the new preference, so the existing Bitfocus Companion module's Toggle Video action keeps working unchanged.
+- In the five row-layout themes the button is icon-only; the `light` theme's column layout keeps the visible label. At viewports ≤600px with the control enabled, Previous and Next also drop their labels so all three buttons fit; both carry `aria-label` so screen readers are unaffected.
+
+### Build
+- **Version 2.3.9**, **build 87**.
+
+---
+
 ## [2.3.8] - 2026-06-16
 
 ### Fixed

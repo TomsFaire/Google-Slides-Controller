@@ -7737,11 +7737,27 @@ function startWebUiServer() {
       gap: 12px;
       min-height: 120px;
     }
-    /* Three-button row (video preference on) needs to shrink; the two-button
-       default above must stay flex: 0 0 calc(50% - 10px) for exact pixel parity
-       with the pre-video-button layout. Scoped to .has-video only. */
-    .remote-controls.has-video .remote-btn {
+    /* Three-button row (video preference on): Previous/Next share the remaining
+       space equally; the two-button default above must stay flex: 0 0 calc(50% - 10px)
+       for exact pixel parity with the pre-video-button layout. Scoped to .has-video only. */
+    .remote-controls.has-video .remote-btn-prev,
+    .remote-controls.has-video .remote-btn-next {
       flex: 1 1 0;
+    }
+    /* Pin the video button's own width so it isn't stretched by the rule above —
+       a bare .remote-btn-video selector (0,0,1,0) is too weak to beat the prev/next
+       rule's .remote-btn (0,0,2,0) once both match the video button too, since it
+       also carries the .remote-btn class. The old flex declarations on the base and
+       themed .remote-btn-video rules below are dead now that this .has-video rule
+       always wins; they were removed rather than left, since dead flex values sitting
+       next to live ones is exactly the trap that caused this bug. flex-shrink stays 1
+       (not 0) so the button can still yield space at narrow widths instead of
+       reintroducing the row overflow this branch already fixed once. */
+    .remote-controls.has-video .remote-btn-video {
+      flex: 0 1 96px;
+    }
+    body.theme-light .remote-controls.has-video .remote-btn-video {
+      flex: 0 1 92px;
     }
     .remote-controls.with-notes .remote-btn,
     .remote-controls.with-panel .remote-btn {
@@ -7766,7 +7782,6 @@ function startWebUiServer() {
       transform: scale(1.02);
     }
     .remote-btn-video {
-      flex: 0 0 96px;
       background: #667eea;
       color: white;
     }
@@ -8736,7 +8751,6 @@ function startWebUiServer() {
       color: var(--faire-surface);
     }
     body.theme-light .remote-btn-video {
-      flex: 0 0 92px;
       background: var(--faire-surface);
       border: 1px solid var(--faire-border);
       color: var(--faire-text);
@@ -9110,7 +9124,7 @@ function startWebUiServer() {
     body.theme-touch .container { background: #fff; border-radius: var(--faire-radius); box-shadow: 0 8px 32px rgba(0,0,0,0.12); max-width: 90%; padding: 28px; }
     body.theme-touch .remote-btn { min-height: 80px; padding: 24px 28px; font-size: 22px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .remote-btn:active { transform: scale(0.97); }
-    body.theme-touch .remote-btn-video { flex: 0 0 96px; padding-left: 12px; padding-right: 12px; }
+    body.theme-touch .remote-btn-video { padding-left: 12px; padding-right: 12px; }
     body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
     body.theme-touch .keyboard-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
@@ -9178,7 +9192,7 @@ function startWebUiServer() {
     body.theme-thumb .remote-controls { order: 3; flex-shrink: 0; margin-top: 12px; }
     body.theme-thumb .remote-btn { min-height: 72px; padding: 20px 24px; font-size: 20px; -webkit-tap-highlight-color: transparent; }
     body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next, body.theme-thumb .remote-btn-video { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
-    body.theme-thumb .remote-btn-video { flex: 0 0 96px; padding-left: 12px; padding-right: 12px; }
+    body.theme-thumb .remote-btn-video { padding-left: 12px; padding-right: 12px; }
     body.theme-thumb .remote-btn:hover { background: rgba(255,255,255,0.35); }
     body.theme-thumb .remote-btn:active { transform: scale(0.98); }
     body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); color: rgba(255,255,255,0.9); }
@@ -9858,7 +9872,7 @@ function startWebUiServer() {
           </svg>
           <span class="remote-btn-label">Previous</span>
         </button>
-        ${showVideoControl ? `<button type="button" class="remote-btn remote-btn-video" id="remote-btn-video" title="Play or pause video on the current slide">
+        ${showVideoControl ? `<button type="button" class="remote-btn remote-btn-video" id="remote-btn-video" title="Play or pause video on the current slide" aria-label="Video">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
             <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>

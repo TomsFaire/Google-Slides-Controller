@@ -2,13 +2,20 @@
 
 All notable changes to Google Slides Opener are documented here.
 
-## [Unreleased]
+## [2.3.9] - 2026-08-31
 
 ### Added
+- **Named Cloudflare tunnel support (custom domain WAN access)** — WAN access can now run over a named Cloudflare tunnel on your own hostname instead of a Quick Tunnel URL. Includes an auto-setup flow in desktop settings: enter a Cloudflare API token, account ID and hostname, and the app verifies the token, creates or reuses the tunnel, configures ingress, and creates the DNS record. Both token-based (auto-setup) and credentials-file (manual) modes are supported. API and tunnel tokens are stored via Electron `safeStorage` (OS keychain), falling back to plaintext only where unavailable. New IPC: `cf-verify-token`, `cf-save-token`, `cf-get-auto-setup-config`, `cf-auto-setup`, `cf-delete-tunnel`, with `cf-setup-progress` push events.
 - **Video play/pause control on the web remote** — Presenters can start and stop a video on the current slide from the web remote instead of reaching for the presentation machine's keyboard. A `Video` button appears on the Remote tab between Previous and Next, and a `Play / Pause Video` entry appears in the Controls tab grid. Both call the existing `POST /api/toggle-video` endpoint, which sends the `k` keystroke Google Slides maps to play/pause and broadcasts to backup machines.
 - **`webUiVideoControlEnabled` preference** — New admin toggle in desktop settings under **Web Remote Features** ("Show video play/pause control"), **disabled by default**. Enable it for events that use embedded video. Desktop-only: the key is stripped from `POST /api/preferences`, so a web remote client cannot enable its own control over HTTP. The web remote must be reloaded for a change to take effect.
 
-### Notes
+### Fixed
+- **Speaker notes launch reliability** — Notes windows could fail to open, or leak, when presentations were opened in quick succession. Six independent `browser-window-created` listeners and a blind-retry key loop are replaced by a single launch controller guarded by a cancellation token, so a superseding launch cleanly kills the previous one. The retry loop now verifies readiness (present-mode URL, not loading) and confirms the notes window actually appeared before re-pressing `s`, and a wall-clock ceiling stops it retrying forever on a deck that never loads. Wired into all six open paths: `/api/open-presentation`, `/api/open-presentation-with-notes`, `/api/open-preset`, the `open-presentation` and `open-test-presentation` IPC handlers, and `reopenPresentationAtSlide`.
+
+### Security
+- **Controller allowlist bypass over a named tunnel** — With a named Cloudflare tunnel active, all tunnel traffic reached the server as `127.0.0.1`, so the controller IP allowlist effectively admitted every remote client. `isControllerAllowedRequest()` now resolves the true client address via `getEffectiveClientIp()`, reading the `CF-Connecting-IP` header when the named tunnel is in use.
+
+### Notes on the video control
 - The button is a stateless toggle showing a fixed combined play/pause glyph. Google Slides exposes no readable playback state — Drive-hosted videos render as `<video>` elements but YouTube embeds sit in a cross-origin iframe — so a state-swapping icon would desync and mislead a presenter mid-show.
 - `POST /api/toggle-video` is deliberately **not** gated by the new preference, so the existing Bitfocus Companion module's Toggle Video action keeps working unchanged.
 - In the five row-layout themes the button is icon-only; the `light` theme's column layout keeps the visible label. At viewports ≤600px with the control enabled, Previous and Next also drop their labels so all three buttons fit; both carry `aria-label` so screen readers are unaffected.

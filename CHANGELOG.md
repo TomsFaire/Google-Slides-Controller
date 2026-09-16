@@ -2,6 +2,22 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.10] - 2026-09-16
+
+### Fixed
+- **Speaker notes window was never tracked after launch** — Regression introduced with the 2.3.9 launch controller. Adoption of the Google Slides presenter-view popup was gated on the popup's URL containing `speakernotes` or `speaker`; the real presenter-view URL (`/presentnotes`) contains neither, so the window was never adopted and `notesWindow` stayed `null`. Because the `did-navigate` fallback was a one-shot listener that returned on mismatch, the window could never be adopted afterwards either. Every notes feature reads that one reference, so all of them failed together: the **notes layout preference** was not applied (`onNotesWindowCreated`), the window was **not positioned or fullscreened on the selected notes display** (`applySpeakerNotesInitialGeometry`), **notes zoom/sizing and scrolling** from both Bitfocus Companion and the web remote returned "No speaker notes window is open", and the **web remote showed stale or empty notes** rather than what was on screen.
+
+  The popup is now identified by its **opener** — a `did-create-window` hook on the presentation window's own `webContents`, the event Electron emits for windows created through `setWindowOpenHandler` — instead of by URL. This removes the dependency on Google's undocumented presenter-view URL and, being scoped to the presentation window, cannot adopt unrelated app windows (key/fill outputs, overlays) the way the previous app-level `browser-window-created` listener could.
+- **Relaunching speaker notes lost tracking** — `relaunchSpeakerNotesWindow()` (the desktop relaunch control and `POST /api/relaunch-speaker-notes`, used when the notes layout preference changes) closed the notes window and re-sent `s`, but never re-armed the adoption hook, which disarms itself once it adopts. The relaunched window was therefore never tracked, so the layout change it was triggered for could not be applied. The hook is now re-armed before the keypress.
+
+### Added
+- `src/notes-window-adoption.js` — presenter-view adoption extracted into a testable module, with `tests/notes-window-adoption.test.js` covering opener-based (not URL-based) adoption, one-shot semantics, listener detachment, and re-arming on relaunch.
+
+### Build
+- **Version 2.3.10**, **build 88**.
+
+---
+
 ## [2.3.9] - 2026-08-31
 
 ### Added

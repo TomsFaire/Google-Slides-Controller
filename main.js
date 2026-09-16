@@ -28,6 +28,7 @@ const util = require('util');
 const QRCode = require('qrcode');
 const { createPerfectCueServer } = require('./src/perfectcue-server');
 const { normalizePerfectCuePorts } = require('./src/perfectcue-port-config');
+const { armNotesAdoption } = require('./src/notes-window-adoption');
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -305,8 +306,10 @@ process.on('unhandledRejection', (reason, promise) => {
 let mainWindow;
 let presentationWindow = null;
 let notesWindow = null;
-// shape: { token: number, win: BrowserWindow, retryTimer: ReturnType<typeof setTimeout>|null, listener: Function|null }
+// shape: { token: number, win: BrowserWindow, retryTimer: ReturnType<typeof setTimeout>|null, hook: object|null }
 let currentNotesLaunch = null;
+// Armed one-shot presenter-view adoption hook (see src/notes-window-adoption.js).
+let notesAdoptionHook = null;
 let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
@@ -859,6 +862,13 @@ async function relaunchSpeakerNotesWindow() {
     notesWindow = null;
     await new Promise(resolve => setTimeout(resolve, 300));
   }
+  // Re-arm adoption before re-pressing "s": the hook disarmed itself when the
+  // previous notes window was adopted, so without this the relaunched popup is
+  // never tracked and the notes layout preference is never applied to it.
+  if (!currentNotesLaunch) {
+    currentNotesLaunch = { token: 0, win: presentationWindow, retryTimer: null, hook: null };
+  }
+  registerNotesWindowListener(getConfiguredNotesDisplay());
   presentationWindow.focus();
   await new Promise(resolve => setTimeout(resolve, 50));
   presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
@@ -1021,7 +1031,15 @@ function applySpeakerNotesInitialGeometry(window, notesDisplay, overrideBounds) 
 // Speaker-notes launch controller
 // ---------------------------------------------------------------------------
 
-/** Cancel any in-flight notes launch (timers + app-level browser-window-created listener). */
+/** Disarm and forget the presenter-view adoption hook, if one is armed. */
+function disposeNotesAdoptionHook() {
+  if (!notesAdoptionHook) return;
+  notesAdoptionHook.dispose();
+  notesAdoptionHook = null;
+  if (currentNotesLaunch) currentNotesLaunch.hook = null;
+}
+
+/** Cancel any in-flight notes launch (timers + armed adoption hook). */
 function cancelPendingNotesLaunch() {
   if (!currentNotesLaunch) return;
   console.log('[NotesLaunch] cancel: token=%d', currentNotesLaunch.token);
@@ -1030,22 +1048,24 @@ function cancelPendingNotesLaunch() {
     clearTimeout(currentNotesLaunch.retryTimer);
     currentNotesLaunch.retryTimer = null;
   }
-  if (currentNotesLaunch.listener) {
-    app.removeListener('browser-window-created', currentNotesLaunch.listener);
-    currentNotesLaunch.listener = null;
-  }
+  disposeNotesAdoptionHook();
   currentNotesLaunch = null;
+}
+
+/** Resolve the notes display from saved preferences, falling back to the first display. */
+function getConfiguredNotesDisplay() {
+  const displays = screen.getAllDisplays();
+  const prefs = loadPreferences();
+  return displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
 }
 
 /**
  * Internal: called when the notes BrowserWindow has been identified.
- * Removes the app-level listener, wires up the window, and positions it.
+ * Disarms the adoption hook, wires up the window, and positions it.
  */
-function adoptNotesWindow(win, notesDisplay, listener) {
-  app.removeListener('browser-window-created', listener);
-  if (currentNotesLaunch) {
-    currentNotesLaunch.listener = null;
-  }
+function adoptNotesWindow(win, notesDisplay) {
+  disposeNotesAdoptionHook();
+  console.log('[NotesLaunch] adopt: presenter-view window captured');
   notesWindow = win;
   onNotesWindowCreated(win);
   attachCrashHandlers(win, 'notes');
@@ -1060,30 +1080,34 @@ function adoptNotesWindow(win, notesDisplay, listener) {
 }
 
 /**
- * Register a single app-level browser-window-created listener that adopts the
- * first window whose URL matches the Google Slides speaker-notes popup.
- * Must be called after currentNotesLaunch is initialised.
+ * Arm the one-shot hook that adopts the Google Slides presenter-view popup.
+ *
+ * The popup is identified by its opener — the presentation window's own
+ * webContents — not by its URL. Google's presenter-view URL is undocumented
+ * and contains no stable "speaker"/"notes" substring, so URL matching fails to
+ * adopt and silently kills notes layout, positioning, zoom, scroll and
+ * notes-text reads. Scoping to the presentation webContents also prevents
+ * grabbing unrelated app windows (key/fill outputs, overlays).
+ *
+ * Must be called after currentNotesLaunch is initialised, and re-called by any
+ * path that re-triggers the "s" keypress — the hook disarms once it adopts.
  */
 function registerNotesWindowListener(notesDisplay) {
   const token = currentNotesLaunch ? currentNotesLaunch.token : 0;
-  console.log('[NotesLaunch] register: token=%d', token);
-  const listener = (event, win) => {
-    if (win === presentationWindow || win === mainWindow) return;
-    const url = win.webContents.getURL();
-    if (!url.includes('speakernotes') && !url.includes('speaker')) {
-      win.webContents.once('did-navigate', (e, u) => {
-        if (!u.includes('speakernotes') && !u.includes('speaker')) return;
-        adoptNotesWindow(win, notesDisplay, listener);
-      });
-      return;
-    }
-    adoptNotesWindow(win, notesDisplay, listener);
-  };
-  if (!currentNotesLaunch) {
-    currentNotesLaunch = { token: 0, win: null, retryTimer: null, listener: null };
+  if (!presentationWindow || presentationWindow.isDestroyed()) {
+    console.warn('[NotesLaunch] register: token=%d skipped — no presentation window', token);
+    return;
   }
-  currentNotesLaunch.listener = listener;
-  app.on('browser-window-created', listener);
+  disposeNotesAdoptionHook(); // never leave two hooks armed on the same launch
+  console.log('[NotesLaunch] register: token=%d', token);
+  notesAdoptionHook = armNotesAdoption({
+    webContents: presentationWindow.webContents,
+    onAdopt: win => adoptNotesWindow(win, notesDisplay)
+  });
+  if (!currentNotesLaunch) {
+    currentNotesLaunch = { token: 0, win: presentationWindow, retryTimer: null, hook: null };
+  }
+  currentNotesLaunch.hook = notesAdoptionHook;
 }
 
 /**
@@ -2427,7 +2451,7 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
   });
 
   // Initialize centralized launch state and register notes window listener
-  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
   registerNotesWindowListener(notesDisplay);
 
   if (notesWereOpen) {
@@ -3597,7 +3621,7 @@ ipcMain.handle('open-test-presentation', async () => {
     });
 
     // Register centralized notes window listener (no loop — test path is plain launch)
-    currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+    currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
     registerNotesWindowListener(notesDisplay);
   }
 
@@ -3681,7 +3705,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   });
 
   // Register centralized notes window listener (no loop — plain launch, no auto-press)
-  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
   registerNotesWindowListener(notesDisplay);
 
   // Load presentation URL
@@ -4503,7 +4527,7 @@ function startHttpServer() {
           });
 
           // Register centralized notes window listener (no loop — plain launch, no auto-press)
-          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
           registerNotesWindowListener(notesDisplay);
           
           // Listen for page load
@@ -4635,7 +4659,7 @@ function startHttpServer() {
           });
 
           // Initialize centralized launch state, register listener, and start the notes launch loop
-          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
           const withNotesToken = currentNotesLaunch.token;
           registerNotesWindowListener(notesDisplay);
 
@@ -6193,7 +6217,7 @@ function startHttpServer() {
           });
 
           // Initialize centralized launch state, register listener, and start the notes launch loop
-          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, listener: null };
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
           const presetNotesToken = currentNotesLaunch.token;
           registerNotesWindowListener(notesDisplay);
 

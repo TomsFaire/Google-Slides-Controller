@@ -1,0 +1,72 @@
+name: Electron support check
+
+on:
+  schedule:
+    # Mondays, 09:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Assess the support window
+        id: assess
+        run: |
+          set +e
+          node scripts/check-electron-support.js > report.json
+          code=$?
+          set -e
+          if [ "$code" = "2" ]; then
+            echo "Support check could not reach the registry; not treating as drift."
+            exit 0
+          fi
+          if [ "$code" = "3" ]; then
+            # Bad config or a bug. NOT retry-safe: staying silent here would let a
+            # permanent fault masquerade as a transient blip, and the alarm never fires.
+            echo "::error::Support check hit an internal error (exit 3) - needs a human, not a retry."
+            exit 1
+          fi
+          echo "state=$(node -p "require('./report.json').state")" >> "$GITHUB_OUTPUT"
+          echo "title=$(node -p "require('./report.json').title")" >> "$GITHUB_OUTPUT"
+          node -p "require('./report.json').body" > issue-body.md
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Healthy — nothing to report
+        if: steps.assess.outputs.state == 'supported'
+        run: echo "Electron is within the support window. Staying silent."
+
+      - name: Open or update the single drift issue
+        if: steps.assess.outputs.state == 'unsupported' || steps.assess.outputs.state == 'critical'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE: ${{ steps.assess.outputs.state }}
+          TITLE: ${{ steps.assess.outputs.title }}
+        run: |
+          existing=$(gh issue list --label electron-drift --state open --limit 1 --json number --jq '.[0].number // empty')
+          labels="electron-drift"
+          if [ "$STATE" = "critical" ]; then labels="electron-drift,critical"; fi
+
+          if [ -n "$existing" ]; then
+            echo "Updating existing issue #$existing in place."
+            gh issue edit "$existing" --title "$TITLE" --body-file issue-body.md --add-label "$labels"
+          else
+            echo "No open drift issue; creating one."
+            gh issue create --title "$TITLE" --body-file issue-body.md --label "$labels"
+          fi
+
+      - name: Fail the run on critical drift
+        if: steps.assess.outputs.state == 'critical'
+        run: |
+          echo "::error::Electron is 2+ majors past end-of-life. See the electron-drift issue."
+          exit 1

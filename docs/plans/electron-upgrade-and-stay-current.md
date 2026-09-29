@@ -25,7 +25,7 @@ Related drift found in the same audit:
 - CI pins `node-version: '20'` ([.github/workflows/build.yml](../../.github/workflows/build.yml)). Node 20 reached end-of-life 2026-04-30.
 - `electron-builder` is 24.13.3, published 2024-03-02. Current is 26.x.
 - Root `yarn install --immutable` is a **no-op**: `--immutable` is a Yarn Berry flag and the root is `yarn@1.22.22`. Lockfile immutability has never been enforced at the repo root. (It *is* correct in the companion module, which is Yarn 4.)
-- CI has **no test step**. The 103 unit tests in `tests/` have never run on a push or PR.
+- CI has **no test step**. The 100 unit tests in `tests/` have never run on a push or PR.
 - No Dependabot or Renovate configuration exists.
 - [INSTALLATION.md:74](../../INSTALLATION.md) claims "macOS 10.15+", already wrong for Electron 33, which requires macOS 11+.
 - The endpoint table in [CLAUDE.md](../../CLAUDE.md) documents 10 routes and names two that do not exist (`/api/share-link`, `/api/show-share-qr`). `main.js` actually serves **40** routes; the real ones are `/api/show-tunnel-qr` and `/api/hide-tunnel-qr`.
@@ -107,7 +107,7 @@ exactly one variable.
 1. `.github/workflows/build.yml`: `node-version: '20'` → read from `.nvmrc` (`22.20`) via `node-version-file`.
 2. Replace the no-op root `yarn install --immutable` with `yarn install --frozen-lockfile` (the Yarn 1 equivalent). Leave the companion module's `--immutable` alone — it is correct there.
 3. `electron-builder` 24.13.3 → 26.x. Read the 24→25 and 25→26 changelogs and adapt the `build` block in [package.json](../../package.json) as needed; `afterPack`, `extraResources`, `electronLanguages` and `identity: null` are all areas electron-builder has changed.
-4. Add `yarn test` to CI after install. The 103 tests currently never run; this becomes the only automated signal plan 2 has.
+4. Add `yarn test` to CI after install. The 100 tests currently never run; this becomes the only automated signal plan 2 has.
 5. Confirm electron-builder 26 fetches Electron binaries correctly now that `postinstall` is gone.
 
 **Verification (no venue rig):** CI green including the new test step; both mac zips build; extract
@@ -167,7 +167,7 @@ separate conversation.
 
 ## 6. Hardware acceptance checklist
 
-Design principle: only test what an Electron/Chromium jump can break. The 103 unit tests already
+Design principle: only test what an Electron/Chromium jump can break. The 100 unit tests already
 cover the pure-JS logic (PerfectCue parsing, key-fill, preset serialisation). Ordered to fail fast.
 
 ### Gate 0 — dev machine, before touching the rig
@@ -210,9 +210,18 @@ against is not a bad merge — it is a **queue that silently rots**, which is ho
 months behind. Parts 3 and 4 exist specifically to counter that.
 
 ### 7.1 Single source of truth for the Node floor
-Add `engines.node: ">=22.20 <23"` to root [package.json](../../package.json) and a `.nvmrc`
+Add `engines.node: ">=22.20"` to root [package.json](../../package.json) and a `.nvmrc`
 containing `22.20`. CI reads `.nvmrc` via `node-version-file`. The floor currently lives in three
 disagreeing places, which is how Node 20 survived until it became a hard blocker.
+
+**Floor only, no ceiling — decided during implementation.** An earlier draft of this
+section specified `">=22.20 <23"`, mirroring the companion module's `^22.20`. That
+value breaks the repo: **Yarn 1 treats an `engines` mismatch as fatal for `yarn run`**,
+not advisory — `error Commands cannot run with an incompatible environment` — so every
+`yarn test` / `yarn start` / `yarn build:mac` fails on any machine not running Node
+22.x, including the maintainer's (Homebrew Node 25). The ceiling was never a spec
+requirement: this section exists to pin the *floor*, the companion module enforces its
+own ceiling in its own separate Yarn 4 install, and CI determinism comes from `.nvmrc`.
 
 ### 7.2 Dependabot, weekly, grouped
 A `.github/dependabot.yml` covering both ecosystems — root (Yarn 1) and

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Target Electron:** `^44.4.5` exactly. Not 45.x — 45 is alpha at time of writing.
-- **Node floor:** `>=22.20 <23`. This is the *only* range satisfying both `electron@44.4.5` (`engines.node: ">= 22.12.0"`) and the companion module (`engines.node: "^22.20"`). **Node 24 would violate the companion module.**
+- **Node floor:** `>=22.20` (floor only — no upper bound). `electron@44.4.5` requires `engines.node: ">= 22.12.0"`; the companion module separately requires `^22.20` and enforces that in its own Yarn 4 install. Do **not** add a `<23` ceiling: Yarn 1 treats an `engines` mismatch as fatal for `yarn run`, so a ceiling breaks every yarn script on any machine not running Node 22.x. `.nvmrc` (22.20.0) is what pins CI.
 - **electron-builder:** `^26.15.3` — the version the npm `latest` tag points to.
 - **macOS floor:** Electron 44 requires macOS 13+. All venue machines are confirmed macOS 13+.
 - **Version bump:** 2.3.10 → **2.3.11** (patch), `buildNumber` 88 → **89**. Per the repo's patch-only rule.
@@ -70,11 +70,11 @@ Insert after the `"license": "MIT",` line:
 
 ```json
   "engines": {
-    "node": ">=22.20 <23"
+    "node": ">=22.20"
   },
 ```
 
-The upper bound is not cosmetic: the companion module declares `^22.20`, so Node 23+ would break it.
+Floor only, deliberately. A `<23` ceiling would make Yarn 1 refuse to run every script (`error Commands cannot run with an incompatible environment`) on any machine not on Node 22.x. The companion module enforces its own `^22.20` in its own install; `.nvmrc` pins CI.
 
 - [ ] **Step 3: Point CI at `.nvmrc`**
 
@@ -132,7 +132,7 @@ pinned to Node 20, which reached end-of-life 2026-04-30."
 
 ## Task 2: Make CI enforce the lockfile and run the tests
 
-**Why:** the root `yarn install --immutable` is a **no-op** — `--immutable` is a Yarn Berry flag and the root is `yarn@1.22.22`. Separately, the 103 tests in `tests/` have never run in CI. This task is the only automated signal the stay-current plan will have.
+**Why:** the root `yarn install --immutable` is a **no-op** — `--immutable` is a Yarn Berry flag and the root is `yarn@1.22.22`. Separately, the 100 tests in `tests/` have never run in CI. This task is the only automated signal the stay-current plan will have.
 
 **Files:**
 - Modify: `.github/workflows/build.yml:61-62` (install), plus a new step after it
@@ -146,7 +146,7 @@ pinned to Node 20, which reached end-of-life 2026-04-30."
 yarn test
 ```
 
-Expected: all tests pass. Note the count — there are 103 `test(` calls across 7 files. If anything fails *before* you change a thing, stop and report it; do not fold a pre-existing failure into this PR.
+Expected: all tests pass — the runner reports **100 tests**. (Grepping `test(` suggests 103; that overcounts by 3. Trust the runner.) If anything fails *before* you change a thing, stop and report it; do not fold a pre-existing failure into this PR.
 
 - [ ] **Step 2: Fix the root install to actually enforce the lockfile**
 
@@ -198,7 +198,7 @@ git commit -m "ci: enforce the lockfile and run the test suite
 Root is yarn@1.22.22, where --immutable is not a recognised flag, so
 lockfile enforcement has been silently absent. --frozen-lockfile is the
 Yarn 1 equivalent. The companion module's --immutable is correct and is
-left as-is. Also runs the 103 existing tests, which CI never ran."
+left as-is. Also runs the 100 existing tests, which CI never ran."
 ```
 
 ---

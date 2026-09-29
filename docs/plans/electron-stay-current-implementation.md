@@ -16,7 +16,7 @@
 
 - **Nothing auto-merges.** Every dependency update opens a PR and waits for human review. This is a deliberate choice; parts of this plan exist specifically to stop the resulting queue from rotting.
 - **Electron support policy:** the latest **3** majors are supported. A major ships roughly every 8 weeks, giving ~24 weeks of runway.
-- **Node floor:** `>=22.20 <23` — the only range satisfying both `electron@44.4.5` and the companion module's `^22.20`.
+- **Node floor:** `>=22.20` (floor only). A `<23` ceiling breaks every yarn script, because Yarn 1 treats an `engines` mismatch as fatal for `yarn run`. `.nvmrc` (22.20.0) pins CI; the companion module enforces its own `^22.20`.
 - **Two Yarn ecosystems:** root is Yarn 1 (`yarn.lock`, `--frozen-lockfile`); `companion-module-gslide-opener` is Yarn 4 (`--immutable`). Dependabot must cover both.
 - **`electron` and `electron-builder` are a coupled pair** and must always be grouped into one PR.
 - **Silence when healthy.** A workflow that cries wolf gets muted, which defeats the whole design.
@@ -215,7 +215,7 @@ Expected: PASS, 12 tests.
 yarn test
 ```
 
-Expected: all pass — the existing 103 plus the 12 new ones.
+Expected: all pass — the existing 100 plus the 12 new ones.
 
 - [ ] **Step 6: Commit**
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron, electron-builder, Yarn 1 (root) / Yarn 4 (companion module), GitHub Actions, `node:test`.
 
-> **Status (2026-09-28):** Tasks 1-2 have landed (`c33dcc0`, `3c0cd61`, `4a640ba`): Node pinned via `.nvmrc`, real lockfile enforcement, and CI now runs the test suite. **Task 3 (electron-builder 24 → 26) is NOT done** — `yarn install` could not resolve any package in the authoring environment, so the one-line bump was deliberately not committed without a matching `yarn.lock` (that would fail the `--frozen-lockfile` Task 2 adds). Its changelog research IS complete: none of the six `build`-block features this repo uses require a change. PR 2 (Tasks 4-8) and PR 3 (Task 9) are not started. Unchecked boxes are the authoring record, not a claim that Tasks 1-2 are outstanding.
+> **Status (2026-09-28):** Tasks 1-2 have landed (`c33dcc0`, `3c0cd61`, `4a640ba`): Node pinned via `.nvmrc`, real lockfile enforcement, and CI now runs the test suite. **Task 3 (electron-builder 24 → 26) is partially done.** The bump to `^26.15.3` and its `yarn.lock` have landed, and a real 24→26 incompatibility was found and fixed: `win.signingHashAlgorithms` moved to `win.signtoolOptions.signingHashAlgorithms` (see Step 1 below). The `build` block now validates against 26's schema, and the build proceeds through `@electron/rebuild`, native-dependency install, arm64 packaging and the Electron download. **What remains is a full `yarn build:mac` on a machine with unrestricted network** — in the authoring sandbox it dies at `ReadError: The server aborted pending request` on a later download, so no `.app` bundle has been produced or launched yet. Those two checks (build completes, app launches, `/api/status` still reports Electron 33.4.11) are Gate A items for the owner. PR 2 (Tasks 4-8) and PR 3 (Task 9) are not started. Unchecked boxes are the authoring record, not a claim that Tasks 1-2 are outstanding.
 
 **Spec:** [docs/plans/electron-upgrade-and-stay-current.md](electron-upgrade-and-stay-current.md) — read it alongside this plan; §2.1 lists the breaking changes that are deliberately *not* addressed because they are no-ops for this codebase.
 
@@ -215,7 +215,37 @@ left as-is. Also runs the 100 existing tests, which CI never ran."
 
 - [ ] **Step 1: Read the changelogs before changing anything**
 
-The `build` block in `package.json` uses `afterPack`, `extraResources`, `electronLanguages`, `identity: null`, `signingHashAlgorithms: []`, and `publish: null` — all areas electron-builder has touched between 24 and 26. Check each against the 25.0.0 and 26.0.0 notes:
+The `build` block in `package.json` uses `afterPack`, `extraResources`, `electronLanguages`, `identity: null`, `signingHashAlgorithms: []`, and `publish: null` — all areas electron-builder has touched between 24 and 26.
+
+> **Outcome, recorded after the fact.** Reading the changelogs was NOT sufficient — it concluded that none of these six needed changing, and that was wrong. Only running the build surfaced the real break:
+>
+> ```
+> ⨯ Invalid configuration object ... configuration.win should be one of these: null
+> ```
+>
+> electron-builder 26 moved `signingHashAlgorithms` out of `WindowsConfiguration` and into `WindowsSigntoolConfiguration`, and `WindowsConfiguration` declares `additionalProperties: false` — so one stale key invalidates the whole `win` object, and the error message names the object rather than the key. The fix preserves the original intent by relocating it:
+>
+> ```json
+> "win": {
+>   "target": [{ "target": "portable", "arch": ["x64"] }],
+>   "icon": "build/icon.ico",
+>   "signtoolOptions": {
+>     "signingHashAlgorithms": []
+>   }
+> }
+> ```
+>
+> **Lesson for the next builder upgrade:** validate the config against the installed schema instead of trusting release notes. This finds every problem at once and names the offending key:
+>
+> ```bash
+> node -e 'const A=require("ajv"),a=new A({allErrors:true,strict:false});
+> const v=a.compile(require("./node_modules/app-builder-lib/scheme.json"));
+> console.log(v(require("./package.json").build) ? "VALID" : JSON.stringify(v.errors,null,1));'
+> ```
+>
+> Run that way, `signingHashAlgorithms` was the ONLY offender — `mac`, `linux`, `dmg`, `afterPack`, `extraResources`, `electronLanguages`, `identity: null` and `publish: null` all pass 26's schema.
+
+Check each against the 25.0.0 and 26.0.0 notes:
 
 ```bash
 open https://github.com/electron-userland/electron-builder/releases
@@ -616,7 +646,7 @@ next upgrade is a checklist run rather than an archaeology exercise."
 
 - [ ] **Step 1: Bump version and build number**
 
-In `package.json`: `"version": "2.3.10"` → `"2.3.11"`, and `"buildNumber": "88"` → `"89"`.
+In `package.json`: `"version": "2.3.10"` → `"2.3.11"`, and bump `buildNumber` to the next integer. **Note:** Task 3's build verification already consumed 89, so this is now `"89"` → `"90"`.
 
 The build number must be incremented before any packaging build.
 

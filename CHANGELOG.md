@@ -2,6 +2,74 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.11] - 2026-09-28
+
+Infrastructure release. **No user-facing behaviour changes** — this hardens the build
+toolchain and adds automation to stop the app silently falling off Electron's support
+window, which is how it ended up 11 majors behind.
+
+> **The Electron runtime is still 33.4.11 (Chromium 130) and still unpatched.** That
+> line lost support on 2025-04-28, and `33.4.11` was its final release. Moving to 44.4.5
+> is the next release, and it requires a hardware acceptance pass because it crosses 22
+> Chromium majors. This release is the groundwork that makes that jump safe and
+> attributable. See `docs/plans/electron-upgrade-and-stay-current.md`.
+
+### Added
+- **Electron support-drift alarm** (`.github/workflows/electron-support-check.yml`) — runs
+  weekly. Silent while the app is within Electron's latest-three-majors support window; one
+  major past end-of-life it opens **exactly one** labelled issue and edits that same issue in
+  place on later runs; two or more past end-of-life it escalates the label and fails the run.
+  Maintaining one issue rather than accumulating them is the point: a weekly pile of
+  notifications is something people learn to scroll past. The issue body carries the
+  actionable delta — majors behind, the target's `engines.node`, and its macOS floor changes.
+  It provisions its own labels, so there is no one-time manual step to forget.
+- **`src/electron-support.js`** — support-window arithmetic, deliberately pure (no I/O, no
+  `require('electron')`) so the escalation boundary is unit-testable, with
+  `tests/electron-support.test.js` covering both sides of that boundary, all `parseMajor`
+  input shapes, and the exit-code contract. **Suite: 100 → 117 tests.**
+- **`scripts/check-electron-support.js`** — feeds live npm registry data into the module.
+  Exit codes are load-bearing and distinguish causes rather than lumping them together:
+  `0` healthy, `1` critical drift, `2` registry unreachable (retry-safe), `3` bad config or a
+  bug (needs a human). A permanent HTTP failure — a retired endpoint, a 403 — must not look
+  like a transient blip, or the alarm would pass green forever while the app drifted.
+- **Dependabot** (`.github/dependabot.yml`) — weekly PRs for both Yarn ecosystems (the Yarn 1
+  root and the Yarn 4 companion module) plus monthly GitHub Actions updates, with `electron`
+  and `electron-builder` grouped so the coupled pair always moves together. Nothing
+  auto-merges; every bump waits for review.
+- **`docs/electron-cadence-policy.md`** — upgrade on reaching N-2 rather than after
+  end-of-life. A major grants roughly 24 weeks of runway, so about twice a year.
+- **Design and implementation plans** under `docs/plans/`, including the breaking-change audit
+  method that reduced an 11-major jump to three real risk sites.
+
+### Changed
+- **CI Node 20 → 22.20**, sourced from a new `.nvmrc` via `node-version-file`, with
+  `engines.node: ">=22.20"` in `package.json`. Node 20 reached end-of-life 2026-04-30, and
+  more pressingly `electron@44` requires `>= 22.12.0`, so the old pin could not have installed
+  it at all. 22.20 is the only value satisfying both that and the companion module's `^22.20`.
+  The range is a floor with no ceiling on purpose: Yarn 1 treats an `engines` mismatch as
+  **fatal for `yarn run`**, so a `<23` bound would break every script on a newer local Node.
+- **electron-builder 24.13.3 → 26.15.3.** Required moving `win.signingHashAlgorithms` to
+  `win.signtoolOptions.signingHashAlgorithms`; 26 relocated that key and
+  `WindowsConfiguration` sets `additionalProperties: false`, so one stale key invalidated the
+  whole `win` object with an error that named the object and not the key.
+
+### Fixed
+- **CI was never enforcing the lockfile.** The root install ran `yarn install --immutable`,
+  which is a Yarn *Berry* flag; the root is `yarn@1.22.22`, so it was silently doing nothing.
+  Now `--frozen-lockfile`. The companion module's `--immutable` was already correct (Yarn 4)
+  and is unchanged.
+- **CI was never running the tests.** The suite existed but no workflow invoked it, so it had
+  never run on a push or a pull request. `yarn test` now gates the build, ahead of the
+  packaging steps, and the release job depends on the build job — so a failing test cannot
+  reach a release.
+- Corrected the documented macOS floor and the API endpoint table, which listed ten routes and
+  named two that do not exist, against forty routes actually served.
+
+### Build
+- **Version 2.3.11**, **build 90**.
+
+---
+
 ## [2.3.10] - 2026-09-16
 
 ### Fixed

@@ -25,7 +25,7 @@
   "author": "TomsFaire (based on work by nerif-tafu)",
   "license": "MIT",
   "engines": {
-    "node": ">=22.20 <23"
+    "node": ">=22.20"
   },
   "repository": {
     "type": "git",

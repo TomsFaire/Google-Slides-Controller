@@ -59,7 +59,10 @@ jobs:
           cache: 'yarn'
 
       - name: Install dependencies
-        run: yarn install --immutable
+        run: yarn install --frozen-lockfile
+
+      - name: Run tests
+        run: yarn test
 
       - name: Download cloudflared (bundled for Quick Tunnel)
         run: yarn download:cloudflared

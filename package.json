@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
   "version": "2.3.10",
-  "buildNumber": "88",
+  "buildNumber": "89",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -34,7 +34,7 @@
   "devDependencies": {
     "cross-env": "^10.1.0",
     "electron": "^33.4.11",
-    "electron-builder": "^24.13.3",
+    "electron-builder": "^26.15.3",
     "png-to-ico": "^2.1.8"
   },
   "build": {
@@ -66,7 +66,9 @@
         }
       ],
       "icon": "build/icon.ico",
-      "signingHashAlgorithms": []
+      "signtoolOptions": {
+        "signingHashAlgorithms": []
+      }
     },
     "linux": {
       "target": [

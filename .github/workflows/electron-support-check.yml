@@ -6,6 +6,13 @@ on:
     - cron: '0 9 * * 1'
   workflow_dispatch:
 
+# A manual dispatch overlapping the Monday schedule could otherwise have both runs
+# read "no existing issue" and each create one -- the single duplicate-issue path in
+# this design. Queue instead of cancelling, so a run never dies mid-issue-edit.
+concurrency:
+  group: electron-support-check
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write
@@ -28,7 +35,12 @@ jobs:
           code=$?
           set -e
           if [ "$code" = "2" ]; then
-            echo "Support check could not reach the registry; not treating as drift."
+            # Transient: stay green, but leave a visible trace. A bare echo is buried in
+            # the log, so a registry outage lasting longer than the drift horizon would be
+            # invisible. Permanent failures do NOT land here -- classifyHttpFailure sends
+            # 4xx to exit 3 -- but a long 5xx streak still deserves to be noticed.
+            echo "::warning::Support check could not reach the registry (exit 2). Not treating as drift; will retry next run."
+            echo "- Electron support check could not reach the registry; no drift assessment this run." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ "$code" = "3" ]; then
@@ -58,6 +70,13 @@ jobs:
           STATE: ${{ steps.assess.outputs.state }}
           TITLE: ${{ steps.assess.outputs.title }}
         run: |
+          # gh resolves label NAMES to ids and fails on an unknown label, so a missing
+          # label would make the first real firing red-and-mute: run fails, no issue
+          # created. Creating them here makes the alarm self-sufficient instead of
+          # depending on a one-time manual step nobody remembers. --force is idempotent.
+          gh label create electron-drift --color B60205 --description "Electron has left the support window" --force
+          gh label create critical --color B60205 --description "Needs attention now" --force
+
           existing=$(gh issue list --label electron-drift --state open --limit 1 --json number --jq '.[0].number // empty')
           labels="electron-drift"
           if [ "$STATE" = "critical" ]; then labels="electron-drift,critical"; fi

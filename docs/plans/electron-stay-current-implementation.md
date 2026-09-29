@@ -521,9 +521,14 @@ jobs:
             exit 1
           fi
           echo "state=$(node -p "require('./report.json').state")" >> "$GITHUB_OUTPUT"
-          echo "title=$(node -p "require('./report.json').title")" >> "$GITHUB_OUTPUT"
+          # `title` uses the delimiter form: the single-line key=value form would
+          # truncate at the first newline if the title ever gains free text.
+          {
+            echo "title<<GH_EOF"
+            node -p "require('./report.json').title"
+            echo "GH_EOF"
+          } >> "$GITHUB_OUTPUT"
           node -p "require('./report.json').body" > issue-body.md
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Healthy — nothing to report
         if: steps.assess.outputs.state == 'supported'
@@ -543,6 +548,14 @@ jobs:
           if [ -n "$existing" ]; then
             echo "Updating existing issue #$existing in place."
             gh issue edit "$existing" --title "$TITLE" --body-file issue-body.md --add-label "$labels"
+            if [ "$STATE" != "critical" ]; then
+              # De-escalate. --add-label only ever ADDS, so without this a `critical`
+              # label outlives the condition that earned it: after a partial upgrade
+              # drops the state back to `unsupported`, the title softens but the issue
+              # keeps advertising `critical`, which poisons label-based triage.
+              # Removing an absent label is not an error worth failing the run over.
+              gh issue edit "$existing" --remove-label critical 2>/dev/null || true
+            fi
           else
             echo "No open drift issue; creating one."
             gh issue create --title "$TITLE" --body-file issue-body.md --label "$labels"

@@ -478,7 +478,7 @@ gh label create critical --description "Needs attention now" --color B60205 || t
 - [ ] **Step 3: Verify the workflow is valid YAML**
 
 ```bash
-python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/electron-support-check.yml')); print('valid YAML')"
+ruby -ryaml -e 'YAML.safe_load(File.read(".github/workflows/electron-support-check.yml"), aliases: true); puts "valid YAML"'
 ```
 
 Expected: `valid YAML`
@@ -577,7 +577,7 @@ Nothing here enables auto-merge — every PR waits for review, as chosen.
 - [ ] **Step 2: Validate the YAML**
 
 ```bash
-python3 -c "import yaml; d=yaml.safe_load(open('.github/dependabot.yml')); print('valid YAML,', len(d['updates']), 'ecosystems')"
+ruby -ryaml -e 'd=YAML.safe_load(File.read(".github/dependabot.yml")); puts "valid YAML, #{d["updates"].length} ecosystems"'
 ```
 
 Expected: `valid YAML, 3 ecosystems`

@@ -26,6 +26,26 @@ function networkError(message) {
 }
 
 /**
+ * HTTP statuses worth retrying. Everything else in 4xx means the request itself is
+ * wrong -- the endpoint moved, or we are not allowed -- which no amount of retrying
+ * fixes. Treating those as transient is how an alarm goes quiet forever.
+ */
+const RETRYABLE_HTTP_STATUSES = new Set([408, 429]);
+
+/**
+ * Classify a non-OK HTTP response. Permanent 4xx failures are returned UNTAGGED so
+ * they map to EXIT.INTERNAL and surface loudly; 5xx and rate-limit/timeout responses
+ * are tagged as network failures and stay retry-safe.
+ */
+function classifyHttpFailure(url, status) {
+  const message = `GET ${url} -> ${status}`;
+  if (status >= 400 && status < 500 && !RETRYABLE_HTTP_STATUSES.has(status)) {
+    return new Error(`${message} (permanent: endpoint moved or access denied)`);
+  }
+  return networkError(message);
+}
+
+/**
  * Map a thrown error to an exit code. Only errors explicitly tagged as network
  * failures get the retry-safe code; everything else is INTERNAL and must be loud.
  */
@@ -77,6 +97,8 @@ module.exports = {
   assessSupport,
   exitCodeForFailure,
   networkError,
+  classifyHttpFailure,
+  RETRYABLE_HTTP_STATUSES,
   EXIT,
   DEFAULT_SUPPORTED_MAJORS
 };

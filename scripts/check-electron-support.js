@@ -14,6 +14,7 @@ const {
   assessSupport,
   exitCodeForFailure,
   networkError,
+  classifyHttpFailure,
   EXIT
 } = require(path.join(__dirname, '..', 'src', 'electron-support'));
 
@@ -30,7 +31,7 @@ async function getJson(url) {
   } catch (e) {
     throw networkError(`GET ${url} failed: ${e.message}`);
   }
-  if (!res.ok) throw networkError(`GET ${url} -> ${res.status}`);
+  if (!res.ok) throw classifyHttpFailure(url, res.status);
   try {
     return await res.json();
   } catch (e) {
@@ -45,7 +46,7 @@ async function getText(url) {
   } catch (e) {
     throw networkError(`GET ${url} failed: ${e.message}`);
   }
-  if (!res.ok) throw networkError(`GET ${url} -> ${res.status}`);
+  if (!res.ok) throw classifyHttpFailure(url, res.status);
   return res.text();
 }
 

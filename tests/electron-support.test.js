@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseMajor, assessSupport, exitCodeForFailure, networkError, EXIT } = require('../src/electron-support');
+const { parseMajor, assessSupport, exitCodeForFailure, networkError, classifyHttpFailure, EXIT } = require('../src/electron-support');
 
 // ── parseMajor ───────────────────────────────────────────────────────────────
 
@@ -99,4 +99,21 @@ test('an untagged error maps to INTERNAL, never to the retry-safe code', () => {
 test('assessSupport rejects a nonsensical support-window size', () => {
   assert.throws(() => assessSupport({ currentMajor: 40, latestMajor: 44, supportedMajors: 0 }), /positive integer/i);
   assert.throws(() => assessSupport({ currentMajor: 40, latestMajor: 44, supportedMajors: 2.5 }), /positive integer/i);
+});
+
+// ── HTTP classification: a permanent failure must never look retry-safe ──────
+
+test('a permanent 4xx is classified INTERNAL, so a moved endpoint cannot go quiet', () => {
+  for (const status of [400, 401, 403, 404, 410, 451]) {
+    const err = classifyHttpFailure('https://registry.example/x', status);
+    assert.equal(exitCodeForFailure(err), EXIT.INTERNAL, `status ${status} must be INTERNAL`);
+    assert.match(err.message, /permanent/);
+  }
+});
+
+test('5xx and rate-limit/timeout responses stay retry-safe', () => {
+  for (const status of [408, 429, 500, 502, 503, 504]) {
+    assert.equal(exitCodeForFailure(classifyHttpFailure('https://registry.example/x', status)),
+      EXIT.NETWORK, `status ${status} must be NETWORK`);
+  }
 });

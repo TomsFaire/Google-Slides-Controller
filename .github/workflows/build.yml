@@ -96,6 +96,27 @@ jobs:
           ditto -c -k --keepParent "Google Slides Opener.app" "../Google Slides Opener-${{ steps.version.outputs.version }}-arm64-mac.zip"
           cd ../..
 
+      - name: Package signed DMG (arm64)
+        run: |
+          # electron-builder already produced a DMG, but it did so in the "unsigned" build
+          # step BEFORE the ad-hoc codesign above -- shipping that one would reintroduce the
+          # "app is damaged" Gatekeeper failure the signing dance exists to prevent. Rebuild
+          # it here from the signed .app, overwriting electron-builder's at the same path.
+          APP_PATH="dist/mac-arm64/Google Slides Opener.app"
+          DMG="dist/Google Slides Opener-${{ steps.version.outputs.version }}-arm64.dmg"
+          STAGE="$(mktemp -d)/dmg"
+          mkdir -p "$STAGE"
+          ditto "$APP_PATH" "$STAGE/Google Slides Opener.app"
+          ln -s /Applications "$STAGE/Applications"
+          rm -f "$DMG"
+          hdiutil create -volname "Google Slides Opener" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          # Prove the app inside the DMG is the signed one, not the pre-signing build.
+          MNT="$(mktemp -d)"
+          hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -readonly
+          codesign --verify --verbose "$MNT/Google Slides Opener.app"
+          hdiutil detach "$MNT"
+          ls -lh "$DMG"
+
       - name: Sign and zip macOS x64
         run: |
           # electron-builder may output x64 as "mac" or "mac-x64"
@@ -114,11 +135,31 @@ jobs:
               cd "$dir"
               ditto -c -k --keepParent "Google Slides Opener.app" "../Google Slides Opener-${{ steps.version.outputs.version }}-x64-mac.zip"
               cd ../..
+              # DMG from the SIGNED app (see the arm64 step for why electron-builder's is unusable).
+              # Named -x64.dmg for clarity; electron-builder's own x64 DMG has no arch suffix,
+              # so it is left behind un-globbed rather than masquerading as this one.
+              DMG="dist/Google Slides Opener-${{ steps.version.outputs.version }}-x64.dmg"
+              STAGE="$(mktemp -d)/dmg"
+              mkdir -p "$STAGE"
+              ditto "$APP_PATH" "$STAGE/Google Slides Opener.app"
+              ln -s /Applications "$STAGE/Applications"
+              rm -f "$DMG"
+              hdiutil create -volname "Google Slides Opener" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+              MNT="$(mktemp -d)"
+              hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -readonly
+              codesign --verify --verbose "$MNT/Google Slides Opener.app"
+              hdiutil detach "$MNT"
+              ls -lh "$DMG"
               break
             fi
           done
           if [ ! -f "dist/Google Slides Opener-"*"-x64-mac.zip" ]; then
             echo "ERROR: x64 zip was not created"
+            ls -la dist/
+            exit 1
+          fi
+          if [ ! -f "dist/Google Slides Opener-"*"-x64.dmg" ]; then
+            echo "ERROR: x64 DMG was not created"
             ls -la dist/
             exit 1
           fi
@@ -137,15 +178,19 @@ jobs:
       - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gslide-opener-macos-arm64-zip
-          path: dist/Google Slides Opener-*-arm64-mac.zip
+          name: gslide-opener-macos-arm64
+          path: |
+            dist/Google Slides Opener-*-arm64-mac.zip
+            dist/Google Slides Opener-*-arm64.dmg
           retention-days: 30
 
       - name: Upload macOS x64 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gslide-opener-macos-x64-zip
-          path: dist/Google Slides Opener-*-x64-mac.zip
+          name: gslide-opener-macos-x64
+          path: |
+            dist/Google Slides Opener-*-x64-mac.zip
+            dist/Google Slides Opener-*-x64.dmg
           retention-days: 30
 
       - name: Upload Companion Module artifact
@@ -167,13 +212,13 @@ jobs:
       - name: Download macOS arm64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: gslide-opener-macos-arm64-zip
+          name: gslide-opener-macos-arm64
           path: artifacts/macos-arm64
 
       - name: Download macOS x64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: gslide-opener-macos-x64-zip
+          name: gslide-opener-macos-x64
           path: artifacts/macos-x64
 
       - name: Download Companion Module artifact
@@ -189,7 +234,9 @@ jobs:
           overwrite_files: true
           files: |
             artifacts/macos-arm64/*.zip
+            artifacts/macos-arm64/*.dmg
             artifacts/macos-x64/*.zip
+            artifacts/macos-x64/*.dmg
             artifacts/companion/*.tgz
           draft: false
           prerelease: false

@@ -71,6 +71,6 @@ Library not loaded: @rpath/Electron Framework.framework/Electron Framework
 
 ## System Requirements
 
-- macOS 10.15+
+- macOS 13+ (Ventura or newer) — required by Electron 44
 - ARM64 (Apple Silicon) or x64 (Intel) — choose the matching build
 - M1/M2/M3/M4 Macs use the ARM64 version

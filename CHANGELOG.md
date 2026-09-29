@@ -2,6 +2,65 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.12] - 2026-09-28
+
+**Electron 33.4.11 → 44.4.5.** Chromium 130 → 152, bundled Node 20.18.3 → 24.21.0.
+
+> ### ⚠️ Requires macOS 13 (Ventura) or newer
+>
+> Electron 44 dropped support for macOS 12 and earlier. Machines on Monterey or older
+> cannot run this version — stay on 2.3.11 there, or upgrade the OS. Electron's floor
+> rose twice across this range: 38 dropped macOS 11, 44 dropped macOS 12.
+
+> ### ⚠️ Run the acceptance checklist before deploying to a live event
+>
+> This release crosses **22 Chromium majors**. The unit tests are pure JavaScript and
+> cannot see rendering or DOM-scraping regressions in Google Slides, so a green build
+> proves very little here. Work through `docs/electron-upgrade-checklist.md` on real
+> multi-monitor hardware first — particularly transparent-PNG/layered-slide rendering
+> compared side by side against Chrome, and speaker notes for U+FFFD corruption.
+
+### Why this was urgent
+
+The Electron 33 line lost support on 2025-04-28 when Electron 36 shipped, and `33.4.11`
+was its final release. The bundled Chromium had therefore gone roughly 17 months with no
+security patches, in an app that loads `docs.google.com` in a `persist:google` session
+holding live Google credentials. That, not any new feature, is the reason for this release.
+
+### Changed
+- **Electron `^33.4.11` → `^44.4.5`.** Every breaking change from Electron 34.0 through
+  44.0 was audited against this codebase's actual API surface, and fifteen of them are
+  no-ops here — the renderer already uses `navigator.clipboard` rather than the `clipboard`
+  module removed in 44; there is no `BrowserView`, no remote module, no protocol
+  interception, no `desktopCapturer`, no deprecated `webContents` navigation history, and
+  no `getBitmap()`; crash handling was already on `render-process-gone`; and the app has
+  **zero native modules**, so no ABI rebuilds were required. The one `webRequest` filter
+  passes an explicit non-empty `urls` array, so Electron 35's empty-array change does not
+  apply, and the `net` module in use is Node's TCP module rather than Electron's, so 44's
+  `net.request` change does not apply either.
+- **`window.open` popup handling reviewed against Electron 39**, which made such popups
+  always resizable. **No change was needed:** none of the eight `setWindowOpenHandler`
+  overrides requests `resizable: false`. The only two non-resizable windows in the app —
+  the tunnel QR overlay and the stage-timer overlay — are constructed directly via
+  `new BrowserWindow(...)`, which still honours the option.
+- Corrected the documented macOS floor in `INSTALLATION.md`, and the API endpoint table in
+  `CLAUDE.md`, which named two routes that do not exist (`/api/share-link`,
+  `/api/show-share-qr`) while documenting ten of the forty actually served.
+
+### Added
+- **`docs/electron-upgrade-checklist.md`** — the hardware acceptance checklist, in four
+  fail-fast gates, plus the method used to audit breaking changes (diff Electron's
+  `breaking-changes.md` between versions, then grep the app for every API each entry
+  names). Recorded so the next upgrade is a checklist run rather than a fresh
+  investigation, and so the two traps found this time are not rediscovered: Node's `net`
+  and Electron's `net` are different modules, and a target's macOS floor and
+  `engines.node` can each cap the target independently of any code concern.
+
+### Build
+- **Version 2.3.12**, **build 92**.
+
+---
+
 ## [2.3.11] - 2026-09-28
 
 Infrastructure release. **No user-facing behaviour changes** — this hardens the build

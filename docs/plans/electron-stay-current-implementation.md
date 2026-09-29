@@ -48,7 +48,10 @@ Splitting logic (`src/`) from I/O (`scripts/`) is what makes the interesting par
 - Produces:
   - `parseMajor(versionRange: string) => number` — accepts `"^44.4.5"`, `"44.4.5"`, `"~44.0.0"`, `">=44"`; throws on unparseable input
   - `assessSupport({ currentMajor: number, latestMajor: number, supportedMajors?: number }) => { state: 'supported'|'unsupported'|'critical', majorsBehind: number, majorsPastEol: number, oldestSupportedMajor: number }`
-  - Task 2 consumes both of these.
+  - `EXIT = { OK: 0, DRIFT_CRITICAL: 1, NETWORK: 2, INTERNAL: 3 }` — the exit-code contract the workflow branches on
+  - `networkError(message: string) => Error` — an Error tagged `kind: 'network'`
+  - `exitCodeForFailure(err) => number` — `EXIT.NETWORK` **only** for a tagged network error, `EXIT.INTERNAL` for anything else (including `undefined`)
+  - Task 2 consumes all of these; Task 3's workflow branches on `EXIT`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -58,7 +61,7 @@ Create `tests/electron-support.test.js`:
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseMajor, assessSupport } = require('../src/electron-support');
+const { parseMajor, assessSupport, exitCodeForFailure, networkError, EXIT } = require('../src/electron-support');
 
 // ── parseMajor ───────────────────────────────────────────────────────────────
 
@@ -138,6 +141,25 @@ test('assessSupport rejects non-numeric input rather than guessing', () => {
   assert.throws(() => assessSupport({ currentMajor: NaN, latestMajor: 44 }), /must be a number/i);
   assert.throws(() => assessSupport({ currentMajor: 44, latestMajor: undefined }), /must be a number/i);
 });
+
+// ── exit-code contract: the workflow branches on these ───────────────────────
+
+test('a tagged network failure maps to the retry-safe exit code', () => {
+  assert.equal(exitCodeForFailure(networkError('registry unreachable')), EXIT.NETWORK);
+  assert.equal(EXIT.NETWORK, 2);
+});
+
+test('an untagged error maps to INTERNAL, never to the retry-safe code', () => {
+  assert.equal(exitCodeForFailure(new Error('unparseable Electron version: undefined')), EXIT.INTERNAL);
+  assert.equal(exitCodeForFailure(undefined), EXIT.INTERNAL);
+  assert.equal(EXIT.INTERNAL, 3);
+  assert.notEqual(EXIT.INTERNAL, EXIT.NETWORK);
+});
+
+test('assessSupport rejects a nonsensical support-window size', () => {
+  assert.throws(() => assessSupport({ currentMajor: 40, latestMajor: 44, supportedMajors: 0 }), /positive integer/i);
+  assert.throws(() => assessSupport({ currentMajor: 40, latestMajor: 44, supportedMajors: 2.5 }), /positive integer/i);
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -163,6 +185,31 @@ Create `src/electron-support.js`:
 
 const DEFAULT_SUPPORTED_MAJORS = 3;
 
+/**
+ * Exit codes. Load-bearing: the drift workflow branches on these, so a
+ * transient network blip must never be confusable with a real fault.
+ *   0 OK               - within the support window, or drift that is not yet critical
+ *   1 DRIFT_CRITICAL   - 2+ majors past end-of-life; fail the run
+ *   2 NETWORK          - could not reach the registry; retry later, NOT drift
+ *   3 INTERNAL         - bad config or a bug; needs a human, NOT retry-safe
+ */
+const EXIT = { OK: 0, DRIFT_CRITICAL: 1, NETWORK: 2, INTERNAL: 3 };
+
+/** Tag an error as a network failure so the exit-code mapping can see it. */
+function networkError(message) {
+  const err = new Error(message);
+  err.kind = 'network';
+  return err;
+}
+
+/**
+ * Map a thrown error to an exit code. Only errors explicitly tagged as network
+ * failures get the retry-safe code; everything else is INTERNAL and must be loud.
+ */
+function exitCodeForFailure(err) {
+  return err && err.kind === 'network' ? EXIT.NETWORK : EXIT.INTERNAL;
+}
+
 /** Extract the major version from a version or semver range. */
 function parseMajor(versionRange) {
   const match = String(versionRange || '').match(/(\d+)\s*\./) || String(versionRange || '').match(/(\d+)\s*$/);
@@ -187,6 +234,10 @@ function assessSupport({ currentMajor, latestMajor, supportedMajors = DEFAULT_SU
     }
   }
 
+  if (typeof supportedMajors !== 'number' || !Number.isInteger(supportedMajors) || supportedMajors < 1) {
+    throw new Error(`supportedMajors must be a positive integer, got ${JSON.stringify(supportedMajors)}`);
+  }
+
   const oldestSupportedMajor = latestMajor - (supportedMajors - 1);
   const majorsBehind = latestMajor - currentMajor;
   const majorsPastEol = Math.max(0, oldestSupportedMajor - currentMajor);
@@ -198,7 +249,14 @@ function assessSupport({ currentMajor, latestMajor, supportedMajors = DEFAULT_SU
   return { state, majorsBehind, majorsPastEol, oldestSupportedMajor };
 }
 
-module.exports = { parseMajor, assessSupport, DEFAULT_SUPPORTED_MAJORS };
+module.exports = {
+  parseMajor,
+  assessSupport,
+  exitCodeForFailure,
+  networkError,
+  EXIT,
+  DEFAULT_SUPPORTED_MAJORS
+};
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
@@ -207,7 +265,7 @@ module.exports = { parseMajor, assessSupport, DEFAULT_SUPPORTED_MAJORS };
 node --test tests/electron-support.test.js
 ```
 
-Expected: PASS, 12 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 5: Confirm the whole suite still passes**
 
@@ -215,7 +273,7 @@ Expected: PASS, 12 tests.
 yarn test
 ```
 
-Expected: all pass — the existing 100 plus the 12 new ones.
+Expected: all pass — the existing 100 plus the 15 new ones.
 
 - [ ] **Step 6: Commit**
 
@@ -237,7 +295,7 @@ electron import, so it is unit testable."
 
 **Interfaces:**
 - Consumes: `parseMajor`, `assessSupport` from `src/electron-support.js` (Task 1)
-- Produces: a CLI that prints a JSON object `{ state, currentMajor, latestMajor, latestVersion, majorsBehind, majorsPastEol, nodeRequirement, macosNotes, title, body }` to stdout, and exits `1` when `state === 'critical'`. Task 3's workflow consumes it.
+- Produces: a CLI that prints a JSON object `{ state, currentMajor, latestMajor, latestVersion, majorsBehind, majorsPastEol, nodeRequirement, macosNotes, title, body }` to stdout, and exits `1` on critical drift, `2` on a network failure, and `3` on an internal error (bad config or a bug). Task 3's workflow branches on all four.
 
 - [ ] **Step 1: Write the script**
 
@@ -255,21 +313,43 @@ Create `scripts/check-electron-support.js`:
  * Usage: node scripts/check-electron-support.js
  */
 const path = require('path');
-const { parseMajor, assessSupport } = require(path.join(__dirname, '..', 'src', 'electron-support'));
+const {
+  parseMajor,
+  assessSupport,
+  exitCodeForFailure,
+  networkError,
+  EXIT
+} = require(path.join(__dirname, '..', 'src', 'electron-support'));
 
 const DIST_TAGS_URL = 'https://registry.npmjs.org/-/package/electron/dist-tags';
 const BREAKING_CHANGES_URL = (v) => `https://raw.githubusercontent.com/electron/electron/v${v}/docs/breaking-changes.md`;
 const REGISTRY_VERSION_URL = (v) => `https://registry.npmjs.org/electron/${v}`;
 
+// Every failure reaching the network is tagged, so exitCodeForFailure can tell a
+// transient blip apart from a bad config or a bug. Untagged throws are INTERNAL.
 async function getJson(url) {
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
-  return res.json();
+  let res;
+  try {
+    res = await fetch(url, { headers: { accept: 'application/json' } });
+  } catch (e) {
+    throw networkError(`GET ${url} failed: ${e.message}`);
+  }
+  if (!res.ok) throw networkError(`GET ${url} -> ${res.status}`);
+  try {
+    return await res.json();
+  } catch (e) {
+    throw networkError(`GET ${url} returned unparseable JSON: ${e.message}`);
+  }
 }
 
 async function getText(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    throw networkError(`GET ${url} failed: ${e.message}`);
+  }
+  if (!res.ok) throw networkError(`GET ${url} -> ${res.status}`);
   return res.text();
 }
 
@@ -337,13 +417,16 @@ async function main() {
 
   const report = { ...assessment, currentMajor, latestMajor, latestVersion, nodeRequirement, macosNotes, title, body };
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
-  process.exitCode = assessment.state === 'critical' ? 1 : 0;
+  process.exitCode = assessment.state === 'critical' ? EXIT.DRIFT_CRITICAL : EXIT.OK;
 }
 
 main().catch((err) => {
-  process.stderr.write(`electron support check failed: ${err.message}\n`);
-  // Exit 2, distinct from the critical-drift exit 1: a network blip is not drift.
-  process.exitCode = 2;
+  const code = exitCodeForFailure(err);
+  const label = code === EXIT.NETWORK ? 'network failure (retry later)' : 'internal error (needs a human)';
+  process.stderr.write(`electron support check failed - ${label}: ${err.message}\n`);
+  // 2 = could not reach the registry, safe to retry. 3 = bad config or a bug, which
+  // must NOT be silently retried forever, or the alarm never fires.
+  process.exitCode = code;
 });
 ```
 
@@ -428,8 +511,14 @@ jobs:
           code=$?
           set -e
           if [ "$code" = "2" ]; then
-            echo "Support check could not reach the network; not treating as drift."
+            echo "Support check could not reach the registry; not treating as drift."
             exit 0
+          fi
+          if [ "$code" = "3" ]; then
+            # Bad config or a bug. NOT retry-safe: staying silent here would let a
+            # permanent fault masquerade as a transient blip, and the alarm never fires.
+            echo "::error::Support check hit an internal error (exit 3) - needs a human, not a retry."
+            exit 1
           fi
           echo "state=$(node -p "require('./report.json').state")" >> "$GITHUB_OUTPUT"
           echo "title=$(node -p "require('./report.json').title")" >> "$GITHUB_OUTPUT"
@@ -705,9 +794,10 @@ left for the owner to fill in."
 
 ## Gate — plan verification
 
-- [ ] `yarn test` green, including the 12 new support-module tests
+- [ ] `yarn test` green, including the 15 new support-module tests
 - [ ] `node scripts/check-electron-support.js` reports the true current state
 - [ ] A forced-offline run exits **2**, not 1 — a network blip is not drift
+- [ ] A malformed `devDependencies.electron` exits **3**, not 2 — a permanent fault must not look retry-safe
 - [ ] `gh workflow run "Electron support check"` behaves correctly for the current state
 - [ ] Running it **twice** edits one issue rather than opening two
 - [ ] Dependabot's page shows no parse error

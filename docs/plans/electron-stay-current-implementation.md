@@ -10,6 +10,8 @@
 
 **Spec:** [docs/plans/electron-upgrade-and-stay-current.md](electron-upgrade-and-stay-current.md) §7 — read it alongside this plan.
 
+> **Status (2026-09-28):** all five tasks have landed — `dabaa2d`, `53c3a1b`, `6bf2067`, `bff5821`, `ce078d5`, plus fixes `6c3e92f`. The unchecked boxes below are the authoring record, not outstanding work. **One thing remains and it is not optional:** the workflow has never executed. Before trusting it, `workflow_dispatch` it twice and confirm it edits ONE issue rather than opening two — that single-issue property is what the whole design rests on.
+
 **Sibling plan:** [electron-upgrade-implementation.md](electron-upgrade-implementation.md) delivers §7.1 (`.nvmrc` + `engines.node`) as its Task 1, because PR 1's CI depends on it. This plan assumes that already landed.
 
 ## Global Constraints
@@ -50,6 +52,7 @@ Splitting logic (`src/`) from I/O (`scripts/`) is what makes the interesting par
   - `assessSupport({ currentMajor: number, latestMajor: number, supportedMajors?: number }) => { state: 'supported'|'unsupported'|'critical', majorsBehind: number, majorsPastEol: number, oldestSupportedMajor: number }`
   - `EXIT = { OK: 0, DRIFT_CRITICAL: 1, NETWORK: 2, INTERNAL: 3 }` — the exit-code contract the workflow branches on
   - `networkError(message: string) => Error` — an Error tagged `kind: 'network'`
+  - `classifyHttpFailure(url: string, status: number) => Error` — a permanent 4xx (not 408/429) comes back UNTAGGED so it maps to `EXIT.INTERNAL`; 5xx and rate-limit/timeout come back tagged
   - `exitCodeForFailure(err) => number` — `EXIT.NETWORK` **only** for a tagged network error, `EXIT.INTERNAL` for anything else (including `undefined`)
   - Task 2 consumes all of these; Task 3's workflow branches on `EXIT`.
 
@@ -61,7 +64,7 @@ Create `tests/electron-support.test.js`:
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseMajor, assessSupport, exitCodeForFailure, networkError, EXIT } = require('../src/electron-support');
+const { parseMajor, assessSupport, exitCodeForFailure, networkError, classifyHttpFailure, EXIT } = require('../src/electron-support');
 
 // ── parseMajor ───────────────────────────────────────────────────────────────
 
@@ -160,6 +163,23 @@ test('assessSupport rejects a nonsensical support-window size', () => {
   assert.throws(() => assessSupport({ currentMajor: 40, latestMajor: 44, supportedMajors: 0 }), /positive integer/i);
   assert.throws(() => assessSupport({ currentMajor: 40, latestMajor: 44, supportedMajors: 2.5 }), /positive integer/i);
 });
+
+// ── HTTP classification: a permanent failure must never look retry-safe ──────
+
+test('a permanent 4xx is classified INTERNAL, so a moved endpoint cannot go quiet', () => {
+  for (const status of [400, 401, 403, 404, 410, 451]) {
+    const err = classifyHttpFailure('https://registry.example/x', status);
+    assert.equal(exitCodeForFailure(err), EXIT.INTERNAL, `status ${status} must be INTERNAL`);
+    assert.match(err.message, /permanent/);
+  }
+});
+
+test('5xx and rate-limit/timeout responses stay retry-safe', () => {
+  for (const status of [408, 429, 500, 502, 503, 504]) {
+    assert.equal(exitCodeForFailure(classifyHttpFailure('https://registry.example/x', status)),
+      EXIT.NETWORK, `status ${status} must be NETWORK`);
+  }
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -200,6 +220,26 @@ function networkError(message) {
   const err = new Error(message);
   err.kind = 'network';
   return err;
+}
+
+/**
+ * HTTP statuses worth retrying. Everything else in 4xx means the request itself is
+ * wrong -- the endpoint moved, or we are not allowed -- which no amount of retrying
+ * fixes. Treating those as transient is how an alarm goes quiet forever.
+ */
+const RETRYABLE_HTTP_STATUSES = new Set([408, 429]);
+
+/**
+ * Classify a non-OK HTTP response. Permanent 4xx failures are returned UNTAGGED so
+ * they map to EXIT.INTERNAL and surface loudly; 5xx and rate-limit/timeout responses
+ * are tagged as network failures and stay retry-safe.
+ */
+function classifyHttpFailure(url, status) {
+  const message = `GET ${url} -> ${status}`;
+  if (status >= 400 && status < 500 && !RETRYABLE_HTTP_STATUSES.has(status)) {
+    return new Error(`${message} (permanent: endpoint moved or access denied)`);
+  }
+  return networkError(message);
 }
 
 /**
@@ -254,6 +294,8 @@ module.exports = {
   assessSupport,
   exitCodeForFailure,
   networkError,
+  classifyHttpFailure,
+  RETRYABLE_HTTP_STATUSES,
   EXIT,
   DEFAULT_SUPPORTED_MAJORS
 };
@@ -265,7 +307,7 @@ module.exports = {
 node --test tests/electron-support.test.js
 ```
 
-Expected: PASS, 15 tests.
+Expected: PASS, 17 tests.
 
 - [ ] **Step 5: Confirm the whole suite still passes**
 
@@ -273,7 +315,7 @@ Expected: PASS, 15 tests.
 yarn test
 ```
 
-Expected: all pass — the existing 100 plus the 15 new ones.
+Expected: all pass — the existing 100 plus the 17 new ones.
 
 - [ ] **Step 6: Commit**
 
@@ -318,6 +360,7 @@ const {
   assessSupport,
   exitCodeForFailure,
   networkError,
+  classifyHttpFailure,
   EXIT
 } = require(path.join(__dirname, '..', 'src', 'electron-support'));
 
@@ -334,7 +377,7 @@ async function getJson(url) {
   } catch (e) {
     throw networkError(`GET ${url} failed: ${e.message}`);
   }
-  if (!res.ok) throw networkError(`GET ${url} -> ${res.status}`);
+  if (!res.ok) throw classifyHttpFailure(url, res.status);
   try {
     return await res.json();
   } catch (e) {
@@ -349,7 +392,7 @@ async function getText(url) {
   } catch (e) {
     throw networkError(`GET ${url} failed: ${e.message}`);
   }
-  if (!res.ok) throw networkError(`GET ${url} -> ${res.status}`);
+  if (!res.ok) throw classifyHttpFailure(url, res.status);
   return res.text();
 }
 
@@ -489,6 +532,13 @@ on:
     - cron: '0 9 * * 1'
   workflow_dispatch:
 
+# A manual dispatch overlapping the Monday schedule could otherwise have both runs
+# read "no existing issue" and each create one -- the single duplicate-issue path in
+# this design. Queue instead of cancelling, so a run never dies mid-issue-edit.
+concurrency:
+  group: electron-support-check
+  cancel-in-progress: false
+
 permissions:
   contents: read
   issues: write
@@ -511,7 +561,12 @@ jobs:
           code=$?
           set -e
           if [ "$code" = "2" ]; then
-            echo "Support check could not reach the registry; not treating as drift."
+            # Transient: stay green, but leave a visible trace. A bare echo is buried in
+            # the log, so a registry outage lasting longer than the drift horizon would be
+            # invisible. Permanent failures do NOT land here -- classifyHttpFailure sends
+            # 4xx to exit 3 -- but a long 5xx streak still deserves to be noticed.
+            echo "::warning::Support check could not reach the registry (exit 2). Not treating as drift; will retry next run."
+            echo "- Electron support check could not reach the registry; no drift assessment this run." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ "$code" = "3" ]; then
@@ -541,6 +596,13 @@ jobs:
           STATE: ${{ steps.assess.outputs.state }}
           TITLE: ${{ steps.assess.outputs.title }}
         run: |
+          # gh resolves label NAMES to ids and fails on an unknown label, so a missing
+          # label would make the first real firing red-and-mute: run fails, no issue
+          # created. Creating them here makes the alarm self-sufficient instead of
+          # depending on a one-time manual step nobody remembers. --force is idempotent.
+          gh label create electron-drift --color B60205 --description "Electron has left the support window" --force
+          gh label create critical --color B60205 --description "Needs attention now" --force
+
           existing=$(gh issue list --label electron-drift --state open --limit 1 --json number --jq '.[0].number // empty')
           labels="electron-drift"
           if [ "$STATE" = "critical" ]; then labels="electron-drift,critical"; fi
@@ -807,7 +869,7 @@ left for the owner to fill in."
 
 ## Gate — plan verification
 
-- [ ] `yarn test` green, including the 15 new support-module tests
+- [ ] `yarn test` green, including the 17 new support-module tests
 - [ ] `node scripts/check-electron-support.js` reports the true current state
 - [ ] A forced-offline run exits **2**, not 1 — a network blip is not drift
 - [ ] A malformed `devDependencies.electron` exits **3**, not 2 — a permanent fault must not look retry-safe

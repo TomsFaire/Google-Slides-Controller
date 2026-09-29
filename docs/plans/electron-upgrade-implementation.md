@@ -8,6 +8,8 @@
 
 **Tech Stack:** Electron, electron-builder, Yarn 1 (root) / Yarn 4 (companion module), GitHub Actions, `node:test`.
 
+> **Status (2026-09-28):** Tasks 1-2 have landed (`c33dcc0`, `3c0cd61`, `4a640ba`): Node pinned via `.nvmrc`, real lockfile enforcement, and CI now runs the test suite. **Task 3 (electron-builder 24 → 26) is NOT done** — `yarn install` could not resolve any package in the authoring environment, so the one-line bump was deliberately not committed without a matching `yarn.lock` (that would fail the `--frozen-lockfile` Task 2 adds). Its changelog research IS complete: none of the six `build`-block features this repo uses require a change. PR 2 (Tasks 4-8) and PR 3 (Task 9) are not started. Unchecked boxes are the authoring record, not a claim that Tasks 1-2 are outstanding.
+
 **Spec:** [docs/plans/electron-upgrade-and-stay-current.md](electron-upgrade-and-stay-current.md) — read it alongside this plan; §2.1 lists the breaking changes that are deliberately *not* addressed because they are no-ops for this codebase.
 
 ## Global Constraints

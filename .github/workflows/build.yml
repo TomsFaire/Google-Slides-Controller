@@ -135,21 +135,21 @@ jobs:
         run: mv companion-module-gslide-opener/*.tgz companion-module-gslide-opener.tgz || true
 
       - name: Upload macOS arm64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gslide-opener-macos-arm64-zip
           path: dist/Google Slides Opener-*-arm64-mac.zip
           retention-days: 30
 
       - name: Upload macOS x64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gslide-opener-macos-x64-zip
           path: dist/Google Slides Opener-*-x64-mac.zip
           retention-days: 30
 
       - name: Upload Companion Module artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: companion-module-gslide-opener
           path: companion-module-gslide-opener.tgz

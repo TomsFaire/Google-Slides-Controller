@@ -1,5 +1,10 @@
 # Companion Module Changelog
 
+## [1.7.2] - 2026-10-14
+
+### Changed
+- Pin `@companion-module/base` to 2.1.x. Companion builds that only support module API up to 2.1 hide modules built against 2.2.x ("Module Api version is too new").
+
 ## [1.7.1] - 2026-10-14
 
 ### Changed

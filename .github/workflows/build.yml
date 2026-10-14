@@ -183,7 +183,7 @@ jobs:
           path: artifacts/companion
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2.6.1
+        uses: softprops/action-gh-release@v3.0.3
         with:
           # v1 did not replace same-named assets; retagging/rebuilding hits GitHub 422 already_exists.
           overwrite_files: true

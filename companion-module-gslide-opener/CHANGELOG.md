@@ -1,5 +1,11 @@
 # Companion Module Changelog
 
+## [1.7.1] - 2026-10-14
+
+### Changed
+- Migrated to `@companion-module/base` 2.x and `@companion-module/tools` 3.x (ESM entrypoint, manifest `type: connection`, object-style variable definitions, pre-evaluated action options).
+- Connection failures now report the `ConnectionFailure` status instead of an invalid `error` value.
+
 ## [1.7.0] - 2026-06-12
 
 ### Added

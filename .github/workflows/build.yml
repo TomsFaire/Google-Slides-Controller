@@ -165,19 +165,19 @@ jobs:
 
     steps:
       - name: Download macOS arm64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: gslide-opener-macos-arm64-zip
           path: artifacts/macos-arm64
 
       - name: Download macOS x64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: gslide-opener-macos-x64-zip
           path: artifacts/macos-x64
 
       - name: Download Companion Module artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: companion-module-gslide-opener
           path: artifacts/companion

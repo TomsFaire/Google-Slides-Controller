@@ -552,12 +552,6 @@ async function initDisplays() {
       defaultNotesZoomInput.value = dz !== undefined && dz !== null ? String(dz) : '0';
     }
 
-    const presentationGpuModeSelect = document.getElementById('presentation-gpu-mode');
-    if (presentationGpuModeSelect) {
-      const allowedGpu = ['default', 'angle-metal', 'angle-gl', 'swiftshader', 'disable-gpu'];
-      const m = String(preferences.presentationGpuMode || 'default');
-      presentationGpuModeSelect.value = allowedGpu.includes(m) ? m : 'default';
-    }
     const presentationNativeFullscreenGroup = document.getElementById('presentation-native-fullscreen-group');
     const presentationNativeFullscreenCheckbox = document.getElementById('presentation-native-fullscreen');
     const isMacUi = /Mac/i.test(navigator.platform || '') || /Mac OS X/.test(navigator.userAgent || '');
@@ -1595,16 +1589,11 @@ async function updateNetworkInfo() {
 
 async function savePresentationRenderingPreferences() {
   try {
-    const gpuEl = document.getElementById('presentation-gpu-mode');
     const nativeEl = document.getElementById('presentation-native-fullscreen');
-    const mode = gpuEl ? String(gpuEl.value || 'default') : 'default';
-    const allowedGpu = ['default', 'angle-metal', 'angle-gl', 'swiftshader', 'disable-gpu'];
-    const presentationGpuMode = allowedGpu.includes(mode) ? mode : 'default';
     await window.electronAPI.savePreferences({
-      presentationGpuMode,
       presentationNativeFullscreen: nativeEl ? nativeEl.checked === true : false
     });
-    showStatus('Presentation rendering saved. Restart the app for GPU mode to take effect.', 'info');
+    showStatus('Presentation rendering saved.', 'info');
   } catch (error) {
     console.error('Failed to save presentation rendering:', error);
     showStatus('Failed to save presentation rendering', 'error');

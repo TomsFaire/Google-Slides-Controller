@@ -2,6 +2,15 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.13] - 2026-10-19
+
+- **Removed the Presentation GPU mode setting.** It was a diagnostic workaround for a
+  Chromium 130 transparent-PNG/compositing bug, added during the Electron 33 upgrade.
+  Chromium 152 renders these decks correctly, verified on hardware including multi-display.
+  `/api/status` still reports `presentationGpuMode: "default"` so existing AV integrations
+  are unaffected. macOS native fullscreen is unchanged. Stale `presentationGpuMode` values
+  in existing `preferences.json` files are now ignored.
+
 ## [2.3.12] - 2026-09-28
 
 **Electron 33.4.11 → 44.4.5.** Chromium 130 → 152, bundled Node 20.18.3 → 24.21.0.

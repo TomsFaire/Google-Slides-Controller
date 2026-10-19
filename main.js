@@ -521,8 +521,6 @@ function getSpeakerNotesWindowOptions(notesDisplay) {
   };
 }
 
-const VALID_PRESENTATION_GPU_MODES = new Set(['default', 'disable-gpu', 'angle-metal', 'angle-gl', 'swiftshader']);
-
 /** BrowserWindow constructor options shared by all Google Slides presentation windows. */
 function getPresentationBrowserWindowOptions(presentationBounds) {
   const b = presentationBounds && presentationBounds.width ? presentationBounds : screen.getPrimaryDisplay().bounds;
@@ -645,44 +643,6 @@ function isAllowedGenericUrl(urlString) {
     return false;
   }
 }
-
-function readPreferencesFileJsonSync() {
-  try {
-    const prefsPath = path.join(app.getPath('userData'), 'preferences.json');
-    if (!fs.existsSync(prefsPath)) return {};
-    return JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
-  } catch (e) {
-    return {};
-  }
-}
-
-/**
- * Apply GPU / ANGLE switches before app.ready(). Must stay in sync with loadPreferences() normalization.
- * Changing presentationGpuMode requires an app restart to take effect.
- */
-function applyPresentationGpuCommandLineEarly() {
-  let mode = 'default';
-  try {
-    const prefs = readPreferencesFileJsonSync();
-    const raw = prefs && prefs.presentationGpuMode;
-    if (raw && VALID_PRESENTATION_GPU_MODES.has(String(raw))) {
-      mode = String(raw);
-    }
-  } catch (e) {
-    mode = 'default';
-  }
-  if (mode === 'disable-gpu') {
-    app.disableHardwareAcceleration();
-  } else if (mode === 'angle-metal') {
-    app.commandLine.appendSwitch('use-angle', 'metal');
-  } else if (mode === 'angle-gl') {
-    app.commandLine.appendSwitch('use-angle', 'gl');
-  } else if (mode === 'swiftshader') {
-    app.commandLine.appendSwitch('use-gl', 'swiftshader');
-  }
-}
-
-applyPresentationGpuCommandLineEarly();
 
 function wantsPresentationNativeFullscreen(prefs) {
   return process.platform === 'darwin' && prefs && prefs.presentationNativeFullscreen === true;
@@ -1459,9 +1419,6 @@ function loadPreferences() {
       prefs.presetUrls = getPresetUrlsFromPrefs(prefs);
       // Removed layout mode 'narrow' (broken preview scaling); treat as Google default.
       if (prefs.notesLayout === 'narrow') prefs.notesLayout = 'default';
-      if (!VALID_PRESENTATION_GPU_MODES.has(String(prefs.presentationGpuMode || ''))) {
-        prefs.presentationGpuMode = 'default';
-      }
       if (prefs.presentationNativeFullscreen !== undefined && prefs.presentationNativeFullscreen !== null) {
         prefs.presentationNativeFullscreen = prefs.presentationNativeFullscreen === true;
       }
@@ -3134,10 +3091,6 @@ ipcMain.handle('save-preferences', async (event, incoming) => {
     const ps = String(incoming.webUiPinScope).toLowerCase();
     mergedPrefs.webUiPinScope = ps === 'lan' || ps === 'both' ? ps : 'tunnel';
   }
-  if (incoming && incoming.presentationGpuMode !== undefined) {
-    const g = String(incoming.presentationGpuMode || '');
-    mergedPrefs.presentationGpuMode = VALID_PRESENTATION_GPU_MODES.has(g) ? g : 'default';
-  }
   if (incoming && incoming.presentationNativeFullscreen !== undefined) {
     mergedPrefs.presentationNativeFullscreen = incoming.presentationNativeFullscreen === true;
   }
@@ -3941,7 +3894,10 @@ function startHttpServer() {
             electron: process.versions.electron,
             node: process.versions.node
           },
-          presentationGpuMode: statusPrefs.presentationGpuMode || 'default',
+          // Retained as a frozen literal: documented API contract (CHANGELOG 1.9.12),
+          // consumed by AV integrations we do not control. The GPU mode selector
+          // itself was removed once Chromium 152 made it unnecessary.
+          presentationGpuMode: 'default',
           presentationNativeFullscreen: statusPrefs.presentationNativeFullscreen === true
         };
         

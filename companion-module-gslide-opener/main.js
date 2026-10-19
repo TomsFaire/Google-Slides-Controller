@@ -1,7 +1,8 @@
-const { InstanceBase, runEntrypoint, combineRgb } = require('@companion-module/base')
-const UpdateActions = require('./actions.js')
+import http from 'http'
+import { InstanceBase, InstanceStatus, combineRgb } from '@companion-module/base'
+import UpdateActions from './actions.js'
 
-class GoogleSlidesOpenerInstance extends InstanceBase {
+export default class GoogleSlidesOpenerInstance extends InstanceBase {
 	constructor(internal) {
 		super(internal)
 		console.log('[gslide-opener] Constructor called')
@@ -53,7 +54,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 		this.log('info', `Merged config: host=${this.config.host}, port=${this.config.port}`)
 
 		// Set initial status
-		this.updateStatus('ok', 'Initializing...')
+		this.updateStatus(InstanceStatus.Connecting, 'Initializing...')
 		this.log('info', 'Status set to: Initializing...')
 
 		// Update actions
@@ -165,20 +166,19 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			console.log('[gslide-opener] Connection successful:', response)
 			this.log('info', 'Connected to Google Slides Opener')
 			this.log('info', `Response: ${JSON.stringify(response)}`)
-			this.updateStatus('ok', 'Connected')
+			this.updateStatus(InstanceStatus.Ok, 'Connected')
 			
 			// Update state immediately on successful connection
 			await this.updateState()
 		} catch (error) {
 			console.log('[gslide-opener] Connection failed:', error)
 			this.log('error', `Failed to connect to Google Slides Opener: ${error.message}`)
-			this.updateStatus('error', `Connection failed: ${error.message}`)
+			this.updateStatus(InstanceStatus.ConnectionFailure, `Connection failed: ${error.message}`)
 		}
 	}
 
 	// Make API requests
 	async apiRequest(method, endpoint, data = null) {
-		const http = require('http')
 
 		console.log(`[gslide-opener] API Request: ${method} ${endpoint}`)
 		this.log('debug', `API Request: ${method} ${endpoint}`)
@@ -336,7 +336,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			]).flat(),
 		]
 
-		this.setVariableDefinitions(variables)
+		// Companion 2.x expects an object keyed by variable id
+		this.setVariableDefinitions(
+			Object.fromEntries(variables.map(({ variableId, name }) => [variableId, { name }]))
+		)
 		this.log('info', `Defined ${variables.length} variables`)
 	}
 
@@ -634,6 +637,4 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 	}
 }
 
-console.log('[gslide-opener] Module loaded, calling runEntrypoint...')
-runEntrypoint(GoogleSlidesOpenerInstance, [])
-console.log('[gslide-opener] runEntrypoint called')
+export const UpgradeScripts = []

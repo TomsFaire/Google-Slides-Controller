@@ -1,4 +1,4 @@
-module.exports = function (self) {
+export default function (self) {
 	console.log('[gslide-opener] actions.js - Setting up action definitions')
 	self.log('info', '=== Setting up action definitions ===')
 	
@@ -18,7 +18,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
+					const url = event.options.url
 					self.log('info', `Opening presentation: ${url}`)
 
 					const response = await self.apiRequest('POST', '/api/open-presentation', { url })
@@ -44,7 +44,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
+					const url = event.options.url
 					self.log('info', `Opening presentation with notes: ${url}`)
 
 					const response = await self.apiRequest('POST', '/api/open-presentation-with-notes', { url })
@@ -70,7 +70,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
+					const url = event.options.url
 					self.log('info', `Opening Slido: ${url}`)
 
 					const response = await self.apiRequest('POST', '/api/open-slido', { url })
@@ -104,8 +104,8 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
-					const backgroundColor = await self.parseVariablesInString(event.options.backgroundColor || '#000000')
+					const url = event.options.url
+					const backgroundColor = event.options.backgroundColor || '#000000'
 					self.log('info', `Opening URL: ${url} bg: ${backgroundColor}`)
 
 					const response = await self.apiRequest('POST', '/api/open-url', { url, backgroundColor })
@@ -155,10 +155,10 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const fillUrl = await self.parseVariablesInString(event.options.fillUrl)
-					const fillBgColor = await self.parseVariablesInString(event.options.fillBgColor || '#000000')
-					const keyUrl = await self.parseVariablesInString(event.options.keyUrl)
-					const keyBgColor = await self.parseVariablesInString(event.options.keyBgColor || '#000000')
+					const fillUrl = event.options.fillUrl
+					const fillBgColor = event.options.fillBgColor || '#000000'
+					const keyUrl = event.options.keyUrl
+					const keyBgColor = event.options.keyBgColor || '#000000'
 					self.log('info', `Opening key/fill — fill: ${fillUrl} (bg: ${fillBgColor}), key: ${keyUrl} (bg: ${keyBgColor})`)
 
 					const response = await self.apiRequest('POST', '/api/open-key-fill', { fillUrl, fillBgColor, keyUrl, keyBgColor })
@@ -286,7 +286,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const slideStr = await self.parseVariablesInString(String(event.options.slide))
+					const slideStr = String(event.options.slide)
 					const slide = parseInt(slideStr, 10)
 					
 					if (isNaN(slide) || slide < 1) {
@@ -435,7 +435,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const durationStr = await self.parseVariablesInString(String(event.options.durationSec))
+					const durationStr = String(event.options.durationSec)
 					const durationSec = parseInt(durationStr, 10)
 
 					if (isNaN(durationSec) || durationSec < 5 || durationSec > 300) {
@@ -682,7 +682,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const sizeStr = await self.parseVariablesInString(String(event.options.size))
+					const sizeStr = String(event.options.size)
 					const size = parseInt(sizeStr, 10)
 					if (isNaN(size) || size < 1 || size > 100) {
 						self.log('error', `Invalid overlay size: ${sizeStr} (must be 1–100)`)

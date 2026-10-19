@@ -123,8 +123,15 @@ Key HTTP endpoints on local API:
 | POST | `/api/next-slide` / `/api/previous-slide` | Navigate slides |
 | POST | `/api/go-to-slide` | Jump to specific slide |
 | POST | `/api/reload-presentation` | Reload current presentation |
-| POST | `/api/share-link` | Generate/get share link with QR |
-| POST | `/api/show-share-qr` | Display QR code on presentation screen |
+| POST | `/api/show-tunnel-qr` | Display tunnel QR code on presentation screen |
+| POST | `/api/hide-tunnel-qr` | Hide the tunnel QR overlay |
+
+The table above covers the commonly used routes. `main.js` serves 40 in total; for the
+authoritative list run:
+
+```bash
+grep -oE "'/api/[a-z0-9-]+'" main.js | tr -d "'" | sort -u
+```
 
 All endpoints require IP allowlist validation; see `isControllerAllowedRequest()` for security details.
 

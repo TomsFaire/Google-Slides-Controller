@@ -6,6 +6,8 @@
  * kill the Electron main process.  All messages use { id, cmd, ...payload }.
  */
 
+const { bgraToUyvy } = require('./bgra-to-uyvy');
+
 let macadam = null;
 const playbacks = {}; // playbackId → { pb, busy }
 
@@ -43,16 +45,22 @@ async function handle(msg) {
     // ── start ─────────────────────────────────────────────────────────────
     case 'start': {
       if (!macadam) macadam = require('macadam');
-      console.error(`[decklink-worker] start: deviceIndex=${msg.deviceIndex} bmdMode=${msg.bmdMode} modeVal=${macadam[msg.bmdMode]} pixelFormat=${macadam.bmdFormat8BitBGRA}`);
+      const yuv = msg.pixelFormat === 'yuv';
+      const pixelFormat = yuv ? macadam.bmdFormat8BitYUV : macadam.bmdFormat8BitBGRA;
+      console.error(`[decklink-worker] start: deviceIndex=${msg.deviceIndex} bmdMode=${msg.bmdMode} modeVal=${macadam[msg.bmdMode]} pixelFormat=${msg.pixelFormat || 'bgra'}(${pixelFormat})`);
       const pb = await macadam.playback({
         deviceIndex: msg.deviceIndex,
         displayMode: macadam[msg.bmdMode],
-        pixelFormat: macadam.bmdFormat8BitBGRA,
+        pixelFormat,
       });
-      pb.on('error', (e) => {
-        console.error('[decklink-worker] playback error:', e.message);
-      });
-      playbacks[msg.playbackId] = { pb, busy: false };
+      playbacks[msg.playbackId] = {
+        pb,
+        busy: false,
+        yuv,
+        width: msg.width,
+        height: msg.height,
+        yuvBuf: yuv ? Buffer.alloc(msg.width * msg.height * 2) : null,
+      };
       reply(id, { cmd: 'ok' });
       break;
     }
@@ -65,23 +73,25 @@ async function handle(msg) {
         break;
       }
       entry.busy = true;
-      const buf = Buffer.from(msg.data);
+      const raw = Buffer.from(msg.data);
+      const buf = entry.yuv ? bgraToUyvy(raw, entry.width, entry.height, entry.yuvBuf) : raw;
+      let timer;
       try {
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            entry.busy = false;
-            reject(new Error('frame() callback timed out after 2000ms'));
-          }, 2000);
-          entry.pb.frame(buf, () => {
-            clearTimeout(timeout);
-            entry.busy = false;
-            resolve();
-          });
-        });
+        // macadam's native playback object: displayFrame() resolves once the
+        // frame has been handed to the hardware (it has no .frame()/.on()).
+        await Promise.race([
+          entry.pb.displayFrame(buf),
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('displayFrame() timed out after 2000ms')), 2000);
+          }),
+        ]);
       } catch (e) {
-        entry.busy = false;
         console.error('[decklink-worker] frame error:', e.message);
         throw e;
+      } finally {
+        clearTimeout(timer);
+        entry.busy = false;
       }
       reply(id, { cmd: 'ok' });
       break;
@@ -91,7 +101,7 @@ async function handle(msg) {
     case 'stop': {
       const entry = playbacks[msg.playbackId];
       if (entry) {
-        try { entry.pb.stop(); } catch (_) {}
+        try { Promise.resolve(entry.pb.stop()).catch(() => {}); } catch (_) {}
         delete playbacks[msg.playbackId];
       }
       reply(id, { cmd: 'ok' });

@@ -15,6 +15,12 @@
  *     E - audio buffer creation:  napi_create_external_buffer → napi_create_buffer_copy
  *   playback_promise.cc:
  *     F - finalizePlaybackCarrier: napi_env → node_api_basic_env
+ *   binding.gyp:
+ *     G - compile decklink/Mac/include/DeckLinkAPIDispatch.cpp on macOS.
+ *         macadam otherwise leaves CreateDeckLinkIteratorInstance undefined
+ *         (node-gyp links with -undefined dynamic_lookup). Desktop Video 16.x
+ *         no longer exports that symbol, so the call jumps to NULL and
+ *         SIGSEGVs. The dispatch file resolves the entry point at runtime.
  *
  * Idempotent: re-running after patches are applied is a no-op.
  * Safe when macadam is absent (optionalDependency): exits 0 with a warning.
@@ -28,6 +34,7 @@ const path = require('path');
 const MACADAM_SRC = path.join(__dirname, '..', 'node_modules', 'macadam', 'src');
 const CAPTURE_FILE = path.join(MACADAM_SRC, 'capture_promise.cc');
 const PLAYBACK_FILE = path.join(MACADAM_SRC, 'playback_promise.cc');
+const BINDING_FILE = path.join(MACADAM_SRC, '..', 'binding.gyp');
 
 // ---------------------------------------------------------------------------
 // Patch definitions
@@ -89,6 +96,15 @@ const PATCHES = [
     file: PLAYBACK_FILE,
     before: 'void finalizePlaybackCarrier(napi_env env, void* finalize_data, void* finalize_hint)',
     after:  'void finalizePlaybackCarrier(node_api_basic_env env, void* finalize_data, void* finalize_hint)',
+  },
+
+  // --- binding.gyp ----------------------------------------------------------
+
+  {
+    id: 'G',
+    file: BINDING_FILE,
+    before: '"src/timecode.cc" ],\n        \'xcode_settings\'',
+    after:  '"src/timecode.cc",\n          "decklink/Mac/include/DeckLinkAPIDispatch.cpp" ],\n        \'xcode_settings\'',
   },
 ];
 

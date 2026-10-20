@@ -15,10 +15,12 @@ const { fork, execFileSync } = require('child_process');
 
 const WORKER_SCRIPT = path.join(__dirname, 'macadam-worker.js');
 
+// pixelFormat 'yuv' marks modes the hardware only accepts as 8-bit YUV (e.g.
+// 1080p50/59.94/60 on the UltraStudio Monitor 3G); the worker converts BGRA.
 const DISPLAY_MODES = {
-  '1080p5994': { bmdMode: 'bmdModeHD1080p5994', width: 1920, height: 1080, fps: 59.94 },
-  '1080p60':   { bmdMode: 'bmdModeHD1080p60',   width: 1920, height: 1080, fps: 60   },
-  '1080p50':   { bmdMode: 'bmdModeHD1080p50',   width: 1920, height: 1080, fps: 50   },
+  '1080p5994': { bmdMode: 'bmdModeHD1080p5994', width: 1920, height: 1080, fps: 59.94, pixelFormat: 'yuv' },
+  '1080p60':   { bmdMode: 'bmdModeHD1080p6000', width: 1920, height: 1080, fps: 60, pixelFormat: 'yuv' },
+  '1080p50':   { bmdMode: 'bmdModeHD1080p50',   width: 1920, height: 1080, fps: 50, pixelFormat: 'yuv' },
   '1080p2997': { bmdMode: 'bmdModeHD1080p2997', width: 1920, height: 1080, fps: 29.97 },
   '1080p25':   { bmdMode: 'bmdModeHD1080p25',   width: 1920, height: 1080, fps: 25   },
   '1080p30':   { bmdMode: 'bmdModeHD1080p30',   width: 1920, height: 1080, fps: 30   },
@@ -183,11 +185,23 @@ class MacadamProvider {
     this._mode = mode;
     this._pbId = `pb-${deviceIndex}-${Date.now()}`;
     this._worker = this._spawnWorker();
-    await this._send('start', {
-      deviceIndex,
-      bmdMode: mode.bmdMode,
-      playbackId: this._pbId,
-    });
+    try {
+      await this._send('start', {
+        deviceIndex,
+        bmdMode: mode.bmdMode,
+        pixelFormat: mode.pixelFormat || 'bgra',
+        width: mode.width,
+        height: mode.height,
+        playbackId: this._pbId,
+      });
+    } catch (e) {
+      // A failed start must not leave the worker alive: it can keep the
+      // device claimed and lock out every later start attempt.
+      const w = this._worker;
+      this._worker = null;
+      try { w.kill(); } catch (_) {}
+      throw e;
+    }
   }
 
   pushFrame(bgraBuffer) {

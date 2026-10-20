@@ -13,6 +13,7 @@
 const path = require('path');
 const { fork, execFileSync } = require('child_process');
 
+const STATS_INTERVAL_MS = 5000;
 const WORKER_SCRIPT = path.join(__dirname, 'macadam-worker.js');
 
 // pixelFormat 'yuv' marks modes the hardware only accepts as 8-bit YUV (e.g.
@@ -205,7 +206,7 @@ class MacadamProvider {
   }
 
   pushFrame(bgraBuffer) {
-    if (this._busy || !this._worker) return;
+    if (this._busy || !this._worker) return false;
     this._busy = true;
     const id = ++this._msgId;
     this._pending.set(id, {
@@ -218,9 +219,11 @@ class MacadamProvider {
         bgraBuffer.byteOffset + bgraBuffer.byteLength
       );
       this._worker.send({ id, cmd: 'frame', playbackId: this._pbId, data: ab });
+      return true;
     } catch (_) {
       this._pending.delete(id);
       this._busy = false;
+      return false;
     }
   }
 
@@ -280,40 +283,89 @@ class OutputController {
     this._getWindow     = null;
     this._provider      = null;
     this._mode          = null;
+    this._label         = '';
     this._blackFrame    = null;
     this._lastGoodFrame = null;
     this._lastGoodTime  = 0;
     this._timer         = null;
+    this._capturing     = false;
+    this._resetStats();
   }
 
-  start(getWindow, provider, displayModeKey) {
+  _resetStats() {
+    this._stats = {
+      since: Date.now(), frames: 0, skippedTicks: 0, droppedPushes: 0,
+      captureMs: 0, convertMs: 0,
+    };
+  }
+
+  start(getWindow, provider, displayModeKey, label = '') {
     const mode = DISPLAY_MODES[displayModeKey];
     this._getWindow  = getWindow;
     this._provider   = provider;
     this._mode       = mode;
+    this._label      = label;
     this._blackFrame = Buffer.alloc(mode.width * mode.height * 4, 0);
     const intervalMs = Math.round(1000 / mode.fps);
     this._timer = setInterval(() => this._tick(), intervalMs);
   }
 
+  _push(buf) {
+    if (this._provider.pushFrame(buf) === false) this._stats.droppedPushes++;
+  }
+
+  _logStats() {
+    const s = this._stats;
+    const elapsed = Date.now() - s.since;
+    if (elapsed < STATS_INTERVAL_MS) return;
+    if (s.frames > 0) {
+      console.log(
+        `[decklink] ${this._label}: ${(s.frames * 1000 / elapsed).toFixed(1)} fps captured, ` +
+        `capture ${(s.captureMs / s.frames).toFixed(1)}ms, resize ${(s.convertMs / s.frames).toFixed(1)}ms, ` +
+        `${s.skippedTicks} ticks skipped (capture busy), ${s.droppedPushes} frames dropped (device busy)`
+      );
+    }
+    this._resetStats();
+  }
+
   async _tick() {
     const win = this._getWindow();
     if (!win || win.isDestroyed()) {
-      this._provider.pushFrame(this._blackFrame);
+      this._push(this._blackFrame);
       return;
     }
+    // One capture at a time. Without this, ticks outpace capturePage() and the
+    // queue grows, so the output falls further and further behind the window.
+    if (this._capturing) {
+      this._stats.skippedTicks++;
+      return;
+    }
+    this._capturing = true;
     try {
+      const t0      = Date.now();
       const image   = await win.webContents.capturePage();
-      const resized = image.resize({ width: this._mode.width, height: this._mode.height });
+      const t1      = Date.now();
+      const { width, height } = this._mode;
+      const size    = image.getSize();
+      const resized = (size.width === width && size.height === height)
+        ? image
+        : image.resize({ width, height });
       const buf     = resized.toBitmap();
-      this._provider.pushFrame(buf);
+      const t2      = Date.now();
+      this._push(buf);
       this._lastGoodFrame = buf;
-      this._lastGoodTime  = Date.now();
+      this._lastGoodTime  = t2;
+      this._stats.frames++;
+      this._stats.captureMs += t1 - t0;
+      this._stats.convertMs += t2 - t1;
     } catch (_) {
       const buf = (this._lastGoodFrame && (Date.now() - this._lastGoodTime) < 2000)
         ? this._lastGoodFrame
         : this._blackFrame;
-      this._provider.pushFrame(buf);
+      this._push(buf);
+    } finally {
+      this._capturing = false;
+      this._logStats();
     }
   }
 
@@ -370,7 +422,7 @@ class DecklinkOutputManagerClass {
         const controller = new OutputController();
         controller.start(
           this._getSlidesWindow, provider,
-          deckPrefs.slides.displayMode || '1080p5994'
+          deckPrefs.slides.displayMode || '1080p5994', 'slides'
         );
         this._slidesProvider   = provider;
         this._slidesController = controller;
@@ -390,7 +442,7 @@ class DecklinkOutputManagerClass {
         const controller = new OutputController();
         controller.start(
           this._getNotesWindow, provider,
-          deckPrefs.notes.displayMode || '1080p5994'
+          deckPrefs.notes.displayMode || '1080p5994', 'notes'
         );
         this._notesProvider   = provider;
         this._notesController = controller;
@@ -430,4 +482,4 @@ class DecklinkOutputManagerClass {
   }
 }
 
-module.exports = { DecklinkOutputManager: new DecklinkOutputManagerClass(), DISPLAY_MODES };
+module.exports = { DecklinkOutputManager: new DecklinkOutputManagerClass(), DISPLAY_MODES, OutputController };

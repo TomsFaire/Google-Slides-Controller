@@ -96,3 +96,50 @@ test('DISPLAY_MODES contains expected keys', () => {
     assert.ok(DISPLAY_MODES[key].fps > 0, `${key} should have positive fps`);
   }
 });
+
+test('OutputController never runs overlapping captures (no backlog behind a slow capturePage)', async () => {
+  const mod = tryRequireDecklinkOutput();
+  assert.ok(mod && mod.OutputController, 'OutputController should be exported');
+
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let captures = 0;
+  const image = { getSize: () => ({ width: 1920, height: 1080 }), resize: () => image, toBitmap: () => Buffer.alloc(4) };
+  const win = {
+    isDestroyed: () => false,
+    webContents: {
+      capturePage: async () => {
+        captures++;
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 50)); // slower than a 59.94fps tick (~17ms)
+        inFlight--;
+        return image;
+      },
+    },
+  };
+  const pushed = [];
+  const provider = { pushFrame: (b) => { pushed.push(b); return true; } };
+
+  const c = new mod.OutputController();
+  c.start(() => win, provider, '1080p5994', 'test');
+  await new Promise((r) => setTimeout(r, 500));
+  c.stop();
+  await new Promise((r) => setTimeout(r, 100)); // let the last capture settle
+
+  assert.equal(maxInFlight, 1, 'captures must not overlap');
+  assert.ok(captures <= 11, `expected ~10 captures in 500ms at 50ms each, got ${captures}`);
+  assert.ok(pushed.length >= 1, 'frames should still be pushed');
+});
+
+test('OutputController counts frames the device could not accept', async () => {
+  const mod = tryRequireDecklinkOutput();
+  assert.ok(mod && mod.OutputController);
+  const image = { getSize: () => ({ width: 1920, height: 1080 }), resize: () => image, toBitmap: () => Buffer.alloc(4) };
+  const win = { isDestroyed: () => false, webContents: { capturePage: async () => image } };
+  const c = new mod.OutputController();
+  c.start(() => win, { pushFrame: () => false }, '1080p5994', 'test');
+  await new Promise((r) => setTimeout(r, 120));
+  c.stop();
+  assert.ok(c._stats.droppedPushes >= 1);
+});

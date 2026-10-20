@@ -8,6 +8,13 @@
 
 const { bgraToUyvy } = require('./bgra-to-uyvy');
 
+// Defaults (709 / limited) are right for HD monitors. The env vars exist only
+// to A/B colour problems: DECKLINK_YUV_MATRIX=709|601 DECKLINK_YUV_RANGE=limited|full
+const YUV_OPTIONS = {
+  matrix: process.env.DECKLINK_YUV_MATRIX || '709',
+  range: process.env.DECKLINK_YUV_RANGE || 'limited',
+};
+
 let macadam = null;
 const playbacks = {}; // playbackId → { pb, busy }
 
@@ -74,7 +81,9 @@ async function handle(msg) {
       }
       entry.busy = true;
       const raw = Buffer.from(msg.data);
-      const buf = entry.yuv ? bgraToUyvy(raw, entry.width, entry.height, entry.yuvBuf) : raw;
+      const buf = entry.yuv
+        ? bgraToUyvy(raw, entry.width, entry.height, entry.yuvBuf, YUV_OPTIONS)
+        : raw;
       let timer;
       try {
         // macadam's native playback object: displayFrame() resolves once the

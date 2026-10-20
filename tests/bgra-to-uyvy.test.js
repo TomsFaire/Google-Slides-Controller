@@ -46,3 +46,33 @@ test('1080p frame converts fast enough for 60fps budget', () => {
   console.log(`  bgraToUyvy 1080p: ${msPerFrame.toFixed(1)} ms/frame`);
   assert.ok(msPerFrame < 16, `${msPerFrame.toFixed(1)}ms exceeds a 60fps frame budget`);
 });
+
+test('every matrix/range keeps full-scale inputs inside 0-255 without wrapping', () => {
+  const { COEFFS } = require('../src/bgra-to-uyvy');
+  const inputs = [[0,0,0],[255,255,255],[255,0,0],[0,255,0],[0,0,255],[255,255,0],[0,255,255],[255,0,255]];
+  for (const key of Object.keys(COEFFS)) {
+    const [matrix, range] = key.split('-');
+    for (const [r, g, b] of inputs) {
+      const out = bgraToUyvy(frame(r, g, b), 2, 1, undefined, { matrix, range });
+      const lo = range === 'limited' ? 16 : 0;
+      const hi = range === 'limited' ? 240 : 255;
+      for (const [i, v] of [...out].entries()) {
+        assert.ok(v >= lo - 1 && v <= hi + 1, `${key} rgb(${r},${g},${b}) byte ${i} = ${v}`);
+      }
+    }
+  }
+});
+
+test('full range keeps black at 0 and white at ~255; 601 differs from 709 on saturated colours', () => {
+  const black = bgraToUyvy(frame(0, 0, 0), 2, 1, undefined, { range: 'full' });
+  const white = bgraToUyvy(frame(255, 255, 255), 2, 1, undefined, { range: 'full' });
+  assert.equal(black[1], 0);
+  near(white[1], 255);
+  const g709 = bgraToUyvy(frame(0, 255, 0), 2, 1, undefined, { matrix: '709' });
+  const g601 = bgraToUyvy(frame(0, 255, 0), 2, 1, undefined, { matrix: '601' });
+  assert.notEqual(g709[1], g601[1]);
+});
+
+test('unknown matrix/range is rejected', () => {
+  assert.throws(() => bgraToUyvy(frame(0, 0, 0), 2, 1, undefined, { matrix: '2020' }), /unsupported/);
+});

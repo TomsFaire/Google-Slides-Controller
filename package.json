@@ -18,6 +18,8 @@
     "rebuild": "electron-rebuild -f -w macadam",
     "postinstall": "node scripts/patch-macadam.js",
     "test": "node --test 'tests/**/*.test.js'",
+    "decklink:color-chart": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/decklink-color-chart.js",
+    "decklink:capture-colors": "electron scripts/decklink-capture-colors.js",
     "decklink:info": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/decklink-device-info.js",
     "decklink:probe-modes": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/decklink-probe-modes.js",
     "test:decklink-hw": "cross-env DECKLINK_HW=1 ELECTRON_RUN_AS_NODE=1 electron tests/hardware/decklink-hardware.hw.js"

@@ -5,8 +5,7 @@
  * Usage:
  *   yarn smoke:slides-gpu "https://docs.google.com/presentation/d/.../present"
  *
- * Optional env (bisect GPU before app.ready):
- *   GSLIDE_GPU_MODE=disable-gpu|angle-metal|angle-gl|swiftshader
+ * Optional env:
  *   GSLIDE_SESSION_PARTITION=persist:google   # reuse app Google session (optional)
  */
 const { app, BrowserWindow } = require('electron');
@@ -16,21 +15,6 @@ if (!url || !/^https?:\/\//i.test(url)) {
   console.error('Usage: yarn smoke:slides-gpu "<presenter https URL>"');
   process.exit(1);
 }
-
-function applyGpuModeFromEnv() {
-  const mode = String(process.env.GSLIDE_GPU_MODE || '').toLowerCase();
-  if (mode === 'disable-gpu') {
-    app.disableHardwareAcceleration();
-  } else if (mode === 'angle-metal') {
-    app.commandLine.appendSwitch('use-angle', 'metal');
-  } else if (mode === 'angle-gl') {
-    app.commandLine.appendSwitch('use-angle', 'gl');
-  } else if (mode === 'swiftshader') {
-    app.commandLine.appendSwitch('use-gl', 'swiftshader');
-  }
-}
-
-applyGpuModeFromEnv();
 
 const partition = (process.env.GSLIDE_SESSION_PARTITION || '').trim();
 

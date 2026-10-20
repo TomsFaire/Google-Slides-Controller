@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
-  "version": "2.3.7",
-  "buildNumber": "85",
+  "version": "2.3.13",
+  "buildNumber": "93",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {
@@ -17,7 +17,10 @@
     "capture:readme-screenshots": "cross-env GSO_README_CAPTURE=1 electron .",
     "rebuild": "electron-rebuild -f -w macadam",
     "postinstall": "node scripts/patch-macadam.js",
-    "test": "node --test 'tests/**/*.test.js'"
+    "test": "node --test 'tests/**/*.test.js'",
+    "decklink:info": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/decklink-device-info.js",
+    "decklink:probe-modes": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/decklink-probe-modes.js",
+    "test:decklink-hw": "cross-env DECKLINK_HW=1 ELECTRON_RUN_AS_NODE=1 electron tests/hardware/decklink-hardware.hw.js"
   },
   "keywords": [
     "electron",
@@ -26,6 +29,9 @@
   ],
   "author": "TomsFaire (based on work by nerif-tafu)",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.20"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/TomsFaire/Google-Slides-Controller.git"
@@ -33,9 +39,9 @@
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",
     "cross-env": "^10.1.0",
-    "electron": "^33.4.11",
-    "electron-builder": "^24.13.3",
-    "png-to-ico": "^2.1.8"
+    "electron": "^44.8.0",
+    "electron-builder": "^26.15.3",
+    "png-to-ico": "^3.0.2"
   },
   "optionalDependencies": {
     "macadam": "2.0.18"
@@ -73,7 +79,9 @@
         }
       ],
       "icon": "build/icon.ico",
-      "signingHashAlgorithms": []
+      "signtoolOptions": {
+        "signingHashAlgorithms": []
+      }
     },
     "linux": {
       "target": [

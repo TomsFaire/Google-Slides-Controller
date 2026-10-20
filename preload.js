@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showOpenLogoDialog: () => ipcRenderer.invoke('show-open-logo-dialog'),
   showOpenCertDialog: () => ipcRenderer.invoke('show-open-cert-dialog'),
   showOpenKeyDialog: () => ipcRenderer.invoke('show-open-key-dialog'),
+  showOpenCredentialsDialog: () => ipcRenderer.invoke('show-open-credentials-dialog'),
   downloadCssTemplate: () => ipcRenderer.invoke('download-css-template'),
   getNetworkInfo: () => ipcRenderer.invoke('get-network-info'),
   getBuildInfo: () => ipcRenderer.invoke('get-build-info'),
@@ -25,6 +26,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTunnelUrlChanged: (callback) => {
     if (typeof callback !== 'function') return;
     ipcRenderer.on('tunnel-url-changed', (_event, url) => callback(url));
+  },
+
+  // Cloudflare auto-setup
+  cfVerifyToken: (apiToken) => ipcRenderer.invoke('cf-verify-token', { apiToken }),
+  cfSaveToken: (apiToken, accountId) => ipcRenderer.invoke('cf-save-token', { apiToken, accountId }),
+  cfGetAutoSetupConfig: () => ipcRenderer.invoke('cf-get-auto-setup-config'),
+  cfAutoSetup: (params) => ipcRenderer.invoke('cf-auto-setup', params),
+  cfDeleteTunnel: () => ipcRenderer.invoke('cf-delete-tunnel'),
+  onCfSetupProgress: (callback) => {
+    if (typeof callback !== 'function') return;
+    ipcRenderer.on('cf-setup-progress', (_event, data) => callback(data));
   },
 
   // Stage Timer Overlay

@@ -2,6 +2,191 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.3.13] - 2026-10-19
+
+- **Removed the Presentation GPU mode setting.** It was a diagnostic workaround for a
+  Chromium 130 transparent-PNG/compositing bug, added during the Electron 33 upgrade.
+  Chromium 152 renders these decks correctly, verified on hardware including multi-display.
+  `/api/status` still reports `presentationGpuMode: "default"` so existing AV integrations
+  are unaffected. macOS native fullscreen is unchanged. Stale `presentationGpuMode` values
+  in existing `preferences.json` files are now ignored.
+
+## [2.3.12] - 2026-09-28
+
+**Electron 33.4.11 → 44.4.5.** Chromium 130 → 152, bundled Node 20.18.3 → 24.21.0.
+
+> ### ⚠️ Requires macOS 13 (Ventura) or newer
+>
+> Electron 44 dropped support for macOS 12 and earlier. Machines on Monterey or older
+> cannot run this version — stay on 2.3.11 there, or upgrade the OS. Electron's floor
+> rose twice across this range: 38 dropped macOS 11, 44 dropped macOS 12.
+
+> ### ⚠️ Run the acceptance checklist before deploying to a live event
+>
+> This release crosses **22 Chromium majors**. The unit tests are pure JavaScript and
+> cannot see rendering or DOM-scraping regressions in Google Slides, so a green build
+> proves very little here. Work through `docs/electron-upgrade-checklist.md` on real
+> multi-monitor hardware first — particularly transparent-PNG/layered-slide rendering
+> compared side by side against Chrome, and speaker notes for U+FFFD corruption.
+
+### Why this was urgent
+
+The Electron 33 line lost support on 2025-04-28 when Electron 36 shipped, and `33.4.11`
+was its final release. The bundled Chromium had therefore gone roughly 17 months with no
+security patches, in an app that loads `docs.google.com` in a `persist:google` session
+holding live Google credentials. That, not any new feature, is the reason for this release.
+
+### Changed
+- **Electron `^33.4.11` → `^44.4.5`.** Every breaking change from Electron 34.0 through
+  44.0 was audited against this codebase's actual API surface, and fifteen of them are
+  no-ops here — the renderer already uses `navigator.clipboard` rather than the `clipboard`
+  module removed in 44; there is no `BrowserView`, no remote module, no protocol
+  interception, no `desktopCapturer`, no deprecated `webContents` navigation history, and
+  no `getBitmap()`; crash handling was already on `render-process-gone`; and the app has
+  **zero native modules**, so no ABI rebuilds were required. The one `webRequest` filter
+  passes an explicit non-empty `urls` array, so Electron 35's empty-array change does not
+  apply, and the `net` module in use is Node's TCP module rather than Electron's, so 44's
+  `net.request` change does not apply either.
+- **`window.open` popup handling reviewed against Electron 39**, which made such popups
+  always resizable. **No change was needed:** none of the eight `setWindowOpenHandler`
+  overrides requests `resizable: false`. The only two non-resizable windows in the app —
+  the tunnel QR overlay and the stage-timer overlay — are constructed directly via
+  `new BrowserWindow(...)`, which still honours the option.
+- Corrected the documented macOS floor in `INSTALLATION.md`, and the API endpoint table in
+  `CLAUDE.md`, which named two routes that do not exist (`/api/share-link`,
+  `/api/show-share-qr`) while documenting ten of the forty actually served.
+
+### Added
+- **`docs/electron-upgrade-checklist.md`** — the hardware acceptance checklist, in four
+  fail-fast gates, plus the method used to audit breaking changes (diff Electron's
+  `breaking-changes.md` between versions, then grep the app for every API each entry
+  names). Recorded so the next upgrade is a checklist run rather than a fresh
+  investigation, and so the two traps found this time are not rediscovered: Node's `net`
+  and Electron's `net` are different modules, and a target's macOS floor and
+  `engines.node` can each cap the target independently of any code concern.
+
+### Build
+- **Version 2.3.12**, **build 92**.
+
+---
+
+## [2.3.11] - 2026-09-28
+
+Infrastructure release. **No user-facing behaviour changes** — this hardens the build
+toolchain and adds automation to stop the app silently falling off Electron's support
+window, which is how it ended up 11 majors behind.
+
+> **The Electron runtime is still 33.4.11 (Chromium 130) and still unpatched.** That
+> line lost support on 2025-04-28, and `33.4.11` was its final release. Moving to 44.4.5
+> is the next release, and it requires a hardware acceptance pass because it crosses 22
+> Chromium majors. This release is the groundwork that makes that jump safe and
+> attributable. See `docs/plans/electron-upgrade-and-stay-current.md`.
+
+### Added
+- **Electron support-drift alarm** (`.github/workflows/electron-support-check.yml`) — runs
+  weekly. Silent while the app is within Electron's latest-three-majors support window; one
+  major past end-of-life it opens **exactly one** labelled issue and edits that same issue in
+  place on later runs; two or more past end-of-life it escalates the label and fails the run.
+  Maintaining one issue rather than accumulating them is the point: a weekly pile of
+  notifications is something people learn to scroll past. The issue body carries the
+  actionable delta — majors behind, the target's `engines.node`, and its macOS floor changes.
+  It provisions its own labels, so there is no one-time manual step to forget.
+- **`src/electron-support.js`** — support-window arithmetic, deliberately pure (no I/O, no
+  `require('electron')`) so the escalation boundary is unit-testable, with
+  `tests/electron-support.test.js` covering both sides of that boundary, all `parseMajor`
+  input shapes, and the exit-code contract. **Suite: 100 → 117 tests.**
+- **`scripts/check-electron-support.js`** — feeds live npm registry data into the module.
+  Exit codes are load-bearing and distinguish causes rather than lumping them together:
+  `0` healthy, `1` critical drift, `2` registry unreachable (retry-safe), `3` bad config or a
+  bug (needs a human). A permanent HTTP failure — a retired endpoint, a 403 — must not look
+  like a transient blip, or the alarm would pass green forever while the app drifted.
+- **Dependabot** (`.github/dependabot.yml`) — weekly PRs for both Yarn ecosystems (the Yarn 1
+  root and the Yarn 4 companion module) plus monthly GitHub Actions updates, with `electron`
+  and `electron-builder` grouped so the coupled pair always moves together. Nothing
+  auto-merges; every bump waits for review.
+- **`docs/electron-cadence-policy.md`** — upgrade on reaching N-2 rather than after
+  end-of-life. A major grants roughly 24 weeks of runway, so about twice a year.
+- **Design and implementation plans** under `docs/plans/`, including the breaking-change audit
+  method that reduced an 11-major jump to three real risk sites.
+
+### Changed
+- **CI Node 20 → 22.20**, sourced from a new `.nvmrc` via `node-version-file`, with
+  `engines.node: ">=22.20"` in `package.json`. Node 20 reached end-of-life 2026-04-30, and
+  more pressingly `electron@44` requires `>= 22.12.0`, so the old pin could not have installed
+  it at all. 22.20 is the only value satisfying both that and the companion module's `^22.20`.
+  The range is a floor with no ceiling on purpose: Yarn 1 treats an `engines` mismatch as
+  **fatal for `yarn run`**, so a `<23` bound would break every script on a newer local Node.
+- **electron-builder 24.13.3 → 26.15.3.** Required moving `win.signingHashAlgorithms` to
+  `win.signtoolOptions.signingHashAlgorithms`; 26 relocated that key and
+  `WindowsConfiguration` sets `additionalProperties: false`, so one stale key invalidated the
+  whole `win` object with an error that named the object and not the key.
+
+### Fixed
+- **CI was never enforcing the lockfile.** The root install ran `yarn install --immutable`,
+  which is a Yarn *Berry* flag; the root is `yarn@1.22.22`, so it was silently doing nothing.
+  Now `--frozen-lockfile`. The companion module's `--immutable` was already correct (Yarn 4)
+  and is unchanged.
+- **CI was never running the tests.** The suite existed but no workflow invoked it, so it had
+  never run on a push or a pull request. `yarn test` now gates the build, ahead of the
+  packaging steps, and the release job depends on the build job — so a failing test cannot
+  reach a release.
+- Corrected the documented macOS floor and the API endpoint table, which listed ten routes and
+  named two that do not exist, against forty routes actually served.
+
+### Build
+- **Version 2.3.11**, **build 90**.
+
+---
+
+## [2.3.10] - 2026-09-16
+
+### Fixed
+- **Speaker notes window was never tracked after launch** — Regression introduced with the 2.3.9 launch controller. Adoption of the Google Slides presenter-view popup was gated on the popup's URL containing `speakernotes` or `speaker`; the real presenter-view URL (`/presentnotes`) contains neither, so the window was never adopted and `notesWindow` stayed `null`. Because the `did-navigate` fallback was a one-shot listener that returned on mismatch, the window could never be adopted afterwards either. Every notes feature reads that one reference, so all of them failed together: the **notes layout preference** was not applied (`onNotesWindowCreated`), the window was **not positioned or fullscreened on the selected notes display** (`applySpeakerNotesInitialGeometry`), **notes zoom/sizing and scrolling** from both Bitfocus Companion and the web remote returned "No speaker notes window is open", and the **web remote showed stale or empty notes** rather than what was on screen.
+
+  The popup is now identified by its **opener** — a `did-create-window` hook on the presentation window's own `webContents`, the event Electron emits for windows created through `setWindowOpenHandler` — instead of by URL. This removes the dependency on Google's undocumented presenter-view URL and, being scoped to the presentation window, cannot adopt unrelated app windows (key/fill outputs, overlays) the way the previous app-level `browser-window-created` listener could.
+- **Relaunching speaker notes lost tracking** — `relaunchSpeakerNotesWindow()` (the desktop relaunch control and `POST /api/relaunch-speaker-notes`, used when the notes layout preference changes) closed the notes window and re-sent `s`, but never re-armed the adoption hook, which disarms itself once it adopts. The relaunched window was therefore never tracked, so the layout change it was triggered for could not be applied. The hook is now re-armed before the keypress.
+
+### Added
+- `src/notes-window-adoption.js` — presenter-view adoption extracted into a testable module, with `tests/notes-window-adoption.test.js` covering opener-based (not URL-based) adoption, one-shot semantics, listener detachment, and re-arming on relaunch.
+
+### Build
+- **Version 2.3.10**, **build 88**.
+
+---
+
+## [2.3.9] - 2026-08-31
+
+### Added
+- **Named Cloudflare tunnel support (custom domain WAN access)** — WAN access can now run over a named Cloudflare tunnel on your own hostname instead of a Quick Tunnel URL. Includes an auto-setup flow in desktop settings: enter a Cloudflare API token, account ID and hostname, and the app verifies the token, creates or reuses the tunnel, configures ingress, and creates the DNS record. Both token-based (auto-setup) and credentials-file (manual) modes are supported. API and tunnel tokens are stored via Electron `safeStorage` (OS keychain), falling back to plaintext only where unavailable. New IPC: `cf-verify-token`, `cf-save-token`, `cf-get-auto-setup-config`, `cf-auto-setup`, `cf-delete-tunnel`, with `cf-setup-progress` push events.
+- **Video play/pause control on the web remote** — Presenters can start and stop a video on the current slide from the web remote instead of reaching for the presentation machine's keyboard. A `Video` button appears on the Remote tab between Previous and Next, and a `Play / Pause Video` entry appears in the Controls tab grid. Both call the existing `POST /api/toggle-video` endpoint, which sends the `k` keystroke Google Slides maps to play/pause and broadcasts to backup machines.
+- **`webUiVideoControlEnabled` preference** — New admin toggle in desktop settings under **Web Remote Features** ("Show video play/pause control"), **disabled by default**. Enable it for events that use embedded video. Desktop-only: the key is stripped from `POST /api/preferences`, so a web remote client cannot enable its own control over HTTP. The web remote must be reloaded for a change to take effect.
+
+### Fixed
+- **Speaker notes launch reliability** — Notes windows could fail to open, or leak, when presentations were opened in quick succession. Six independent `browser-window-created` listeners and a blind-retry key loop are replaced by a single launch controller guarded by a cancellation token, so a superseding launch cleanly kills the previous one. The retry loop now verifies readiness (present-mode URL, not loading) and confirms the notes window actually appeared before re-pressing `s`, and a wall-clock ceiling stops it retrying forever on a deck that never loads. Wired into all six open paths: `/api/open-presentation`, `/api/open-presentation-with-notes`, `/api/open-preset`, the `open-presentation` and `open-test-presentation` IPC handlers, and `reopenPresentationAtSlide`.
+
+### Security
+- **Controller allowlist bypass over a named tunnel** — With a named Cloudflare tunnel active, all tunnel traffic reached the server as `127.0.0.1`, so the controller IP allowlist effectively admitted every remote client. `isControllerAllowedRequest()` now resolves the true client address via `getEffectiveClientIp()`, reading the `CF-Connecting-IP` header when the named tunnel is in use.
+
+### Notes on the video control
+- The button is a stateless toggle showing a fixed combined play/pause glyph. Google Slides exposes no readable playback state — Drive-hosted videos render as `<video>` elements but YouTube embeds sit in a cross-origin iframe — so a state-swapping icon would desync and mislead a presenter mid-show.
+- `POST /api/toggle-video` is deliberately **not** gated by the new preference, so the existing Bitfocus Companion module's Toggle Video action keeps working unchanged.
+- In the five row-layout themes the button is icon-only; the `light` theme's column layout keeps the visible label. At viewports ≤600px with the control enabled, Previous and Next also drop their labels so all three buttons fit; both carry `aria-label` so screen readers are unaffected.
+
+### Build
+- **Version 2.3.9**, **build 87**.
+
+---
+
+## [2.3.8] - 2026-06-16
+
+### Fixed
+- **Stage timer overlay — persistent toggle** — The desktop settings checkbox now survives app restarts: if the overlay was enabled when the app closed, it is restored on launch with the saved position and size. Enabled state is read from preferences instead of whether the overlay window happens to be open.
+
+### Build
+- **Version 2.3.8**, **build 85**.
+
+---
+
 ## [2.3.7] - 2026-06-15
 
 ### Fixed

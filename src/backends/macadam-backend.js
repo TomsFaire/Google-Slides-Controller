@@ -1,6 +1,7 @@
 'use strict';
 
 const { bgraToUyvy } = require('../bgra-to-uyvy');
+const { matchDeviceModes } = require('../decklink-modes');
 
 const DISPLAY_FRAME_TIMEOUT_MS = 2000;
 
@@ -38,6 +39,13 @@ function createMacadamBackend(load = () => require('macadam')) {
         name: d.displayName || d.modelName || `DeckLink ${index}`,
         canOutput: true,
       }));
+    },
+
+    // Modes the device lists for output that the pipeline can drive.
+    async listModes(deviceIndex) {
+      const info = await mod().getDeviceInfo();
+      const device = info[deviceIndex];
+      return device ? matchDeviceModes(device.outputDisplayModes) : [];
     },
 
     async openOutput({ deviceIndex, mode, width, height, pixelFormat }) {

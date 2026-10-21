@@ -104,6 +104,8 @@ const decklinkSlidesMode = document.getElementById('decklink-slides-mode');
 const decklinkNotesEnabled = document.getElementById('decklink-notes-enabled');
 const decklinkNotesDevice = document.getElementById('decklink-notes-device');
 const decklinkNotesMode = document.getElementById('decklink-notes-mode');
+const decklinkSlidesModeHint = document.getElementById('decklink-slides-mode-hint');
+const decklinkNotesModeHint = document.getElementById('decklink-notes-mode-hint');
 const saveDecklinkBtn = document.getElementById('save-decklink-btn');
 
 // Tab switching
@@ -686,6 +688,14 @@ async function initDisplays() {
 
     // Restore DeckLink settings
     await populateDecklinkDevices();
+    if (decklinkSlidesDevice) {
+      decklinkSlidesDevice.addEventListener('change', () =>
+        populateDecklinkModes(decklinkSlidesMode, decklinkSlidesModeHint, decklinkSlidesDevice));
+    }
+    if (decklinkNotesDevice) {
+      decklinkNotesDevice.addEventListener('change', () =>
+        populateDecklinkModes(decklinkNotesMode, decklinkNotesModeHint, decklinkNotesDevice));
+    }
     await loadDecklinkSettings(preferences);
     await updateDecklinkStatus();
 
@@ -2228,6 +2238,38 @@ async function loadDecklinkSettings(prefs) {
   decklinkNotesEnabled.checked = !!notes.enabled;
   if (notes.deviceIndex !== undefined) decklinkNotesDevice.value = String(notes.deviceIndex);
   if (notes.displayMode) decklinkNotesMode.value = notes.displayMode;
+  await refreshDecklinkModes();
+}
+
+const DECKLINK_DEFAULT_MODE = '1080p2997';
+
+// Fill a Format dropdown with the modes the chosen device supports. The static
+// options in index.html stay when the device reports nothing (absent, or the
+// probe failed), so the tab still works without hardware.
+async function populateDecklinkModes(selectEl, hintEl, deviceSelect) {
+  if (!selectEl || !deviceSelect) return;
+  const wanted = selectEl.value;
+  let modes = [];
+  try { modes = await window.electronAPI.getDecklinkModes(parseInt(deviceSelect.value, 10) || 0); }
+  catch (e) { /* keep the static list */ }
+  if (!modes || modes.length === 0) {
+    if (hintEl) hintEl.textContent = '';
+    return;
+  }
+  selectEl.innerHTML = modes.map(m => `<option value="${m.key}">${m.label}</option>`).join('');
+  const keys = modes.map(m => m.key);
+  if (keys.includes(wanted)) {
+    selectEl.value = wanted;
+    if (hintEl) hintEl.textContent = '';
+  } else {
+    selectEl.value = keys.includes(DECKLINK_DEFAULT_MODE) ? DECKLINK_DEFAULT_MODE : keys[0];
+    if (hintEl) hintEl.textContent = 'The previously selected format is not supported by this device. Showing the formats it supports.';
+  }
+}
+
+async function refreshDecklinkModes() {
+  await populateDecklinkModes(decklinkSlidesMode, decklinkSlidesModeHint, decklinkSlidesDevice);
+  await populateDecklinkModes(decklinkNotesMode, decklinkNotesModeHint, decklinkNotesDevice);
 }
 
 async function populateDecklinkDevices() {

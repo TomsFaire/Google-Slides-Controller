@@ -269,3 +269,68 @@ test('WorkerProvider sends the mode\'s forced pixelFormats and remembers the neg
     delete mode.pixelFormats;
   }
 });
+
+// ── probing the modes a device supports ───────────────────────────────────────
+
+// Shaped like macadam's getDeviceInfo() outputDisplayModes: frameRate is [duration, scale].
+const DEVICE_MODES = [
+  { name: 'HD 1080p 59.94', width: 1920, height: 1080, frameRate: [1001, 60000], videoModes: ['8-bit YUV'] },
+  { name: 'HD 1080p 60',    width: 1920, height: 1080, frameRate: [1000, 60000], videoModes: ['8-bit YUV', '10-bit YUV'] },
+  { name: 'HD 1080p 29.97', width: 1920, height: 1080, frameRate: [1001, 30000], videoModes: ['8-bit YUV', '8-bit BGRA'] },
+  { name: 'HD 1080i 59.94', width: 1920, height: 1080, frameRate: [1001, 30000], videoModes: ['8-bit BGRA'] },
+  { name: 'HD 720p 60',     width: 1280, height: 720,  frameRate: [1000, 60000], videoModes: ['8-bit YUV'] },
+  { name: '4K 2160p 30',    width: 3840, height: 2160, frameRate: [1000, 30000], videoModes: ['8-bit YUV'] },
+  { name: 'HD 1080p 25',    width: 1920, height: 1080, frameRate: [1000, 25000], videoModes: ['10-bit YUV'] },
+];
+
+test('matchDeviceModes keeps the modes the pipeline can drive and reports their usable pixel formats', () => {
+  const { matchDeviceModes } = require('../src/decklink-modes');
+  const modes = matchDeviceModes(DEVICE_MODES);
+  const byKey = Object.fromEntries(modes.map((m) => [m.key, m]));
+
+  assert.deepEqual(Object.keys(byKey).sort(), ['1080i5994', '1080p2997', '1080p5994', '1080p60']);
+  assert.deepEqual(byKey['1080p5994'].pixelFormats, ['yuv']);
+  assert.deepEqual(byKey['1080p60'].pixelFormats, ['yuv'], '10-bit is not something the pipeline sends');
+  assert.deepEqual(byKey['1080p2997'].pixelFormats, ['bgra', 'yuv']);
+  assert.equal(byKey['1080p5994'].width, 1920);
+  assert.match(byKey['1080p5994'].label, /1080p.*59\.94/);
+});
+
+test('matchDeviceModes tells 1080i59.94 from 1080p29.97 even though both report 29.97 fps', () => {
+  const { matchDeviceModes } = require('../src/decklink-modes');
+  const both = matchDeviceModes(DEVICE_MODES);
+  assert.equal(both.find((m) => m.key === '1080i5994').pixelFormats.join(), 'bgra');
+  assert.equal(both.find((m) => m.key === '1080p2997').pixelFormats.join(), 'bgra,yuv');
+
+  const onlyInterlaced = matchDeviceModes([DEVICE_MODES[3]]);
+  assert.deepEqual(onlyInterlaced.map((m) => m.key), ['1080i5994']);
+  const onlyProgressive = matchDeviceModes([DEVICE_MODES[2]]);
+  assert.deepEqual(onlyProgressive.map((m) => m.key), ['1080p2997']);
+});
+
+test('matchDeviceModes drops modes with no pixel format we can send, and copes with junk', () => {
+  const { matchDeviceModes } = require('../src/decklink-modes');
+  assert.equal(matchDeviceModes([DEVICE_MODES[6]]).length, 0, '1080p25 only offers 10-bit YUV');
+  assert.deepEqual(matchDeviceModes([]), []);
+  assert.deepEqual(matchDeviceModes(undefined), []);
+  assert.deepEqual(matchDeviceModes([{ name: 'x' }]), []);
+});
+
+test('macadam backend listModes reads the requested device and returns [] for an unknown index', async () => {
+  const { createMacadamBackend } = require('../src/backends/macadam-backend');
+  const mod = { getDeviceInfo: async () => [{ outputDisplayModes: [DEVICE_MODES[0]] }, { outputDisplayModes: [DEVICE_MODES[2]] }] };
+  const backend = createMacadamBackend(() => mod);
+  assert.deepEqual((await backend.listModes(1)).map((m) => m.key), ['1080p2997']);
+  assert.deepEqual((await backend.listModes(0)).map((m) => m.key), ['1080p5994']);
+  assert.deepEqual(await backend.listModes(7), []);
+});
+
+test('worker get_modes asks the backend for the requested device', async () => {
+  const { createHandler } = require('../src/decklink-worker');
+  const { replies, send } = collect();
+  const asked = [];
+  const backend = { listModes: async (i) => { asked.push(i); return [{ key: '1080p60' }]; } };
+  await createHandler(backend, send)({ id: 4, cmd: 'get_modes', deviceIndex: 2 });
+  assert.deepEqual(asked, [2]);
+  assert.deepEqual(replies[0], { id: 4, cmd: 'ok', modes: [{ key: '1080p60' }] });
+});

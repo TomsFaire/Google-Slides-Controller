@@ -436,6 +436,16 @@ class DecklinkOutputManagerClass {
     };
   }
 
+  async getModes(deviceIndex) {
+    try {
+      const msg = await workerRpc('get_modes', { deviceIndex: Number(deviceIndex) || 0 });
+      return msg.modes || [];
+    } catch (e) {
+      console.warn('[decklink] getModes failed:', e.message);
+      return [];
+    }
+  }
+
   async getDevices() {
     try {
       const msg = await workerRpc('get_devices');

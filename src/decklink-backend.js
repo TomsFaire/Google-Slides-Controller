@@ -7,6 +7,9 @@
  * A backend is:
  *   probe():       Promise<{ driverVersion: string | null }>
  *   listDevices(): Promise<Array<{ index, name, canOutput }>>
+ *   listModes(deviceIndex): Promise<Array<{ key, label, width, height, fps,
+ *                            interlaced, pixelFormats }>>  (modes the device supports
+ *                            that the pipeline can drive)
  *   openOutput({ deviceIndex, mode, width, height, pixelFormat }):
  *                  Promise<{ displayFrame(bgra): Promise<{ convertMs, displayMs }>,
  *                            close(): Promise<void> }>

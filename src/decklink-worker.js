@@ -28,6 +28,11 @@ function createHandler(backend, send) {
         break;
       }
 
+      case 'get_modes': {
+        send(id, { cmd: 'ok', modes: await backend.listModes(msg.deviceIndex) });
+        break;
+      }
+
       case 'start': {
         const { output, pixelFormat } = await openOutputNegotiated(backend, {
           deviceIndex: msg.deviceIndex,

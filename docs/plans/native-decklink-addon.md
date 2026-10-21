@@ -4,7 +4,7 @@
 
 **Goal:** Replace the unmaintained `macadam` dependency with a small in-repo, output-only native addon built against current Blackmagic SDK headers, and use the move to remove the per-frame copy and CPU-conversion costs.
 
-**Architecture:** A Node-API (stable-ABI) C++ addon, loaded only inside the existing forked worker (`src/macadam-worker.js`, to be renamed), owns the DeckLink device, converts BGRA to UYVY natively, and runs its own output pacing (a "latest frame wins" slot that is repeated at the output rate). A second tiny addon module (`shm`) lets the Electron main process write captured frames into shared memory so the worker never receives frames over IPC. A backend adapter seam lets `macadam` and `native` run side by side until the native backend passes the hardware parity checklist; only then is macadam deleted.
+**Architecture:** A Node-API (stable-ABI) C++ addon, loaded only inside the existing forked worker (`src/macadam-worker.js`, to be renamed), owns the DeckLink device, converts BGRA to UYVY natively, and runs its own output pacing (a "latest frame wins" slot that is repeated at the output rate). A second tiny addon module (`shm`) lets the Electron main process write captured frames into shared memory so the worker never receives frames over IPC. A backend adapter seam lets `macadam` and `native` run side by side on the feature branch for hardware A/B only; once the native backend passes the parity checklist the default switches and macadam is deleted in the same release (no release ships both).
 
 **Tech Stack:** C++17, node-addon-api (Node-API pinned to a fixed `NAPI_VERSION`), node-gyp via `electron-rebuild`, Blackmagic Desktop Video SDK 16.x headers (vendored), Apple Accelerate/vImage for conversion, `node:test` for unit tests.
 
@@ -14,10 +14,10 @@
 
 - **R1 Maintainability.** No dependency on an unmaintained package. SDK headers are ours to update. A new Electron major must not require patching native sources.
 - **R2 Frame rate.** 1080p at 24 fps minimum, 30 fps preferred, 60 fps nice to have, measured end to end with video/animation content on a 1080p 1x display. Output signal stays at the nominal rate even when capture is slower.
-- **R3 Compatibility.** Any DeckLink/UltraStudio device with video output, at modes up to 1080p60 (UHD/keying are out of scope for this plan, see Task 8). Capture-only devices are not listed. Pixel format (BGRA vs 8-bit YUV) is negotiated with the device, not hard-coded per mode.
+- **R3 Compatibility.** Any DeckLink/UltraStudio device with video output, at modes up to 1080p60 (UHD/keying are out of scope for this plan, see Task 8; decided order: get 1080p solid without macadam first, then UHD). Capture-only devices are not listed. Pixel format (BGRA vs 8-bit YUV) is negotiated with the device, not hard-coded per mode.
 - **R4 Safety.** Native crashes stay in the worker. A missing/old driver or an unsupported mode produces a clear error in the DeckLink tab, never a crash or a hang.
 - **R5 Diagnostics.** The DeckLink tab and logs report the installed DeckLink API version and per-stage timings.
-- **R6 Parity before removal.** macadam is deleted only after the native backend matches every item in Task 7's checklist on real hardware.
+- **R6 Parity before removal.** macadam is deleted only after the native backend matches every item in Task 7's checklist on real hardware. The switch is outright: no release keeps macadam as a runtime fallback.
 
 ## Global Constraints
 
@@ -87,7 +87,7 @@ Failure modes the requirements imply that no single task's happy path covers. Ea
 **Interfaces:**
 - Produces: `require('native/decklink/build/Release/decklink.node')` exporting `version(): { api: string, sdk: string }` and `listDevices(): { devices: Array<{...}>, error: string | null }` (empty devices plus an error string when the driver is missing; never throws at require time).
 
-- [ ] **Step 1: Confirm licence** that the SDK EULA allows vendoring the headers in this repo (macadam already ships SDK 10.11.2 headers under the same licence text). Record the answer in `native/decklink/sdk/VERSION`. Stop and ask the user if unclear.
+- [ ] **Step 1: Vendor the SDK headers** (decided 2026-10-20: yes). Copy the SDK licence text verbatim into `native/decklink/sdk/LICENSE` and record the SDK version in `native/decklink/sdk/VERSION`. macadam already ships SDK 10.11.2 headers under the same licence text.
 - [ ] **Step 2: Implement** the addon with `node-addon-api`, `NAPI_VERSION` pinned (state the chosen value in `binding.gyp`), compiling the SDK's own dispatch file, so the addon links no Blackmagic library at build time.
 - [ ] **Step 3: Test** `tests/native-smoke.test.js` (skips when the `.node` is absent): `version().api` matches `/^\d+\.\d+/`; `listDevices()` returns an object with `devices` array and `error` either `null` or a string (Review Focus 2).
 - [ ] **Step 4: [user]** `yarn build:native` then `ELECTRON_RUN_AS_NODE=1 electron scripts/decklink-native-info.js` — prints the API version matching the macadam `deckLinkVersion()` and the UltraStudio by name.
@@ -170,16 +170,17 @@ Failure modes the requirements imply that no single task's happy path covers. Ea
 - [ ] Desktop Video absent: the app starts, the tab explains why
 - [ ] Recorded: the Desktop Video / firmware versions tested
 
-- [ ] **Step 1:** flip the `DECKLINK_BACKEND` default to `native` and ship one release with the macadam backend still present as `DECKLINK_BACKEND=macadam` (rollback).
-- [ ] **Step 2:** after that release has been used on a real event, delete macadam and its patch script, and document the tested Desktop Video versions in `docs/DECKLINK.md`.
-- [ ] **Step 3: Commit** `chore(decklink): remove macadam`
+- [ ] **Step 1:** once the checklist passes, in one change flip nothing to a flag: make `native` the only backend, delete `src/backends/macadam-backend.js`, `scripts/patch-macadam.js`, the `postinstall` hook, the `macadam` dependency, its `rebuild` script and `asarUnpack` entry; remove `DECKLINK_BACKEND`; the user regenerates `yarn.lock`.
+- [ ] **Step 2:** update `README.md` and `docs/DECKLINK.md`: drop macadam mentions, record the tested Desktop Video / firmware versions.
+- [ ] **Step 3:** `yarn test` green, `build-macos` green, packaged `.app` re-checked on hardware.
+- [ ] **Step 4: Commit** `chore(decklink): replace macadam with the native addon`
 
-### Task 8 (separate plan, not started here)
+### Task 8 (separate plan, starts only after Task 7 ships)
 
 UHD output and external keying (fill + key from one device) build on this addon; each needs its own spec and a key/fill-capable device to test on. Open items to carry over: premultiplied vs straight alpha, BGRA vs YUVA on keying devices, sub-device profiles on Duo 2/Quad 2.
 
 ## Self-Review notes
 
 - **Coverage:** R1 → Tasks 2, 7; R2 → Tasks 4–6 and the gate; R3 → Task 3; R4 → Tasks 2, 4 and Review Focus; R5 → Task 2 (version), 4 (`stats()`); R6 → Task 7.
-- **Open decisions for the user:** (a) SDK licence confirmation in Task 2; (b) whether to ship one release with both backends (recommended) or switch outright; (c) whether UHD/keying (Task 8) should be planned next or wait.
+- **Decisions (2026-10-20):** vendor the SDK headers (yes); outright switch, no dual-backend release; 1080p solid without macadam first, then UHD (and keying) as a separate plan.
 - **Biggest risks:** native build/CI on both architectures (Task 2), and whether shared memory is enough to hit 24 fps at 1080p. If Task 6's measurement shows the remaining time is the `capturePage()` readback, the next step is offscreen rendering with shared textures, which is outside this plan.

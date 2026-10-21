@@ -4,7 +4,7 @@
  * decklink-output.js
  *
  * All macadam (native DeckLink SDK) calls are made inside a child_process
- * worker (macadam-worker.js).  If the DeckLink SDK crashes in a native
+ * worker (decklink-worker.js).  If the DeckLink SDK crashes in a native
  * thread the worker process dies, but the Electron main process survives.
  */
 
@@ -15,7 +15,7 @@ const STATS_INTERVAL_MS = 5000;
 // Electron's default resize quality is the slowest; 'good' is plenty for
 // downscaling a capture to the output size. Env override is for A/B timing.
 const RESIZE_QUALITY = process.env.DECKLINK_RESIZE_QUALITY || 'good';
-const WORKER_SCRIPT = path.join(__dirname, 'macadam-worker.js');
+const WORKER_SCRIPT = path.join(__dirname, 'decklink-worker.js');
 
 // pixelFormat 'yuv' marks modes the hardware only accepts as 8-bit YUV (e.g.
 // 1080p50/59.94/60 on the UltraStudio Monitor 3G); the worker converts BGRA.
@@ -102,15 +102,17 @@ async function detectProviderType() {
 }
 
 function createProvider() {
-  return new MacadamProvider();
+  return new WorkerProvider();
 }
 
-// ── MacadamProvider — persistent worker per output ────────────────────────────
+// ── WorkerProvider — persistent worker per output ─────────────────────────────
 // macadam.playback() crashes with SIGSEGV when called in the Electron main
 // process. Running it in a fork isolates the crash so the app stays alive.
 
-class MacadamProvider {
-  constructor() {
+class WorkerProvider {
+  // `deps.fork` lets tests inject a fake worker process.
+  constructor(deps = {}) {
+    this._fork    = deps.fork || fork;
     this._worker  = null;
     this._msgId   = 0;
     this._pending = new Map();
@@ -128,7 +130,7 @@ class MacadamProvider {
   }
 
   _spawnWorker() {
-    const w = fork(WORKER_SCRIPT, [], { serialization: 'advanced', silent: true });
+    const w = this._fork(WORKER_SCRIPT, [], { serialization: 'advanced', silent: true });
 
     w.on('message', (msg) => {
       const p = this._pending.get(msg.id);
@@ -150,7 +152,7 @@ class MacadamProvider {
     });
 
     w.on('exit', (code, signal) => {
-      console.error(`[decklink] macadam worker exited (code=${code} signal=${signal})`);
+      console.error(`[decklink] worker exited (code=${code} signal=${signal})`);
       this._worker = null;
       this._busy   = false;
       for (const [, p] of this._pending) p.reject(new Error(`worker exited (code=${code} signal=${signal})`));
@@ -456,4 +458,5 @@ module.exports = {
   DecklinkOutputManager: new DecklinkOutputManagerClass(),
   DISPLAY_MODES,
   OutputController,
+  WorkerProvider,
 };

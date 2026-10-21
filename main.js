@@ -6636,18 +6636,19 @@ async function deleteCfTunnelAndDns(apiToken, accountId, zoneId, tunnelId, hostn
 }
 
 // safeStorage wrappers — only usable after app ready
-function encryptCfToken(plaintext) {
+async function encryptCfToken(plaintext) {
   const { safeStorage } = require('electron');
-  if (!safeStorage.isEncryptionAvailable()) return plaintext; // fallback: store as-is
-  return safeStorage.encryptString(plaintext).toString('base64');
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) return plaintext; // fallback: store as-is
+  return (await safeStorage.encryptStringAsync(plaintext)).toString('base64');
 }
 
-function decryptCfToken(stored) {
+async function decryptCfToken(stored) {
   if (!stored) return '';
   const { safeStorage } = require('electron');
-  if (!safeStorage.isEncryptionAvailable()) return stored;
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) return stored;
   try {
-    return safeStorage.decryptString(Buffer.from(stored, 'base64'));
+    const { result } = await safeStorage.decryptStringAsync(Buffer.from(stored, 'base64'));
+    return result;
   } catch (_) {
     return '';
   }
@@ -6675,7 +6676,7 @@ ipcMain.handle('cf-verify-token', async (_event, { apiToken }) => {
 ipcMain.handle('cf-save-token', async (_event, { apiToken, accountId }) => {
   try {
     const prefs = loadPreferences();
-    prefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    prefs.cfApiTokenEncrypted = await encryptCfToken(apiToken);
     prefs.cfAccountId = accountId || prefs.cfAccountId || '';
     savePreferences(prefs);
     return { success: true };
@@ -6738,13 +6739,13 @@ ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname })
         // token-based run: use --token flag instead of credentials file
         // store token encrypted, flag as token-mode
         const updatedPrefs = loadPreferences();
-        updatedPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+        updatedPrefs.cfApiTokenEncrypted = await encryptCfToken(apiToken);
         updatedPrefs.cfAccountId = accountId;
         updatedPrefs.cfTunnelId = tunnelId;
         updatedPrefs.cfZoneId = zoneId;
         updatedPrefs.cfTunnelName = tunnelName;
         updatedPrefs.cfTunnelHostname = hostname;
-        updatedPrefs.cfTunnelToken = encryptCfToken(tokenStr);
+        updatedPrefs.cfTunnelToken = await encryptCfToken(tokenStr);
         updatedPrefs.cfCredentialsPath = '';
         updatedPrefs.tunnelMode = 'named';
         savePreferences(updatedPrefs);
@@ -6755,7 +6756,7 @@ ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname })
 
     // Persist everything
     const finalPrefs = loadPreferences();
-    finalPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    finalPrefs.cfApiTokenEncrypted = await encryptCfToken(apiToken);
     finalPrefs.cfAccountId = accountId;
     finalPrefs.cfTunnelId = tunnelId;
     finalPrefs.cfZoneId = zoneId;
@@ -6778,7 +6779,7 @@ ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname })
 // IPC: delete CF tunnel + DNS record
 ipcMain.handle('cf-delete-tunnel', async () => {
   const prefs = loadPreferences();
-  const apiToken = decryptCfToken(prefs.cfApiTokenEncrypted);
+  const apiToken = await decryptCfToken(prefs.cfApiTokenEncrypted);
   if (!apiToken) return { success: false, error: 'No API token saved' };
   if (!prefs.cfTunnelId) return { success: false, error: 'No tunnel ID saved' };
   try {
@@ -6835,7 +6836,7 @@ function stopCloudflaredTunnel() {
   broadcastTunnelUrl(null);
 }
 
-function startCloudflaredTunnel() {
+async function startCloudflaredTunnel() {
   const prefs = loadPreferences();
   if (!prefs.cloudflaredEnabled) return;
 
@@ -6863,7 +6864,7 @@ function startCloudflaredTunnel() {
 
   if (isNamed) {
     namedHostname = prefs.cfTunnelHostname || '';
-    const cfTunnelToken = prefs.cfTunnelToken ? decryptCfToken(prefs.cfTunnelToken) : '';
+    const cfTunnelToken = prefs.cfTunnelToken ? await decryptCfToken(prefs.cfTunnelToken) : '';
     const cfCredentialsPath = prefs.cfCredentialsPath || '';
     const cfTunnelName = prefs.cfTunnelName || '';
     if (!namedHostname) {
@@ -6891,6 +6892,7 @@ function startCloudflaredTunnel() {
     }
   }
 
+  if (cloudflaredProcess) return; // another start won the race while decrypting
   try {
     cloudflaredProcess = spawn(bin, tunnelArgs, {
       stdio: ['ignore', 'pipe', 'pipe']

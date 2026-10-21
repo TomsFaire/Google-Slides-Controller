@@ -41,11 +41,11 @@ Every 5 seconds the app logs, per output:
 [decklink] slides: 21.2 fps captured, capture 12.7ms, resize 33.8ms, 0 ticks skipped (capture busy), 53 frames dropped (device busy), worker ...
 ```
 
-- **capture / resize:** time per frame. Resize is 0 ms when the window's pixels already match the output size, for example a 1080p display at 1× scale. Capturing from a 4K display is noticeably slower.
+- **capture / resize:** time per frame. Resize is 0 ms when the window's pixels already match the output size, for example a 1080p display at 1× scale. On a 4K display (a 3840×2160 capture downscaled to 1080p) we measured about 12.7 ms capture and about 34 ms resize, which capped capture at about 21 fps. Resize runs on the main thread, so it limits the frame rate no matter how fast the device is.
 - **frames dropped (device busy):** the worker was still sending the previous frame.
 - **ticks skipped (capture busy):** the previous capture had not finished.
 
-Static slides are smooth. For video and animation, check the log with your real content before an event.
+Static slides are smooth. For video and animation, check the log with your real content before an event. The target is 24 fps minimum, 30 where possible; this has not yet been measured with video on a 1080p display.
 
 ## Colour
 

@@ -57,11 +57,28 @@ Send the slides window and the speaker-notes window out of a **Blackmagic DeckLi
 
 No extra install is needed for the release builds. If the DeckLink tab reports the output as unavailable, the drivers or device were not found.
 
+### Scaling and frame rate
+
+The app captures the window at the display's native pixel size. If that is not exactly the output size, every frame is downscaled on the CPU before it is sent, and that is the biggest cost in the pipeline.
+
+| Window shows on | Captured as | Per-frame cost |
+|---|---|---|
+| 1080p display, 1× scale, output 1080p | 1920×1080 | No scaling. Cheapest. |
+| 4K / UHD display (or a 2× Retina display) | 3840×2160 | Larger capture **plus** a downscale. In our testing a 4K display spent about 34 ms per frame scaling, which capped capture at about 21 fps. |
+| Windowed (not fullscreen), or a scaled display mode | Anything else | A downscale on every frame, usually cheaper than the 4K case. |
+
+Tips:
+
+- Put the presentation window on a **1080p display** when you can, or set the display to run at 1920×1080 at 1×.
+- Check the `[decklink] slides:` log line: **`resize 0.0ms`** means no scaling is happening. A large number means the capture size and the output size do not match.
+- Frame-rate targets: static slides are fine at any rate. For embedded video and animation we aim for 24 fps or better, 30 where possible. Whether your setup reaches that depends on the display and content above. Measure it with your own deck.
+- Even with scaling out of the way, the app currently copies each frame to a helper process and converts it to YUV on the CPU. Frames that arrive while the device is still busy are dropped and counted in the log (`frames dropped`). UHD output would cost about four times as much per frame and is not supported yet.
+
 ### Good to know
 
 - **Video only.** The output does not carry audio. Take audio from the computer's own output into your mixer.
-- **Frame rate.** Slides are captured from the window and sent to the device. Static slides are smooth; animations and embedded video are limited by how fast the window can be captured, so **test your content before a live event**. The app logs a `[decklink] slides:` line every 5 seconds with the real capture rate.
-- **Match your display to the output.** Capturing from a 1080p display at 1× scale is cheapest. A 4K or Retina display makes the app downscale every frame, which costs time.
+- **Frame rate.** Slides are captured from the window and sent to the device. Static slides are smooth; animations and embedded video are limited by how fast the window can be captured and converted, so **test your content before a live event**. The app logs a `[decklink] slides:` line every 5 seconds with the real numbers. See [Scaling and frame rate](#scaling-and-frame-rate) below.
+- **Match your display to the output.** The cheapest setup is a **1080p display at 1× scale** driving a 1080p output: the captured frame is already the right size and no scaling happens. See below for what a mismatch costs.
 - **Colour.** Output is Rec. 709. If a monitor looks off, check it against the colour chart (see below) before changing settings.
 - **Tested on:** macOS, UltraStudio Express Monitor 3G (USB4), Desktop Video 16.4. Windows and Linux are not tested. Linux and Windows builds may fall back to FFmpeg with DeckLink support if you install it yourself.
 - **Not supported yet:** UHD/4K output, 10-bit, and audio.

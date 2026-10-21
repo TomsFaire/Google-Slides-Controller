@@ -334,3 +334,33 @@ test('worker get_modes asks the backend for the requested device', async () => {
   assert.deepEqual(asked, [2]);
   assert.deepEqual(replies[0], { id: 4, cmd: 'ok', modes: [{ key: '1080p60' }] });
 });
+
+// ── choose the format from what the device reports, not by trial and error ────
+
+test('matchDeviceModes includes the BMD mode name so a start request can be matched to it', () => {
+  const { matchDeviceModes } = require('../src/decklink-modes');
+  const m = matchDeviceModes(DEVICE_MODES).find((x) => x.key === '1080p60');
+  assert.equal(m.bmdMode, 'bmdModeHD1080p6000');
+});
+
+test('worker start opens the device once, in the format the device reports for that mode', async () => {
+  const { createHandler } = require('../src/decklink-worker');
+  const { replies, send } = collect();
+  const b = negotiationBackend(['bgra', 'yuv']);
+  b.listModes = async () => [{ key: '1080p60', bmdMode: 'bmdModeHD1080p6000', pixelFormats: ['yuv'] }];
+  await createHandler(b, send)({ id: 1, cmd: 'start', playbackId: 'p', bmdMode: 'bmdModeHD1080p6000', ...OPEN });
+  assert.deepEqual(b.tried, ['yuv'], 'no rejected BGRA attempt before the real open');
+  assert.equal(replies[0].pixelFormat, 'yuv');
+});
+
+test('worker start falls back to trying each format when the device mode list is unavailable', async () => {
+  const { createHandler } = require('../src/decklink-worker');
+  for (const listModes of [async () => { throw new Error('boom'); }, async () => [], async () => [{ bmdMode: 'other', pixelFormats: ['bgra'] }]]) {
+    const { replies, send } = collect();
+    const b = negotiationBackend(['yuv']);
+    b.listModes = listModes;
+    await createHandler(b, send)({ id: 1, cmd: 'start', playbackId: 'p', ...OPEN });
+    assert.deepEqual(b.tried, ['bgra', 'yuv']);
+    assert.equal(replies[0].pixelFormat, 'yuv');
+  }
+});

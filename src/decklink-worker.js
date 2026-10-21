@@ -9,6 +9,20 @@
 
 const { createBackend, openOutputNegotiated } = require('./decklink-backend');
 
+// The device already says which pixel formats it takes for each mode (a query
+// that does not open the output), so use that and open once. Opening in a format
+// the device rejects first is avoided: only if the mode list is unavailable do
+// we fall back to trying each format in turn.
+async function formatsFor(backend, msg) {
+  if (msg.pixelFormats) return msg.pixelFormats;
+  try {
+    const modes = await backend.listModes(msg.deviceIndex);
+    const mode = modes.find((m) => m.bmdMode === msg.bmdMode);
+    if (mode && mode.pixelFormats.length) return mode.pixelFormats;
+  } catch (_) { /* fall through to trial */ }
+  return undefined;
+}
+
 // `send(id, fields)` delivers a reply; injectable so the handler is testable.
 function createHandler(backend, send) {
   const outputs = {}; // playbackId → { output, busy }
@@ -39,7 +53,7 @@ function createHandler(backend, send) {
           mode: msg.bmdMode,
           width: msg.width,
           height: msg.height,
-        }, msg.pixelFormats);
+        }, await formatsFor(backend, msg));
         outputs[msg.playbackId] = { output, busy: false };
         send(id, { cmd: 'ok', pixelFormat });
         break;

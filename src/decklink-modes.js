@@ -67,7 +67,7 @@ function matchDeviceModes(deviceModes) {
     const pixelFormats = PIXEL_FORMAT_PREFERENCE.filter((f) => offered.includes(f));
     if (pixelFormats.length === 0) continue; // nothing the pipeline can send
     result.push({
-      key, label: known.label, width: known.width, height: known.height,
+      key, bmdMode: known.bmdMode, label: known.label, width: known.width, height: known.height,
       fps: known.fps, interlaced: !!known.interlaced, pixelFormats,
     });
   }

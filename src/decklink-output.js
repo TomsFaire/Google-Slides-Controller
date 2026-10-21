@@ -18,6 +18,11 @@ const STATS_INTERVAL_MS = 5000;
 // downscaling a capture to the output size. Env override is for A/B timing.
 const RESIZE_QUALITY = process.env.DECKLINK_RESIZE_QUALITY || 'good';
 const WORKER_SCRIPT = path.join(__dirname, 'macadam-worker.js');
+const FFMPEG_PROBE_TIMEOUT_MS = 5000;
+// ffmpeg exits within a moment if the device or mode is rejected; a process
+// still alive after this long is treated as started.
+const FFMPEG_STARTUP_GRACE_MS = 1500;
+const FFMPEG_STDERR_TAIL = 600;
 
 // pixelFormat 'yuv' marks modes the hardware only accepts as 8-bit YUV (e.g.
 // 1080p50/59.94/60 on the UltraStudio Monitor 3G); the worker converts BGRA.
@@ -78,6 +83,67 @@ function workerRpc(cmd, payload = {}, timeoutMs = 8000) {
   });
 }
 
+
+// ── FFmpeg helpers (pure, unit tested) ────────────────────────────────────────
+
+// `ffmpeg -devices` lists muxing devices as e.g. " E  decklink  Blackmagic DeckLink output".
+function ffmpegListsDecklink(devicesOutput) {
+  return /^\s*[D ]E\s+decklink\b/m.test(String(devicesOutput || ''));
+}
+
+// `ffmpeg -sinks decklink` prints a header, then one "  <name> [<description>]"
+// line per output device (a leading "*" replaces the indent for the default).
+function parseFfmpegSinks(sinksOutput) {
+  const names = [];
+  for (const line of String(sinksOutput || '').split(/\r?\n/)) {
+    if (!/^[\s*]+\S/.test(line)) continue;         // device lines start with a space, or * for the default
+    const name = line.trim().replace(/^\*\s*/, '').replace(/\s*\[[^\]]*\]\s*$/, '');
+    if (name) names.push(name);
+  }
+  return names;
+}
+
+// The DeckLink muxer matches modes by exact rational: 59.94 must be 60000/1001.
+function ffmpegFrameRate(fps) {
+  return Number.isInteger(fps) ? String(fps) : `${Math.round(fps) * 1000}/1001`;
+}
+
+function buildFfmpegArgs(mode, deviceName) {
+  return [
+    '-hide_banner',
+    '-f', 'rawvideo',
+    '-pixel_format', 'bgra',
+    '-video_size', `${mode.width}x${mode.height}`,
+    '-framerate', ffmpegFrameRate(mode.fps),
+    '-i', 'pipe:0',
+    '-f', 'decklink',
+    '-pix_fmt', 'uyvy422',
+    deviceName,
+  ];
+}
+
+// Returns { available, error }. `run` is injectable for tests.
+function detectFfmpeg(run = execFileSync) {
+  try {
+    const out = run('ffmpeg', ['-hide_banner', '-devices'],
+      { stdio: 'pipe', timeout: FFMPEG_PROBE_TIMEOUT_MS, encoding: 'utf8' });
+    if (ffmpegListsDecklink(out)) return { available: true, error: null };
+    return { available: false, error: 'ffmpeg was built without DeckLink support' };
+  } catch (e) {
+    return { available: false, error: e.code === 'ENOENT' ? 'ffmpeg not found' : e.message };
+  }
+}
+
+function ffmpegDeviceName(deviceIndex, run = execFileSync) {
+  try {
+    const out = run('ffmpeg', ['-hide_banner', '-sinks', 'decklink'],
+      { stdio: 'pipe', timeout: FFMPEG_PROBE_TIMEOUT_MS, encoding: 'utf8' });
+    const names = parseFfmpegSinks(out);
+    if (names[deviceIndex]) return names[deviceIndex];
+  } catch (_) { /* fall through to the generic name */ }
+  return deviceIndex === 0 ? 'DeckLink Output' : `DeckLink Output ${deviceIndex + 1}`;
+}
+
 // ── Provider detection ────────────────────────────────────────────────────────
 
 async function detectProviderType() {
@@ -94,25 +160,15 @@ async function detectProviderType() {
     console.warn('[decklink] macadam probe failed:', e.message);
   }
 
-  // FFmpeg fallback
-  try {
-    execFileSync(
-      'ffmpeg',
-      ['-hide_banner', '-f', 'decklink', '-list_devices', '1', '-i', 'dummy'],
-      { stdio: 'pipe', timeout: 3000 }
-    );
+  // FFmpeg fallback: only usable if this ffmpeg build actually has DeckLink output.
+  const ff = detectFfmpeg();
+  if (ff.available) {
     _cachedProviderType = 'ffmpeg';
     console.log('[decklink] Provider: ffmpeg');
     return _cachedProviderType;
-  } catch (e) {
-    if (e.code !== 'ENOENT') {
-      _cachedProviderType = 'ffmpeg';
-      console.log('[decklink] Provider: ffmpeg');
-      return _cachedProviderType;
-    }
-    _detectionErrors.ffmpeg = e.message;
-    console.warn('[decklink] ffmpeg unavailable:', e.message);
   }
+  _detectionErrors.ffmpeg = ff.error;
+  console.warn('[decklink] ffmpeg unavailable:', ff.error);
 
   console.warn('[decklink] No provider found. macadam:', _detectionErrors.macadam,
     '| ffmpeg:', _detectionErrors.ffmpeg);
@@ -261,34 +317,59 @@ class MacadamProvider {
 // ── FfmpegProvider ────────────────────────────────────────────────────────────
 
 class FfmpegProvider {
-  constructor() {
-    this._proc = null;
-    this._busy = false;
-    this._mode = null;
+  // `deps` lets tests inject a fake spawn / device lookup / startup grace.
+  constructor(deps = {}) {
+    this._spawn   = deps.spawn || require('child_process').spawn;
+    this._nameFor = deps.deviceName || ffmpegDeviceName;
+    this._graceMs = deps.graceMs !== undefined ? deps.graceMs : FFMPEG_STARTUP_GRACE_MS;
+    this._proc    = null;
+    this._busy    = false;
+    this._mode    = null;
+    this._stderr  = '';
   }
 
   async start(deviceIndex, displayModeKey) {
     const mode = DISPLAY_MODES[displayModeKey];
     this._mode = mode;
-    const deviceArg = deviceIndex === 0 ? 'DeckLink Output' : `DeckLink Output ${deviceIndex + 1}`;
-    this._proc = require('child_process').spawn('ffmpeg', [
-      '-hide_banner',
-      '-f', 'rawvideo',
-      '-pixel_format', 'bgra',
-      '-video_size', `${mode.width}x${mode.height}`,
-      '-framerate', String(mode.fps),
-      '-i', 'pipe:0',
-      '-f', 'decklink',
-      '-pix_fmt', 'uyvy422',
-      deviceArg,
-    ], { stdio: ['pipe', 'ignore', 'ignore'] });
-    this._proc.on('error', () => {});
+    this._stderr = '';
+    const proc = this._spawn('ffmpeg', buildFfmpegArgs(mode, this._nameFor(deviceIndex)),
+      { stdio: ['pipe', 'ignore', 'pipe'] });
+    this._proc = proc;
+
+    if (proc.stderr) {
+      proc.stderr.on('data', (chunk) => {
+        this._stderr = (this._stderr + chunk.toString()).slice(-FFMPEG_STDERR_TAIL);
+      });
+    }
+    // ffmpeg dying closes the pipe; an unhandled EPIPE here would take down the app.
+    if (proc.stdin) proc.stdin.on('error', () => {});
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, this._graceMs);
+      const fail = (msg) => {
+        clearTimeout(timer);
+        this._proc = null;
+        reject(new Error(msg));
+      };
+      proc.once('error', (e) => fail(`ffmpeg failed to start: ${e.message}`));
+      proc.once('exit', (code, signal) => fail(
+        `ffmpeg exited (code=${code} signal=${signal})` +
+        (this._stderr ? `: ${this._stderr.trim().split(/\r?\n/).pop()}` : '')));
+    });
+
+    // Later exit: drop the process so pushFrame stops writing into a dead pipe.
+    proc.on('exit', (code, signal) => {
+      console.error(`[decklink] ffmpeg exited (code=${code} signal=${signal})`);
+      if (this._proc === proc) this._proc = null;
+      this._busy = false;
+    });
   }
 
   pushFrame(bgraBuffer) {
-    if (this._busy || !this._proc || !this._proc.stdin.writable) return;
+    if (this._busy || !this._proc || !this._proc.stdin || !this._proc.stdin.writable) return false;
     this._busy = true;
     this._proc.stdin.write(bgraBuffer, () => { this._busy = false; });
+    return true;
   }
 
   stop() {
@@ -509,4 +590,14 @@ class DecklinkOutputManagerClass {
   }
 }
 
-module.exports = { DecklinkOutputManager: new DecklinkOutputManagerClass(), DISPLAY_MODES, OutputController };
+module.exports = {
+  DecklinkOutputManager: new DecklinkOutputManagerClass(),
+  DISPLAY_MODES,
+  OutputController,
+  FfmpegProvider,
+  ffmpegListsDecklink,
+  parseFfmpegSinks,
+  ffmpegFrameRate,
+  buildFfmpegArgs,
+  detectFfmpeg,
+};

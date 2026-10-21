@@ -29,6 +29,7 @@ const QRCode = require('qrcode');
 const { createPerfectCueServer } = require('./src/perfectcue-server');
 const { normalizePerfectCuePorts } = require('./src/perfectcue-port-config');
 const { armNotesAdoption } = require('./src/notes-window-adoption');
+const { isSafeWindowOpenUrl, isExternalHttpUrl } = require('./src/url-safety');
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -516,6 +517,7 @@ function getSpeakerNotesWindowOptions(notesDisplay) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GOOGLE_SESSION_PARTITION
     }
   };
@@ -533,6 +535,7 @@ function getPresentationBrowserWindowOptions(presentationBounds) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GOOGLE_SESSION_PARTITION
     }
   };
@@ -564,6 +567,7 @@ function getSlidoPresentationBrowserWindowOptions(presentationBounds) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: SLIDO_SESSION_PARTITION
     }
   };
@@ -583,6 +587,7 @@ function getKeyFillFillWindowOptions(bounds, bgColor) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: KEY_FILL_SESSION_PARTITION
     }
   };
@@ -602,6 +607,7 @@ function getKeyFillKeyWindowOptions(bounds, bgColor) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: KEY_FILL_SESSION_PARTITION
     }
   };
@@ -621,6 +627,7 @@ function getGenericUrlBrowserWindowOptions(presentationBounds, backgroundColor) 
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GENERIC_SESSION_PARTITION
     }
   };
@@ -2403,6 +2410,7 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
   attachCrashHandlers(presentationWindow, 'presentation');
 
   presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
     const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
@@ -2502,7 +2510,7 @@ async function openSlidoPresentationDisplay(url) {
   }
   attachCrashHandlers(presentationWindow, 'presentation');
 
-  presentationWindow.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
+  presentationWindow.webContents.setWindowOpenHandler(({ url }) => (isSafeWindowOpenUrl(url) ? { action: 'allow' } : { action: 'deny' }));
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
@@ -2640,7 +2648,7 @@ async function openGenericUrlDisplay(url, bgColor) {
   }
   attachCrashHandlers(presentationWindow, 'presentation');
 
-  presentationWindow.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
+  presentationWindow.webContents.setWindowOpenHandler(({ url }) => (isSafeWindowOpenUrl(url) ? { action: 'allow' } : { action: 'deny' }));
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
@@ -2766,6 +2774,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false
     },
     autoHideMenuBar: true,
@@ -2773,6 +2782,19 @@ function createWindow() {
     center: true
   });
 
+  // The control UI is local; links and navigations away from it go to the OS browser.
+  // (Google windows are deliberately not restricted: sign-in may redirect through a Workspace SSO IdP.)
+  const keepLocal = (event, url) => {
+    if (url.startsWith('file://')) return;
+    event.preventDefault();
+    if (isExternalHttpUrl(url)) shell.openExternal(url);
+  };
+  mainWindow.webContents.on('will-navigate', keepLocal);
+  mainWindow.webContents.on('will-redirect', keepLocal);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
   mainWindow.loadFile('index.html');
   attachCrashHandlers(mainWindow, 'main');
   // Open DevTools for main window to see logs
@@ -2860,6 +2882,7 @@ async function runReadmeScreenshotCapture() {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
       },
     });
 
@@ -3363,6 +3386,7 @@ ipcMain.handle('google-signin', async () => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GOOGLE_SESSION_PARTITION
     }
   });
@@ -3437,6 +3461,7 @@ ipcMain.handle('check-signin-status', async () => {
             webPreferences: {
               nodeIntegration: false,
               contextIsolation: true,
+              sandbox: true,
               partition: GOOGLE_SESSION_PARTITION
             }
           });
@@ -3569,6 +3594,7 @@ ipcMain.handle('open-test-presentation', async () => {
     // Handle the speaker notes popup window (open at notes-display size so Slides uses narrow-preview layout)
     presentationWindow.webContents.setWindowOpenHandler((details) => {
       logDebug('[Test] Window open intercepted:', details.url);
+      if (!isSafeWindowOpenUrl(details.url)) return { action: 'deny' };
       const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
       return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
     });
@@ -3653,6 +3679,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Handle the speaker notes popup window (open at notes-display size so Slides uses narrow-preview layout)
   presentationWindow.webContents.setWindowOpenHandler((details) => {
     logDebug('[Multi-Monitor] Window open intercepted:', details.url);
+    if (!isSafeWindowOpenUrl(details.url)) return { action: 'deny' };
     const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
@@ -4478,6 +4505,7 @@ function startHttpServer() {
 
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
@@ -4610,6 +4638,7 @@ function startHttpServer() {
 
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
@@ -6168,6 +6197,7 @@ function startHttpServer() {
 
           // Set up window handlers (same as open-presentation; notes open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
@@ -6402,7 +6432,7 @@ async function showTunnelQrOverlay(url, durationMs) {
     skipTaskbar: true,
     resizable: false,
     focusable: false,
-    webPreferences: { nodeIntegration: false, contextIsolation: true }
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
   });
 
   const qrDataUrl = await QRCode.toDataURL(url, { width: QR_PX, margin: 1 });
@@ -6465,7 +6495,7 @@ function showStageTimerOverlay() {
       skipTaskbar: true,
       focusable: false,
       resizable: false,
-      webPreferences: { nodeIntegration: false, contextIsolation: true }
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
     });
     const overlayPath = path.join(__dirname, 'src', 'stage-timer-overlay.html');
     const query = `?roomId=${encodeURIComponent(roomId)}&apiKey=${encodeURIComponent(apiKey)}`;

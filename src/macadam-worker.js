@@ -80,10 +80,12 @@ async function handle(msg) {
         break;
       }
       entry.busy = true;
+      const t0  = Date.now();
       const raw = Buffer.from(msg.data);
       const buf = entry.yuv
         ? bgraToUyvy(raw, entry.width, entry.height, entry.yuvBuf, YUV_OPTIONS)
         : raw;
+      const t1  = Date.now();
       let timer;
       try {
         // macadam's native playback object: displayFrame() resolves once the
@@ -102,7 +104,8 @@ async function handle(msg) {
         clearTimeout(timer);
         entry.busy = false;
       }
-      reply(id, { cmd: 'ok' });
+      // Timings let the main process's stats line show which stage is slow.
+      reply(id, { cmd: 'ok', timing: { convertMs: t1 - t0, displayMs: Date.now() - t1 } });
       break;
     }
 

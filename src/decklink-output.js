@@ -14,6 +14,9 @@ const path = require('path');
 const { fork, execFileSync } = require('child_process');
 
 const STATS_INTERVAL_MS = 5000;
+// Electron's default resize quality is the slowest; 'good' is plenty for
+// downscaling a capture to the output size. Env override is for A/B timing.
+const RESIZE_QUALITY = process.env.DECKLINK_RESIZE_QUALITY || 'good';
 const WORKER_SCRIPT = path.join(__dirname, 'macadam-worker.js');
 
 // pixelFormat 'yuv' marks modes the hardware only accepts as 8-bit YUV (e.g.
@@ -133,6 +136,14 @@ class MacadamProvider {
     this._busy    = false;
     this._mode    = null;
     this._pbId    = null;
+    this._timings = { frames: 0, roundTripMs: 0, convertMs: 0, displayMs: 0 };
+  }
+
+  // Per-frame worker timings since the last call (for the periodic stats line).
+  takeTimings() {
+    const t = this._timings;
+    this._timings = { frames: 0, roundTripMs: 0, convertMs: 0, displayMs: 0 };
+    return t.frames > 0 ? t : null;
   }
 
   _spawnWorker() {
@@ -209,8 +220,18 @@ class MacadamProvider {
     if (this._busy || !this._worker) return false;
     this._busy = true;
     const id = ++this._msgId;
+    const sentAt = Date.now();
     this._pending.set(id, {
-      resolve: () => { this._busy = false; },
+      resolve: (msg) => {
+        this._busy = false;
+        if (msg && msg.timing) {
+          const t = this._timings;
+          t.frames++;
+          t.roundTripMs += Date.now() - sentAt;
+          t.convertMs   += msg.timing.convertMs;
+          t.displayMs   += msg.timing.displayMs;
+        }
+      },
       reject:  () => { this._busy = false; },
     });
     try {
@@ -319,10 +340,16 @@ class OutputController {
     const elapsed = Date.now() - s.since;
     if (elapsed < STATS_INTERVAL_MS) return;
     if (s.frames > 0) {
+      const w = this._provider.takeTimings && this._provider.takeTimings();
+      const worker = w
+        ? `, worker ${(w.frames * 1000 / elapsed).toFixed(1)} fps delivered: ` +
+          `round-trip ${(w.roundTripMs / w.frames).toFixed(1)}ms ` +
+          `(yuv ${(w.convertMs / w.frames).toFixed(1)}ms, displayFrame ${(w.displayMs / w.frames).toFixed(1)}ms)`
+        : '';
       console.log(
         `[decklink] ${this._label}: ${(s.frames * 1000 / elapsed).toFixed(1)} fps captured, ` +
         `capture ${(s.captureMs / s.frames).toFixed(1)}ms, resize ${(s.convertMs / s.frames).toFixed(1)}ms, ` +
-        `${s.skippedTicks} ticks skipped (capture busy), ${s.droppedPushes} frames dropped (device busy)`
+        `${s.skippedTicks} ticks skipped (capture busy), ${s.droppedPushes} frames dropped (device busy)${worker}`
       );
     }
     this._resetStats();
@@ -349,7 +376,7 @@ class OutputController {
       const size    = image.getSize();
       const resized = (size.width === width && size.height === height)
         ? image
-        : image.resize({ width, height });
+        : image.resize({ width, height, quality: RESIZE_QUALITY });
       const buf     = resized.toBitmap();
       const t2      = Date.now();
       this._push(buf);

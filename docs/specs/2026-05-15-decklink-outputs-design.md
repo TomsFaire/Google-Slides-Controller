@@ -14,7 +14,7 @@ Live production events need the app's slides and notes content as clean professi
 Capture the slides and notes BrowserWindows frame-by-frame using Electron's `webContents.capturePage()` and push the BGRA buffers to a DeckLink output device. Two independent providers are supported:
 
 - **Primary — macadam** ([Streampunk/macadam](https://github.com/Streampunk/macadam)): NAPI native Node addon for the Blackmagic DeckLink SDK. Low latency, hardware-clock paced.
-- **Fallback — FFmpeg**: Pipe raw BGRA frames to an FFmpeg child process using `-f decklink`. Requires FFmpeg built with DeckLink support.
+- **Fallback — FFmpeg** *(removed: it needed a custom DeckLink-enabled ffmpeg nobody ships; macadam is the only provider)*: Pipe raw BGRA frames to an FFmpeg child process using `-f decklink`. Requires FFmpeg built with DeckLink support.
 
 If neither is available the app starts normally with DeckLink outputs marked unavailable.
 

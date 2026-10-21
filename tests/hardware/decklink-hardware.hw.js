@@ -59,7 +59,7 @@ function fakeWindow(width, height) {
   return { win, captures: () => captures };
 }
 
-// Fail loudly if we silently fell back to ffmpeg/unavailable.
+// Fail loudly if we found no usable macadam provider.
 function assertMacadam() {
   const { providerType, detectionErrors } = DecklinkOutputManager.getStatus();
   assert.equal(providerType, 'macadam',

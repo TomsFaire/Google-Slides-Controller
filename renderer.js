@@ -2252,15 +2252,13 @@ async function updateDecklinkStatus() {
     const status = await window.electronAPI.getDecklinkStatus();
     if (status.providerType === 'unavailable') {
       const errs = status.detectionErrors || {};
-      const detail = [
-        errs.macadam ? `macadam: ${errs.macadam}` : null,
-        errs.ffmpeg  ? `ffmpeg: ${errs.ffmpeg}`   : null,
-      ].filter(Boolean).join(' | ');
-      providerEl.textContent = detail
-        ? `No provider available — ${detail}`
-        : 'No provider available (install macadam or FFmpeg with DeckLink support)';
+      providerEl.textContent = errs.macadam
+        ? `DeckLink unavailable — ${errs.macadam}`
+        : 'DeckLink unavailable (the macadam module could not be loaded)';
     } else {
-      providerEl.textContent = `Provider: ${status.providerType}`;
+      providerEl.textContent = status.driverVersion
+        ? `Provider: ${status.providerType} (${status.driverVersion})`
+        : `Provider: ${status.providerType}`;
     }
     if (slidesLed) slidesLed.className = `led ${status.slides.active ? 'led-ok' : 'led-neutral'}`;
     if (slidesLabel) {

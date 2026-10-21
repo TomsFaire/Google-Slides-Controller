@@ -80,7 +80,7 @@ Tips:
 - **Frame rate.** Slides are captured from the window and sent to the device. Static slides are smooth; animations and embedded video are limited by how fast the window can be captured and converted, so **test your content before a live event**. The app logs a `[decklink] slides:` line every 5 seconds with the real numbers. See [Scaling and frame rate](#scaling-and-frame-rate) below.
 - **Match your display to the output.** The cheapest setup is a **1080p display at 1× scale** driving a 1080p output: the captured frame is already the right size and no scaling happens. See below for what a mismatch costs.
 - **Colour.** Output is Rec. 709. If a monitor looks off, check it against the colour chart (see below) before changing settings.
-- **Tested on:** macOS, UltraStudio Express Monitor 3G (USB4), Desktop Video 16.4. Windows and Linux are not tested. Linux and Windows builds may fall back to FFmpeg with DeckLink support if you install it yourself.
+- **Tested on:** macOS, UltraStudio Express Monitor 3G (USB4), Desktop Video 16.4. Windows and Linux are not tested.
 - **Not supported yet:** UHD/4K output, 10-bit, and audio.
 
 More detail, tuning and troubleshooting: [docs/DECKLINK.md](docs/DECKLINK.md).

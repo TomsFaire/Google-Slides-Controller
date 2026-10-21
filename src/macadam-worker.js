@@ -31,7 +31,11 @@ async function handle(msg) {
       macadam = require('macadam');
       if (macadam.bmdModeHD1080p2997 === undefined)
         throw new Error('macadam constants missing — rebuild required');
-      reply(id, { cmd: 'ok' });
+      // "DeckLinkAPI version: 16.4.0". Throws when Desktop Video is not installed.
+      let driverVersion = null;
+      try { driverVersion = macadam.deckLinkVersion().replace(/^DeckLinkAPI version:\s*/, 'DeckLink API '); }
+      catch (_) { /* no driver: device listing will report it */ }
+      reply(id, { cmd: 'ok', driverVersion });
       break;
     }
 

@@ -9,7 +9,7 @@ Slides and speaker notes can be sent out of a Blackmagic DeckLink / UltraStudio 
 - The device is not in use by another application.
 - macOS 13+ (release builds). Windows and Linux are untested.
 
-The app talks to the device through [`macadam`](https://www.npmjs.com/package/macadam), a native module that is bundled with the release builds. If it is missing or fails to load, the app falls back to `ffmpeg`, but only if that build has DeckLink output (`ffmpeg -devices` must list `decklink`; stock Homebrew FFmpeg does not, and the DeckLink tab will say so). The FFmpeg fallback has not been tested on hardware. It picks the device by name from `ffmpeg -sinks decklink`, and interlaced formats (1080i) may not select the interlaced mode, so prefer macadam.
+The app talks to the device through [`macadam`](https://www.npmjs.com/package/macadam), a native module that is bundled with the release builds. If it cannot load, the DeckLink tab shows why and no output is available. There is no fallback. The Provider line in the tab shows the installed DeckLink API version, which tracks the Desktop Video release.
 
 ## Using it
 

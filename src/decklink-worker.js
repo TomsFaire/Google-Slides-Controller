@@ -7,7 +7,7 @@
  * Every DeckLink call goes through the backend (see decklink-backend.js).
  */
 
-const { createBackend } = require('./decklink-backend');
+const { createBackend, openOutputNegotiated } = require('./decklink-backend');
 
 // `send(id, fields)` delivers a reply; injectable so the handler is testable.
 function createHandler(backend, send) {
@@ -29,15 +29,14 @@ function createHandler(backend, send) {
       }
 
       case 'start': {
-        const output = await backend.openOutput({
+        const { output, pixelFormat } = await openOutputNegotiated(backend, {
           deviceIndex: msg.deviceIndex,
           mode: msg.bmdMode,
           width: msg.width,
           height: msg.height,
-          pixelFormat: msg.pixelFormat || 'bgra',
-        });
+        }, msg.pixelFormats);
         outputs[msg.playbackId] = { output, busy: false };
-        send(id, { cmd: 'ok' });
+        send(id, { cmd: 'ok', pixelFormat });
         break;
       }
 

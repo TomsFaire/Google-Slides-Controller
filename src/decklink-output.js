@@ -15,21 +15,9 @@ const STATS_INTERVAL_MS = 5000;
 // Electron's default resize quality is the slowest; 'good' is plenty for
 // downscaling a capture to the output size. Env override is for A/B timing.
 const RESIZE_QUALITY = process.env.DECKLINK_RESIZE_QUALITY || 'good';
-const WORKER_SCRIPT = path.join(__dirname, 'decklink-worker.js');
+const { DISPLAY_MODES, filterOutputDevices } = require('./decklink-modes');
 
-// pixelFormat 'yuv' marks modes the hardware only accepts as 8-bit YUV (e.g.
-// 1080p50/59.94/60 on the UltraStudio Monitor 3G); the worker converts BGRA.
-const DISPLAY_MODES = {
-  '1080p5994': { bmdMode: 'bmdModeHD1080p5994', width: 1920, height: 1080, fps: 59.94, pixelFormat: 'yuv' },
-  '1080p60':   { bmdMode: 'bmdModeHD1080p6000', width: 1920, height: 1080, fps: 60, pixelFormat: 'yuv' },
-  '1080p50':   { bmdMode: 'bmdModeHD1080p50',   width: 1920, height: 1080, fps: 50, pixelFormat: 'yuv' },
-  '1080p2997': { bmdMode: 'bmdModeHD1080p2997', width: 1920, height: 1080, fps: 29.97 },
-  '1080p25':   { bmdMode: 'bmdModeHD1080p25',   width: 1920, height: 1080, fps: 25   },
-  '1080p30':   { bmdMode: 'bmdModeHD1080p30',   width: 1920, height: 1080, fps: 30   },
-  '1080i5994': { bmdMode: 'bmdModeHD1080i5994', width: 1920, height: 1080, fps: 29.97 },
-  '720p5994':  { bmdMode: 'bmdModeHD720p5994',  width: 1280, height: 720,  fps: 59.94 },
-  '720p50':    { bmdMode: 'bmdModeHD720p50',     width: 1280, height: 720,  fps: 50   },
-};
+const WORKER_SCRIPT = path.join(__dirname, 'decklink-worker.js');
 
 let _cachedProviderType = null;
 let _detectionErrors = {};
@@ -120,6 +108,7 @@ class WorkerProvider {
     this._mode    = null;
     this._pbId    = null;
     this._timings = { frames: 0, roundTripMs: 0, convertMs: 0, displayMs: 0 };
+    this.pixelFormat = null; // what the device accepted, set by start()
   }
 
   // Per-frame worker timings since the last call (for the periodic stats line).
@@ -181,14 +170,16 @@ class WorkerProvider {
     this._pbId = `pb-${deviceIndex}-${Date.now()}`;
     this._worker = this._spawnWorker();
     try {
-      await this._send('start', {
+      const reply = await this._send('start', {
         deviceIndex,
         bmdMode: mode.bmdMode,
-        pixelFormat: mode.pixelFormat || 'bgra',
+        pixelFormats: mode.pixelFormats, // normally unset: the worker negotiates
         width: mode.width,
         height: mode.height,
         playbackId: this._pbId,
       });
+      this.pixelFormat = reply.pixelFormat;
+      console.log(`[decklink] output started: ${displayModeKey}, pixel format ${reply.pixelFormat}`);
     } catch (e) {
       // A failed start must not leave the worker alive: it can keep the
       // device claimed and lock out every later start attempt.
@@ -438,15 +429,17 @@ class DecklinkOutputManagerClass {
       providerType:    this._providerType,
       driverVersion:   _driverVersion,
       detectionErrors: _detectionErrors,
-      slides: { active: this._slidesController !== null, error: this._slidesError || null },
-      notes:  { active: this._notesController  !== null, error: this._notesError  || null },
+      slides: { active: this._slidesController !== null, error: this._slidesError || null,
+                pixelFormat: this._slidesProvider ? this._slidesProvider.pixelFormat : null },
+      notes:  { active: this._notesController  !== null, error: this._notesError  || null,
+                pixelFormat: this._notesProvider ? this._notesProvider.pixelFormat : null },
     };
   }
 
   async getDevices() {
     try {
       const msg = await workerRpc('get_devices');
-      return msg.devices || [];
+      return filterOutputDevices(msg.devices || []);
     } catch (e) {
       console.warn('[decklink] getDevices failed:', e.message);
       return [];

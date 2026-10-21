@@ -19,12 +19,9 @@ The app talks to the device through [`macadam`](https://www.npmjs.com/package/ma
 
 Pick a format that matches the receiving equipment. Many receivers will not lock to a rate they do not expect.
 
-| Format | Notes |
-|---|---|
-| 1080p 59.94 / 60 / 50 | Converted to 8-bit YUV in the app. Some devices accept these only as YUV. |
-| 1080p 29.97 / 30 / 25 | Sent as BGRA. |
-| 1080i 59.94 | Interlaced. |
-| 720p 59.94 / 50 | |
+Formats offered: 1080p 59.94 / 60 / 50 / 30 / 29.97 / 25, 1080i 59.94, 720p 59.94 / 50.
+
+The app asks the device which pixel format it accepts for the chosen mode. It sends BGRA when the device takes it, and otherwise converts to 8-bit YUV itself (some devices, such as the UltraStudio Express Monitor 3G, accept 1080p50/59.94/60 only as YUV). The log line `[decklink] output started: … pixel format …` shows which was used. Interlaced 1080i is sent as the device's interlaced mode.
 
 ## What it does not do
 

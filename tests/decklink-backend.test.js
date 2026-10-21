@@ -166,3 +166,106 @@ test('WorkerProvider stops accepting frames once its worker has exited', async (
   worker.emit('exit', 1, null);
   assert.equal(provider.pushFrame(Buffer.alloc(8)), false, 'no frames to a dead worker');
 });
+
+// ── pixel-format negotiation ──────────────────────────────────────────────────
+
+test('choosePixelFormat prefers BGRA (no conversion) and falls back to YUV', () => {
+  const { choosePixelFormat } = require('../src/decklink-modes');
+  assert.equal(choosePixelFormat(['yuv']), 'yuv');
+  assert.equal(choosePixelFormat(['yuv', 'bgra']), 'bgra');
+  assert.equal(choosePixelFormat(['bgra']), 'bgra');
+});
+
+test('choosePixelFormat names the mode and what the device does support when nothing fits', () => {
+  const { choosePixelFormat } = require('../src/decklink-modes');
+  assert.throws(
+    () => choosePixelFormat([], { mode: '1080p60', deviceModes: ['1080p30', '720p50'] }),
+    /1080p60.*1080p30, 720p50/
+  );
+  assert.throws(() => choosePixelFormat([]), /not supported/);
+});
+
+test('filterOutputDevices drops capture-only devices but keeps their original index', () => {
+  const { filterOutputDevices } = require('../src/decklink-modes');
+  const out = filterOutputDevices([
+    { index: 0, name: 'Recorder', canOutput: false },
+    { index: 1, name: 'Monitor', canOutput: true },
+    { index: 2, name: 'Unknown' },
+  ]);
+  assert.deepEqual(out.map((d) => d.index), [1, 2]);
+});
+
+function negotiationBackend(accepts) {
+  const tried = [];
+  return {
+    tried,
+    openOutput: async (opts) => {
+      tried.push(opts.pixelFormat);
+      if (!accepts.includes(opts.pixelFormat)) throw new Error('Requested display mode is not supported');
+      return { displayFrame: async () => ({}), close: async () => {} };
+    },
+  };
+}
+const OPEN = { deviceIndex: 0, mode: 'bmdModeHD1080p6000', width: 4, height: 2 };
+
+test('openOutputNegotiated tries BGRA first and falls back to YUV when the mode is not supported', async () => {
+  const { openOutputNegotiated } = require('../src/decklink-backend');
+  const b = negotiationBackend(['yuv']);
+  const { pixelFormat } = await openOutputNegotiated(b, OPEN);
+  assert.equal(pixelFormat, 'yuv');
+  assert.deepEqual(b.tried, ['bgra', 'yuv']);
+
+  const direct = negotiationBackend(['bgra', 'yuv']);
+  assert.equal((await openOutputNegotiated(direct, OPEN)).pixelFormat, 'bgra');
+  assert.deepEqual(direct.tried, ['bgra']);
+});
+
+test('openOutputNegotiated does not retry on errors that are not about the mode', async () => {
+  const { openOutputNegotiated } = require('../src/decklink-backend');
+  const tried = [];
+  const b = { openOutput: async (o) => { tried.push(o.pixelFormat); throw new Error('Unable to access the hardware or input stream is currently active'); } };
+  await assert.rejects(openOutputNegotiated(b, OPEN), /Unable to access the hardware/);
+  assert.deepEqual(tried, ['bgra'], 'device-busy must not be masked by a second attempt');
+});
+
+test('openOutputNegotiated reports every format it tried when none work', async () => {
+  const { openOutputNegotiated } = require('../src/decklink-backend');
+  const b = negotiationBackend([]);
+  await assert.rejects(openOutputNegotiated(b, OPEN), /not supported.*bgra, yuv|bgra, yuv.*not supported/s);
+});
+
+test('worker start negotiates the pixel format and reports the one it chose', async () => {
+  const { createHandler } = require('../src/decklink-worker');
+  const { replies, send } = collect();
+  const b = negotiationBackend(['yuv']);
+  await createHandler(b, send)({ id: 1, cmd: 'start', playbackId: 'p', ...OPEN });
+  assert.deepEqual(replies[0], { id: 1, cmd: 'ok', pixelFormat: 'yuv' });
+});
+
+test('worker start honours an explicit pixelFormats list (used to force a format for colour A/B tests)', async () => {
+  const { createHandler } = require('../src/decklink-worker');
+  const { replies, send } = collect();
+  const b = negotiationBackend(['bgra', 'yuv']);
+  await createHandler(b, send)({ id: 1, cmd: 'start', playbackId: 'p', pixelFormats: ['yuv'], ...OPEN });
+  assert.deepEqual(b.tried, ['yuv']);
+  assert.equal(replies[0].pixelFormat, 'yuv');
+});
+
+test('WorkerProvider sends the mode\'s forced pixelFormats and remembers the negotiated format', async () => {
+  const { WorkerProvider, DISPLAY_MODES } = require('../src/decklink-output');
+  const sent = [];
+  const worker = Object.assign(new EventEmitter(), { stderr: null, kill() {}, send(msg) {
+    sent.push(msg);
+    setImmediate(() => worker.emit('message', { id: msg.id, cmd: 'ok', pixelFormat: 'yuv' }));
+  } });
+  const mode = DISPLAY_MODES['1080p60'];
+  mode.pixelFormats = ['yuv'];
+  try {
+    const provider = new WorkerProvider({ fork: () => worker });
+    await provider.start(0, '1080p60');
+    assert.deepEqual(sent[0].pixelFormats, ['yuv']);
+    assert.equal(provider.pixelFormat, 'yuv');
+  } finally {
+    delete mode.pixelFormats;
+  }
+});

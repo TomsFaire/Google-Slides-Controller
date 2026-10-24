@@ -42,7 +42,7 @@ Every 5 seconds the app logs, per output:
 - **frames dropped (device busy):** the worker was still sending the previous frame.
 - **ticks skipped (capture busy):** the previous capture had not finished.
 
-Static slides are smooth. For video and animation, check the log with your real content before an event. The target is 24 fps minimum, 30 where possible; this has not yet been measured with video on a 1080p display.
+Static slides are smooth. For video and animation, check the log with your real content before an event. The target is 24 fps minimum, 30 where possible; video on a 1080p display at 1x played cleanly in testing.
 
 ### Measured baseline (macadam backend)
 
@@ -53,7 +53,7 @@ UltraStudio Express Monitor 3G, Desktop Video 16.4.0, 1080p29.97 (BGRA), 2026-10
 | Fake window (colour bars, no capture or resize) | 29.8 fps | 0 ms | 0 ms | 29.4 fps | 29.1 ms | 21.1 ms |
 | Real slides on a UHD display | 16 to 19 fps | 13 to 23 ms | about 37 ms | 8 to 9.6 fps | 53 to 61 ms | about 21 ms |
 
-On the UHD display the main thread is the limit: capture plus resize is 50 to 60 ms per frame. Next-slide changes and animated GIFs looked fine on the output. Video slides on a 1080p 1x display are still unmeasured.
+On the UHD display the main thread is the limit: capture plus resize is 50 to 60 ms per frame. Next-slide changes and animated GIFs looked fine on the output. Video on a 1080p 1x display at 1080p60 output played with no issues (packaged v2.4.0 build, judged by eye; no stats line recorded).
 
 ## Colour
 

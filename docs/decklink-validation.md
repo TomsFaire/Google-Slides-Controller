@@ -86,6 +86,6 @@ UltraStudio Express Monitor 3G, Desktop Video 16.4.0, macOS, UHD displays. macad
 | 3. Format dropdown | Passed: all 8 expected modes, no 1080i |
 | 4. Cable unplug/reset | Passed |
 | 4. Unsupported `displayMode` edited into `preferences.json` | Not checked |
-| Video slide on a 1080p 1x display (24 fps gate for the native addon) | Not checked, needs a 1080p display |
+| Video slide on a 1080p 1x display (24 fps gate for the native addon) | Passed on the packaged v2.4.0 build: 1080p display, 1080p60 output, video played with no issues. Frame rate was judged by eye, not read from the stats line |
 
 Found on the way: the probe script and hardware test sent black frames because their fake window had no `getSize()`, while still passing. Fixed in `bf13433`. Stats lines from the real-slides run are in the baseline table in [DECKLINK.md](DECKLINK.md#measured-baseline-macadam-backend).

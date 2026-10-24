@@ -2,6 +2,14 @@
 
 All notable changes to Google Slides Opener are documented here.
 
+## [2.4.0] - 2026-10-23
+
+- **DeckLink output.** Send slides and speaker notes out of a Blackmagic DeckLink / UltraStudio
+  device as a video signal (1080p 59.94 / 60 / 50 / 30 / 29.97 / 25 and 720p 59.94 / 50, progressive
+  only). New DeckLink tab with device and format pickers; the format list is read from the device.
+  Pixel format is negotiated with the device (BGRA, or 8-bit YUV where required). Video only, no audio.
+  Verified on an UltraStudio Express Monitor 3G with Desktop Video 16.4. See docs/DECKLINK.md.
+
 ## [2.3.13] - 2026-10-19
 
 - **Removed the Presentation GPU mode setting.** It was a diagnostic workaround for a

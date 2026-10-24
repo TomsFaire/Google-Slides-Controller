@@ -16,7 +16,6 @@ const DISPLAY_MODES = {
   '1080p2997': { bmdMode: 'bmdModeHD1080p2997', width: 1920, height: 1080, fps: 29.97, label: '1080p 29.97fps' },
   '1080p25':   { bmdMode: 'bmdModeHD1080p25',   width: 1920, height: 1080, fps: 25,    label: '1080p 25fps' },
   '1080p30':   { bmdMode: 'bmdModeHD1080p30',   width: 1920, height: 1080, fps: 30,    label: '1080p 30fps' },
-  '1080i5994': { bmdMode: 'bmdModeHD1080i5994', width: 1920, height: 1080, fps: 29.97, label: '1080i 59.94fps', interlaced: true },
   '720p5994':  { bmdMode: 'bmdModeHD720p5994',  width: 1280, height: 720,  fps: 59.94, label: '720p 59.94fps' },
   '720p50':    { bmdMode: 'bmdModeHD720p50',    width: 1280, height: 720,  fps: 50,    label: '720p 50fps' },
 };
@@ -39,14 +38,15 @@ function filterOutputDevices(devices) {
 // The modes in DISPLAY_MODES are the ones the pipeline can drive (up to 1080p60,
 // 8-bit). `matchDeviceModes` narrows them to what a device says it supports.
 // `deviceModes` has macadam's shape: { name, width, height, frameRate: [duration, scale],
-// videoModes: ['8-bit YUV', '8-bit BGRA', ...] }. Interlaced and progressive modes can
-// share a frame rate (1080i59.94 and 1080p29.97 both report 29.97), so the name decides.
+// videoModes: ['8-bit YUV', '8-bit BGRA', ...] }. The app drives progressive modes only, but
+// interlaced modes can share a frame rate with them (1080i59.94 and 1080p29.97 both report
+// 29.97), so interlaced device modes are skipped by name.
 const DEVICE_PIXEL_FORMATS = { '8-bit BGRA': 'bgra', '8-bit YUV': 'yuv' };
 const FPS_TOLERANCE = 0.01;
 
+// Matches "1080i59.94", "HD 1080i 59.94", "1080i50"; not "1080p29.97" or "720p50".
 function isInterlacedName(name) {
-  const m = /\d{3,4}\s*([ip])\b/i.exec(String(name || ''));
-  return !!m && m[1].toLowerCase() === 'i';
+  return /\d{3,4}\s*i(?![a-z])/i.test(String(name || ''));
 }
 
 function deviceFps(frameRate) {
@@ -61,14 +61,14 @@ function matchDeviceModes(deviceModes) {
     const found = list.find((d) =>
       d && d.width === known.width && d.height === known.height &&
       Math.abs(deviceFps(d.frameRate) - known.fps) < FPS_TOLERANCE &&
-      isInterlacedName(d.name) === !!known.interlaced);
+      !isInterlacedName(d.name));
     if (!found) continue;
     const offered = (found.videoModes || []).map((n) => DEVICE_PIXEL_FORMATS[n]).filter(Boolean);
     const pixelFormats = PIXEL_FORMAT_PREFERENCE.filter((f) => offered.includes(f));
     if (pixelFormats.length === 0) continue; // nothing the pipeline can send
     result.push({
       key, bmdMode: known.bmdMode, label: known.label, width: known.width, height: known.height,
-      fps: known.fps, interlaced: !!known.interlaced, pixelFormats,
+      fps: known.fps, pixelFormats,
     });
   }
   return result;

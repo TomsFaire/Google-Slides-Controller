@@ -166,6 +166,7 @@ class WorkerProvider {
 
   async start(deviceIndex, displayModeKey) {
     const mode = DISPLAY_MODES[displayModeKey];
+    if (!mode) throw new Error(`Unknown display mode "${displayModeKey}". Pick a format in the DeckLink tab.`);
     this._mode = mode;
     this._pbId = `pb-${deviceIndex}-${Date.now()}`;
     this._worker = this._spawnWorker();

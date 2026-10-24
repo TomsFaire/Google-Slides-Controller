@@ -51,7 +51,7 @@ yarn start 2>&1 | grep --line-buffered "\[decklink\]"
 
 - [ ] DeckLink tab, Provider line reads **`Provider: macadam (DeckLink API 16.4.0)`**.
 - [ ] The Device dropdown lists the UltraStudio by name.
-- [ ] The Format dropdown lists the modes the 3G supports and no UHD/10-bit extras. Expected: 1080p 59.94 / 60 / 50 / 30 / 29.97 / 25, 1080i 59.94, 720p 59.94 / 50. **Note anything missing, especially 1080i.**
+- [ ] The Format dropdown lists the modes the 3G supports and no UHD/10-bit extras. Expected: 1080p 59.94 / 60 / 50 / 30 / 29.97 / 25, 720p 59.94 / 50. Interlaced modes are intentionally not offered.
 - [ ] Enable slides output, pick 1080p29.97, **Save**: the light goes green, your slides appear on the output, advancing slides follows without lag.
 - [ ] Switch to 1080p59.94 or 60, **Save**: output comes back (YUV path). The log says `pixel format yuv`.
 - [ ] Toggle the output off, Save, on, Save: restarts cleanly, no "hardware currently active" error.

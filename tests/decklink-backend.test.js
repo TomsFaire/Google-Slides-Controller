@@ -288,7 +288,7 @@ test('matchDeviceModes keeps the modes the pipeline can drive and reports their 
   const modes = matchDeviceModes(DEVICE_MODES);
   const byKey = Object.fromEntries(modes.map((m) => [m.key, m]));
 
-  assert.deepEqual(Object.keys(byKey).sort(), ['1080i5994', '1080p2997', '1080p5994', '1080p60']);
+  assert.deepEqual(Object.keys(byKey).sort(), ['1080p2997', '1080p5994', '1080p60']);
   assert.deepEqual(byKey['1080p5994'].pixelFormats, ['yuv']);
   assert.deepEqual(byKey['1080p60'].pixelFormats, ['yuv'], '10-bit is not something the pipeline sends');
   assert.deepEqual(byKey['1080p2997'].pixelFormats, ['bgra', 'yuv']);
@@ -296,16 +296,27 @@ test('matchDeviceModes keeps the modes the pipeline can drive and reports their 
   assert.match(byKey['1080p5994'].label, /1080p.*59\.94/);
 });
 
-test('matchDeviceModes tells 1080i59.94 from 1080p29.97 even though both report 29.97 fps', () => {
+test('matchDeviceModes never lists an interlaced device mode as a progressive one', () => {
   const { matchDeviceModes } = require('../src/decklink-modes');
   const both = matchDeviceModes(DEVICE_MODES);
-  assert.equal(both.find((m) => m.key === '1080i5994').pixelFormats.join(), 'bgra');
+  assert.equal(both.some((m) => m.key.includes('i')), false, 'no interlaced key is offered');
   assert.equal(both.find((m) => m.key === '1080p2997').pixelFormats.join(), 'bgra,yuv');
 
-  const onlyInterlaced = matchDeviceModes([DEVICE_MODES[3]]);
-  assert.deepEqual(onlyInterlaced.map((m) => m.key), ['1080i5994']);
-  const onlyProgressive = matchDeviceModes([DEVICE_MODES[2]]);
-  assert.deepEqual(onlyProgressive.map((m) => m.key), ['1080p2997']);
+  // A device with 1080i59.94 but no 1080p29.97 must not appear to support 1080p29.97.
+  assert.deepEqual(matchDeviceModes([DEVICE_MODES[3]]), []);
+  assert.deepEqual(matchDeviceModes([DEVICE_MODES[2]]).map((m) => m.key), ['1080p2997']);
+});
+
+test('matchDeviceModes copes with the names Blackmagic really reports (no spaces)', () => {
+  const { matchDeviceModes } = require('../src/decklink-modes');
+  const bgra = ['8-bit YUV', '8-bit BGRA'];
+  const real = [
+    { name: '1080i59.94', width: 1920, height: 1080, frameRate: [1001, 30000], videoModes: bgra },
+    { name: '1080i50',    width: 1920, height: 1080, frameRate: [1000, 25000], videoModes: bgra },
+    { name: '1080i60',    width: 1920, height: 1080, frameRate: [1000, 30000], videoModes: bgra },
+    { name: '1080p59.94', width: 1920, height: 1080, frameRate: [1001, 60000], videoModes: ['8-bit YUV'] },
+  ];
+  assert.deepEqual(matchDeviceModes(real).map((m) => m.key), ['1080p5994']);
 });
 
 test('matchDeviceModes drops modes with no pixel format we can send, and copes with junk', () => {

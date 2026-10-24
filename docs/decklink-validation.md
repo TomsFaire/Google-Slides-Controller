@@ -82,7 +82,10 @@ UltraStudio Express Monitor 3G, Desktop Video 16.4.0, macOS, UHD displays. macad
 | 1. Colour chart | Colours looked right at several resolutions |
 | 2. `decklink:info`, `decklink:probe-modes` | All 9 modes opened (1080i59.94 has since been removed from the app) |
 | 3. App with real slides | Slides appeared and looked good, next slide and animated GIFs fast enough |
-| 3. Mode switch to 59.94, off/on restart, Format dropdown contents | Not checked |
-| 4. Unhappy paths (cable unplugged) | Not checked |
+| 3. Resolution change in the app, off/on restart | Passed (output came back after the mode change, off/on restarted cleanly) |
+| 3. Format dropdown | Passed: all 8 expected modes, no 1080i |
+| 4. Cable unplug/reset | Passed |
+| 4. Unsupported `displayMode` edited into `preferences.json` | Not checked |
+| Video slide on a 1080p 1x display (24 fps gate for the native addon) | Not checked, needs a 1080p display |
 
 Found on the way: the probe script and hardware test sent black frames because their fake window had no `getSize()`, while still passing. Fixed in `bf13433`. Stats lines from the real-slides run are in the baseline table in [DECKLINK.md](DECKLINK.md#measured-baseline-macadam-backend).

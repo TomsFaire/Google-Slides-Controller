@@ -44,6 +44,17 @@ Every 5 seconds the app logs, per output:
 
 Static slides are smooth. For video and animation, check the log with your real content before an event. The target is 24 fps minimum, 30 where possible; this has not yet been measured with video on a 1080p display.
 
+### Measured baseline (macadam backend)
+
+UltraStudio Express Monitor 3G, Desktop Video 16.4.0, 1080p29.97 (BGRA), 2026-10-23. Recorded so the native addon can be compared against it.
+
+| Source | Captured | Capture | Resize | Delivered by worker | Round trip | `displayFrame` |
+|---|---|---|---|---|---|---|
+| Fake window (colour bars, no capture or resize) | 29.8 fps | 0 ms | 0 ms | 29.4 fps | 29.1 ms | 21.1 ms |
+| Real slides on a UHD display | 16 to 19 fps | 13 to 23 ms | about 37 ms | 8 to 9.6 fps | 53 to 61 ms | about 21 ms |
+
+On the UHD display the main thread is the limit: capture plus resize is 50 to 60 ms per frame. Next-slide changes and animated GIFs looked fine on the output. Video slides on a 1080p 1x display are still unmeasured.
+
 ## Colour
 
 Frames are converted to YUV using Rec. 709, limited range, which is right for HD monitors and mixers. If a display looks different from a computer screen, check the display first: run `yarn decklink:color-chart` and compare against SMPTE-style bars on a waveform / vectorscope if you have one. Environment variables `DECKLINK_YUV_MATRIX` (`709`|`601`) and `DECKLINK_YUV_RANGE` (`limited`|`full`) exist for A/B testing only.

@@ -1,6 +1,6 @@
 # DeckLink backend seam: human validation
 
-Branch `feature/native-decklink-addon`, stacked on `feature/decklink-output` (PR #23). It changes **how** the app talks to the card, not what it does. Nothing here has run against real hardware yet; this checklist is what makes it ready for a PR. **The PR targets `feature/decklink-output`, not `main`.**
+Branch `feature/native-decklink-addon`, stacked on `feature/decklink-output` (PR #23). It changes **how** the app talks to the card, not what it does. This checklist was run on hardware on 2026-10-23, see [Results](#results-2026-10-23). **The PR targets `feature/decklink-output`, not `main`.**
 
 ## What changed (so you know what to watch)
 
@@ -71,3 +71,18 @@ Paste: the `decklink:info` output, the stats lines, and anything that failed. If
 1. Open a PR from `feature/native-decklink-addon` into **`feature/decklink-output`**.
 2. That branch (PR #23) still has its own unchecked tests; this one merges into it, and the whole DeckLink set rolls into `main` from there.
 3. If PR #23 changes after more testing, this branch is rebased or merged onto it before the PR.
+
+## Results (2026-10-23)
+
+UltraStudio Express Monitor 3G, Desktop Video 16.4.0, macOS, UHD displays. macadam backend throughout.
+
+| Check | Result |
+|---|---|
+| 1. 1080p60, 1080p59.94 (`yuv`), 1080p29.97 (`bgra`) hardware test | 7/7 each, colour bars correct on the Video Assist |
+| 1. Colour chart | Colours looked right at several resolutions |
+| 2. `decklink:info`, `decklink:probe-modes` | All 9 modes opened (1080i59.94 has since been removed from the app) |
+| 3. App with real slides | Slides appeared and looked good, next slide and animated GIFs fast enough |
+| 3. Mode switch to 59.94, off/on restart, Format dropdown contents | Not checked |
+| 4. Unhappy paths (cable unplugged) | Not checked |
+
+Found on the way: the probe script and hardware test sent black frames because their fake window had no `getSize()`, while still passing. Fixed in `bf13433`. Stats lines from the real-slides run are in the baseline table in [DECKLINK.md](DECKLINK.md#measured-baseline-macadam-backend).

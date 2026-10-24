@@ -29,6 +29,12 @@ const QRCode = require('qrcode');
 const { createPerfectCueServer } = require('./src/perfectcue-server');
 const { normalizePerfectCuePorts } = require('./src/perfectcue-port-config');
 const { armNotesAdoption } = require('./src/notes-window-adoption');
+let DecklinkOutputManager = null;
+try {
+  DecklinkOutputManager = require('./src/decklink-output').DecklinkOutputManager;
+} catch (e) {
+  // decklink-output module not available
+}
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -1423,6 +1429,12 @@ function loadPreferences() {
         prefs.presentationNativeFullscreen = prefs.presentationNativeFullscreen === true;
       }
       prefs.perfectCuePorts = normalizePerfectCuePorts(prefs);
+      if (!prefs.decklink) {
+        prefs.decklink = {
+          slides: { enabled: false, deviceIndex: 0, displayMode: '1080p2997' },
+          notes:  { enabled: false, deviceIndex: 1, displayMode: '1080p2997' }
+        };
+      }
       const _prefsJson = safeStringify(prefs);
       if (_prefsJson !== _lastLoggedPrefsJson) {
         logDebug('[Preferences] Loaded preferences:', _prefsJson);
@@ -3350,6 +3362,31 @@ ipcMain.handle('export-log-buffer', async () => {
   } catch (error) {
     return { success: false, error: error.message };
   }
+});
+
+ipcMain.handle('get-decklink-devices', async () => {
+  if (!DecklinkOutputManager) return [];
+  try { return await DecklinkOutputManager.getDevices(); } catch (e) { return []; }
+});
+
+ipcMain.handle('get-decklink-modes', async (_event, deviceIndex) => {
+  if (!DecklinkOutputManager) return [];
+  try { return await DecklinkOutputManager.getModes(deviceIndex); } catch (e) { return []; }
+});
+
+ipcMain.handle('get-decklink-status', () => {
+  if (!DecklinkOutputManager) return { providerType: 'unavailable', slides: { active: false }, notes: { active: false } };
+  try { return DecklinkOutputManager.getStatus(); } catch (e) { return { providerType: 'unavailable', slides: { active: false }, notes: { active: false } }; }
+});
+
+ipcMain.handle('save-decklink-config', async (_event, decklinkConfig) => {
+  const prefs = loadPreferences();
+  prefs.decklink = decklinkConfig;
+  savePreferences(prefs);
+  if (DecklinkOutputManager) {
+    try { await DecklinkOutputManager.reconfigure(prefs); } catch (e) { logError('[DeckLink] reconfigure error:', e.message); }
+  }
+  return { ok: true };
 });
 
 // Sign in with Google
@@ -6255,6 +6292,27 @@ function startHttpServer() {
           res.end(JSON.stringify({ error: error.message }));
         }
       });
+      return;
+    }
+
+    if (req.method === 'GET' && apiReqPath === '/api/decklink/status') {
+      const status = DecklinkOutputManager ? DecklinkOutputManager.getStatus() : { providerType: 'unavailable', slides: { active: false }, notes: { active: false } };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(status));
+      return;
+    }
+
+    if (req.method === 'GET' && apiReqPath === '/api/decklink/devices') {
+      (async () => {
+        try {
+          const devices = DecklinkOutputManager ? await DecklinkOutputManager.getDevices() : [];
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(devices));
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      })();
       return;
     }
 
@@ -12938,7 +12996,7 @@ function startWebUiServer() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.env.GSO_README_CAPTURE === '1') {
     try {
       readmeCapturePrefsBackup = JSON.parse(JSON.stringify(loadPreferences()));
@@ -12952,6 +13010,15 @@ app.whenReady().then(() => {
   startHttpServer();
   startWebUiServer();
   // Quick Tunnel starts from Web UI listen callback when cloudflaredEnabled is set
+
+  if (DecklinkOutputManager) {
+    try {
+      const prefs = loadPreferences();
+      await DecklinkOutputManager.init(() => presentationWindow, () => notesWindow, prefs);
+    } catch (e) {
+      logError('[DeckLink] init error:', e.message);
+    }
+  }
 
   // Start backup status polling if in primary mode
   startBackupStatusPolling();
@@ -12985,5 +13052,8 @@ app.on('before-quit', () => {
   if (webUiServer) {
     console.log('[Web UI] Shutting down web UI server');
     webUiServer.close();
+  }
+  if (DecklinkOutputManager) {
+    DecklinkOutputManager.shutdown().catch(() => {});
   }
 });

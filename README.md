@@ -45,7 +45,7 @@ Use your real path if the app lives elsewhere. Don’t run `xattr` over random t
 Send the slides window and the speaker-notes window out of a **Blackmagic DeckLink** (or UltraStudio) device as a video signal, for vision mixers, record decks, projectors and confidence monitors. Each output is configured separately, so slides and notes can go to different devices.
 
 - **Where:** desktop settings → **DeckLink** tab. Pick a device and format for slides and/or notes, tick **Enable**, then **Save DeckLink Settings**. The status light shows whether the output is live.
-- **Formats:** 1080p 59.94 / 60 / 50 / 30 / 29.97 / 25, 1080i 59.94, 720p 59.94 / 50. Choose the one that matches your mixer or display. Defaults to 1080p 29.97.
+- **Formats:** 1080p 59.94 / 60 / 50 / 30 / 29.97 / 25, 720p 59.94 / 50. Choose the one that matches your mixer or display. Defaults to 1080p 29.97.
 - **API:** `GET /api/decklink/status` and `GET /api/decklink/devices`.
 
 ### What you need

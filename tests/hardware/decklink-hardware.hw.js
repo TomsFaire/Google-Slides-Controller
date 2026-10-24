@@ -51,7 +51,7 @@ function colourBars(width, height) {
 function fakeWindow(width, height) {
   const bitmap = colourBars(width, height);
   let captures = 0;
-  const image = { resize: () => ({ toBitmap: () => bitmap }) };
+  const image = { getSize: () => ({ width, height }), resize: () => image, toBitmap: () => bitmap };
   const win = {
     isDestroyed: () => false,
     webContents: { capturePage: async () => { captures++; return image; } },

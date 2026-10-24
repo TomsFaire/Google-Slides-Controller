@@ -56,8 +56,7 @@ function chart(width, height) {
 async function main() {
   const mode = DISPLAY_MODES[MODE];
   if (!mode) throw new Error(`unknown DECKLINK_MODE ${MODE}`);
-  if (FORCED_FORMAT) mode.pixelFormat = FORCED_FORMAT; // shared object read by the provider
-  const path = (mode.pixelFormat || 'bgra') === 'yuv' ? 'YUV (app converts)' : 'BGRA (driver converts)';
+  if (FORCED_FORMAT) mode.pixelFormats = [FORCED_FORMAT]; // shared object read by the provider
 
   const bitmap = chart(mode.width, mode.height);
   const image = { getSize: () => ({ width: mode.width, height: mode.height }), resize: () => image, toBitmap: () => bitmap };
@@ -72,8 +71,10 @@ async function main() {
     process.exit(1);
   }
 
+  const format = slides.pixelFormat;
+  const path = format === 'yuv' ? 'YUV (app converts)' : 'BGRA (driver converts)';
   console.log(`Chart on device ${DEVICE_INDEX}: ${MODE}, ${path}`);
-  if ((mode.pixelFormat || 'bgra') === 'yuv') {
+  if (format === 'yuv') {
     console.log(`YUV matrix=${process.env.DECKLINK_YUV_MATRIX || '709'} range=${process.env.DECKLINK_YUV_RANGE || 'limited'}`);
   }
   console.log(`

@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   getDecklinkDevices: () => ipcRenderer.invoke('get-decklink-devices'),
+  getDecklinkModes: (deviceIndex) => ipcRenderer.invoke('get-decklink-modes', deviceIndex),
   getDecklinkStatus: () => ipcRenderer.invoke('get-decklink-status'),
   saveDecklinkConfig: (config) => ipcRenderer.invoke('save-decklink-config', config),
 });

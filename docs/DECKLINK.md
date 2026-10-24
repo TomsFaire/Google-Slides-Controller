@@ -19,12 +19,9 @@ The app talks to the device through [`macadam`](https://www.npmjs.com/package/ma
 
 Pick a format that matches the receiving equipment. Many receivers will not lock to a rate they do not expect.
 
-| Format | Notes |
-|---|---|
-| 1080p 59.94 / 60 / 50 | Converted to 8-bit YUV in the app. Some devices accept these only as YUV. |
-| 1080p 29.97 / 30 / 25 | Sent as BGRA. |
-| 1080i 59.94 | Interlaced. |
-| 720p 59.94 / 50 | |
+The Format list is read from the selected device, so it only shows modes that device supports. The app offers up to these: 1080p 59.94 / 60 / 50 / 30 / 29.97 / 25, 720p 59.94 / 50 (UHD and higher are not supported yet and are hidden even if the device has them). If the device cannot be read, the full list is shown. If a saved format is not supported by the device you pick, the tab switches to a supported one and says so.
+
+The app asks the device which pixel format it accepts for the chosen mode. It sends BGRA when the device takes it, and otherwise converts to 8-bit YUV itself (some devices, such as the UltraStudio Express Monitor 3G, accept 1080p50/59.94/60 only as YUV). The log line `[decklink] output started: … pixel format …` shows which was used.
 
 ## What it does not do
 
@@ -46,6 +43,17 @@ Every 5 seconds the app logs, per output:
 - **ticks skipped (capture busy):** the previous capture had not finished.
 
 Static slides are smooth. For video and animation, check the log with your real content before an event. The target is 24 fps minimum, 30 where possible; this has not yet been measured with video on a 1080p display.
+
+### Measured baseline (macadam backend)
+
+UltraStudio Express Monitor 3G, Desktop Video 16.4.0, 1080p29.97 (BGRA), 2026-10-23. Recorded so the native addon can be compared against it.
+
+| Source | Captured | Capture | Resize | Delivered by worker | Round trip | `displayFrame` |
+|---|---|---|---|---|---|---|
+| Fake window (colour bars, no capture or resize) | 29.8 fps | 0 ms | 0 ms | 29.4 fps | 29.1 ms | 21.1 ms |
+| Real slides on a UHD display | 16 to 19 fps | 13 to 23 ms | about 37 ms | 8 to 9.6 fps | 53 to 61 ms | about 21 ms |
+
+On the UHD display the main thread is the limit: capture plus resize is 50 to 60 ms per frame. Next-slide changes and animated GIFs looked fine on the output. Video slides on a 1080p 1x display are still unmeasured.
 
 ## Colour
 

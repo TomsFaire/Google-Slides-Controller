@@ -3369,6 +3369,11 @@ ipcMain.handle('get-decklink-devices', async () => {
   try { return await DecklinkOutputManager.getDevices(); } catch (e) { return []; }
 });
 
+ipcMain.handle('get-decklink-modes', async (_event, deviceIndex) => {
+  if (!DecklinkOutputManager) return [];
+  try { return await DecklinkOutputManager.getModes(deviceIndex); } catch (e) { return []; }
+});
+
 ipcMain.handle('get-decklink-status', () => {
   if (!DecklinkOutputManager) return { providerType: 'unavailable', slides: { active: false }, notes: { active: false } };
   try { return DecklinkOutputManager.getStatus(); } catch (e) { return { providerType: 'unavailable', slides: { active: false }, notes: { active: false } }; }

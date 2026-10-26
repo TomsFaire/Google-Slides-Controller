@@ -27,6 +27,11 @@ const loadStagetimerBtn = document.getElementById('load-stagetimer-btn');
 const stageTimerOverlayEnabledCheckbox  = document.getElementById('stage-timer-overlay-enabled');
 const stageTimerOverlayPositionSelect   = document.getElementById('stage-timer-overlay-position');
 const stageTimerOverlaySizeInput        = document.getElementById('stage-timer-overlay-size');
+const offlineCacheStatusBadge   = document.getElementById('offline-cache-status-badge');
+const offlineCacheStatusDetail  = document.getElementById('offline-cache-status-detail');
+const offlineModeEnabledCheckbox = document.getElementById('offline-mode-enabled');
+const offlineWarmBtn            = document.getElementById('offline-warm-btn');
+const offlineClearBtn           = document.getElementById('offline-clear-btn');
 const perfectCueEnabledCheckbox = document.getElementById('perfectcue-enabled');
 const perfectCuePortList = document.getElementById('perfectcue-port-list');
 const addPerfectCuePortBtn = document.getElementById('add-perfectcue-port');
@@ -1208,6 +1213,113 @@ async function initDisplays() {
     stageTimerOverlayPositionSelect.addEventListener('change', applyOverlaySettings);
     stageTimerOverlaySizeInput.addEventListener('change', applyOverlaySettings);
 
+    // Offline mode
+    let offlinePollInterval = null;
+
+    function updateOfflineCacheUI(status) {
+      if (!offlineCacheStatusBadge) return;
+      const { cacheState, cachedAt, offlineModeEnabled } = status || {};
+
+      const labels = {
+        'not-cached': 'Not cached',
+        'caching': 'Caching…',
+        'cached': 'Cached',
+        'offline': 'Offline',
+        'stale': 'Stale',
+        'error': 'Failed',
+      };
+      const colors = {
+        'not-cached': 'rgba(255,255,255,0.1)',
+        'caching': '#7b61ff',
+        'cached': '#22c55e',
+        'offline': '#3b82f6',
+        'stale': '#f59e0b',
+        'error': '#ef4444',
+      };
+
+      offlineCacheStatusBadge.textContent = labels[cacheState] || cacheState || 'Unknown';
+      offlineCacheStatusBadge.style.background = colors[cacheState] || 'rgba(255,255,255,0.1)';
+      offlineCacheStatusBadge.style.color = cacheState === 'not-cached' ? '' : '#fff';
+
+      if (cacheState === 'error') {
+        offlineCacheStatusDetail.textContent = 'Download failed — check the debug log and try again';
+      } else if (cachedAt && cacheState !== 'not-cached') {
+        const d = new Date(cachedAt);
+        offlineCacheStatusDetail.textContent = 'Last cached: ' + d.toLocaleString();
+      } else if (cacheState === 'caching') {
+        offlineCacheStatusDetail.textContent = 'Recording all slides… leave the presentation open';
+      } else {
+        offlineCacheStatusDetail.textContent = '';
+      }
+
+      if (offlineModeEnabledCheckbox) offlineModeEnabledCheckbox.checked = offlineModeEnabled === true;
+
+      // Poll while caching
+      if (cacheState === 'caching' && !offlinePollInterval) {
+        offlinePollInterval = setInterval(async () => {
+          try {
+            const s = await window.electronAPI.offlineMode.getStatus();
+            updateOfflineCacheUI(s);
+            if (s.cacheState !== 'caching') {
+              clearInterval(offlinePollInterval);
+              offlinePollInterval = null;
+            }
+          } catch { /* ignore */ }
+        }, 2000);
+      } else if (cacheState !== 'caching' && offlinePollInterval) {
+        clearInterval(offlinePollInterval);
+        offlinePollInterval = null;
+      }
+    }
+
+    // Make available for loadSettings()
+    window._updateOfflineCacheUI = updateOfflineCacheUI;
+
+    if (offlineWarmBtn) {
+      offlineWarmBtn.addEventListener('click', async () => {
+        try {
+          const result = await window.electronAPI.offlineMode.warmCache();
+          if (!result.success) {
+            console.error('[Offline] Warm failed:', result.error);
+            showStatus(result.error || 'Could not start offline download', 'error');
+          }
+          const status = await window.electronAPI.offlineMode.getStatus();
+          updateOfflineCacheUI(status);
+        } catch (e) {
+          console.error('Failed to start offline cache warm:', e);
+        }
+      });
+    }
+
+    if (offlineClearBtn) {
+      offlineClearBtn.addEventListener('click', async () => {
+        try {
+          await window.electronAPI.offlineMode.clearCache();
+          const status = await window.electronAPI.offlineMode.getStatus();
+          updateOfflineCacheUI(status);
+        } catch (e) {
+          console.error('Failed to clear offline cache:', e);
+        }
+      });
+    }
+
+    if (offlineModeEnabledCheckbox) {
+      offlineModeEnabledCheckbox.addEventListener('change', async () => {
+        try {
+          await window.electronAPI.offlineMode.setEnabled(offlineModeEnabledCheckbox.checked);
+          const status = await window.electronAPI.offlineMode.getStatus();
+          updateOfflineCacheUI(status);
+        } catch (e) {
+          console.error('Failed to set offline mode:', e);
+        }
+      });
+    }
+
+    // Push updates from main process when cache state changes
+    window.electronAPI.onOfflineCacheStateChanged((data) => {
+      updateOfflineCacheUI(data);
+    });
+
     // Speaker notes capture (clean text via IPC - no fetch/port needed)
     async function refreshSpeakerNotesCapture() {
       if (!speakerNotesCapture) return;
@@ -2056,6 +2168,14 @@ async function loadStagetimerSettings() {
     stageTimerOverlaySizeInput.value          = String(overlayStatus.size || 10);
   } catch (e) {
     console.error('Failed to load stage timer overlay status:', e);
+  }
+
+  // Load offline mode status
+  try {
+    const offlineStatus = await window.electronAPI.offlineMode.getStatus();
+    if (window._updateOfflineCacheUI) window._updateOfflineCacheUI(offlineStatus);
+  } catch (e) {
+    console.error('Failed to load offline mode status:', e);
   }
 }
 

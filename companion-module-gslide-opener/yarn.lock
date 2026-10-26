@@ -14,9 +14,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@companion-module/tools@npm:^3.1.1":
-  version: 3.1.1
-  resolution: "@companion-module/tools@npm:3.1.1"
+"@companion-module/tools@npm:^3.2.0":
+  version: 3.2.0
+  resolution: "@companion-module/tools@npm:3.2.0"
   dependencies:
     "@eslint/js": "npm:^10.0.1"
     esbuild: "npm:^0.28.2"
@@ -50,7 +50,7 @@ __metadata:
     companion-module-check: ./dist/scripts/check-connection.js
     companion-surface-build: ./dist/scripts/build-surface.js
     companion-surface-check: ./dist/scripts/check-surface.js
-  checksum: 10c0/9b0437f2cb634d50ad36ba336e9d115d9a459cfeaac36b7ce39cb145b89a19142e0d110f25aaf99c0d5df456820226962e7a7c9d8643f4a4833ad71ec52cc1b6
+  checksum: 10c0/89b3e157931bb6b15c7e32eb8305c10904a6fbb3bdedc5247e9076650a1669fa32578aaab5b0b8492508a5c1166d652122f14cd19a629887cefe5d0fd1984bbe
   languageName: node
   linkType: hard
 
@@ -315,7 +315,7 @@ __metadata:
   resolution: "companion-module-gslide-opener@workspace:."
   dependencies:
     "@companion-module/base": "npm:~2.1.3"
-    "@companion-module/tools": "npm:^3.1.1"
+    "@companion-module/tools": "npm:^3.2.0"
   languageName: unknown
   linkType: soft
 

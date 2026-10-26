@@ -50,7 +50,7 @@ async function checkDisplay(display) {
   const win = new BrowserWindow({
     x, y, width: PATCH_W * PATCHES.length, height: PATCH_H,
     frame: false, show: true, useContentSize: true, backgroundColor: '#000',
-    webPreferences: { backgroundThrottling: false },
+    webPreferences: { backgroundThrottling: false, sandbox: true },
   });
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
   await sleep(1200);

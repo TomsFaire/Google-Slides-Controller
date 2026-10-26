@@ -29,6 +29,7 @@ const QRCode = require('qrcode');
 const { createPerfectCueServer } = require('./src/perfectcue-server');
 const { normalizePerfectCuePorts } = require('./src/perfectcue-port-config');
 const { armNotesAdoption } = require('./src/notes-window-adoption');
+const { isSafeWindowOpenUrl, isExternalHttpUrl } = require('./src/url-safety');
 let DecklinkOutputManager = null;
 try {
   DecklinkOutputManager = require('./src/decklink-output').DecklinkOutputManager;
@@ -522,6 +523,7 @@ function getSpeakerNotesWindowOptions(notesDisplay) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GOOGLE_SESSION_PARTITION
     }
   };
@@ -539,6 +541,7 @@ function getPresentationBrowserWindowOptions(presentationBounds) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GOOGLE_SESSION_PARTITION
     }
   };
@@ -570,6 +573,7 @@ function getSlidoPresentationBrowserWindowOptions(presentationBounds) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: SLIDO_SESSION_PARTITION
     }
   };
@@ -589,6 +593,7 @@ function getKeyFillFillWindowOptions(bounds, bgColor) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: KEY_FILL_SESSION_PARTITION
     }
   };
@@ -608,6 +613,7 @@ function getKeyFillKeyWindowOptions(bounds, bgColor) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: KEY_FILL_SESSION_PARTITION
     }
   };
@@ -627,6 +633,7 @@ function getGenericUrlBrowserWindowOptions(presentationBounds, backgroundColor) 
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GENERIC_SESSION_PARTITION
     }
   };
@@ -2415,6 +2422,7 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
   attachCrashHandlers(presentationWindow, 'presentation');
 
   presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
     const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
@@ -2514,7 +2522,7 @@ async function openSlidoPresentationDisplay(url) {
   }
   attachCrashHandlers(presentationWindow, 'presentation');
 
-  presentationWindow.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
+  presentationWindow.webContents.setWindowOpenHandler(({ url }) => (isSafeWindowOpenUrl(url) ? { action: 'allow' } : { action: 'deny' }));
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
@@ -2652,7 +2660,7 @@ async function openGenericUrlDisplay(url, bgColor) {
   }
   attachCrashHandlers(presentationWindow, 'presentation');
 
-  presentationWindow.webContents.setWindowOpenHandler(() => ({ action: 'allow' }));
+  presentationWindow.webContents.setWindowOpenHandler(({ url }) => (isSafeWindowOpenUrl(url) ? { action: 'allow' } : { action: 'deny' }));
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
@@ -2778,6 +2786,7 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
+      sandbox: true,
       nodeIntegration: false
     },
     autoHideMenuBar: true,
@@ -2785,6 +2794,19 @@ function createWindow() {
     center: true
   });
 
+  // The control UI is local; links and navigations away from it go to the OS browser.
+  // (Google windows are deliberately not restricted: sign-in may redirect through a Workspace SSO IdP.)
+  const keepLocal = (event, url) => {
+    if (url.startsWith('file://')) return;
+    event.preventDefault();
+    if (isExternalHttpUrl(url)) shell.openExternal(url);
+  };
+  mainWindow.webContents.on('will-navigate', keepLocal);
+  mainWindow.webContents.on('will-redirect', keepLocal);
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
   mainWindow.loadFile('index.html');
   attachCrashHandlers(mainWindow, 'main');
   // Open DevTools for main window to see logs
@@ -2872,6 +2894,7 @@ async function runReadmeScreenshotCapture() {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
       },
     });
 
@@ -3400,6 +3423,7 @@ ipcMain.handle('google-signin', async () => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       partition: GOOGLE_SESSION_PARTITION
     }
   });
@@ -3474,6 +3498,7 @@ ipcMain.handle('check-signin-status', async () => {
             webPreferences: {
               nodeIntegration: false,
               contextIsolation: true,
+              sandbox: true,
               partition: GOOGLE_SESSION_PARTITION
             }
           });
@@ -3606,6 +3631,7 @@ ipcMain.handle('open-test-presentation', async () => {
     // Handle the speaker notes popup window (open at notes-display size so Slides uses narrow-preview layout)
     presentationWindow.webContents.setWindowOpenHandler((details) => {
       logDebug('[Test] Window open intercepted:', details.url);
+      if (!isSafeWindowOpenUrl(details.url)) return { action: 'deny' };
       const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
       return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
     });
@@ -3690,6 +3716,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Handle the speaker notes popup window (open at notes-display size so Slides uses narrow-preview layout)
   presentationWindow.webContents.setWindowOpenHandler((details) => {
     logDebug('[Multi-Monitor] Window open intercepted:', details.url);
+    if (!isSafeWindowOpenUrl(details.url)) return { action: 'deny' };
     const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
@@ -4515,6 +4542,7 @@ function startHttpServer() {
 
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
@@ -4647,6 +4675,7 @@ function startHttpServer() {
 
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
@@ -6205,6 +6234,7 @@ function startHttpServer() {
 
           // Set up window handlers (same as open-presentation; notes open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
+            if (!isSafeWindowOpenUrl(url)) return { action: 'deny' };
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
@@ -6460,7 +6490,7 @@ async function showTunnelQrOverlay(url, durationMs) {
     skipTaskbar: true,
     resizable: false,
     focusable: false,
-    webPreferences: { nodeIntegration: false, contextIsolation: true }
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
   });
 
   const qrDataUrl = await QRCode.toDataURL(url, { width: QR_PX, margin: 1 });
@@ -6523,7 +6553,7 @@ function showStageTimerOverlay() {
       skipTaskbar: true,
       focusable: false,
       resizable: false,
-      webPreferences: { nodeIntegration: false, contextIsolation: true }
+      webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
     });
     const overlayPath = path.join(__dirname, 'src', 'stage-timer-overlay.html');
     const query = `?roomId=${encodeURIComponent(roomId)}&apiKey=${encodeURIComponent(apiKey)}`;
@@ -6694,18 +6724,19 @@ async function deleteCfTunnelAndDns(apiToken, accountId, zoneId, tunnelId, hostn
 }
 
 // safeStorage wrappers — only usable after app ready
-function encryptCfToken(plaintext) {
+async function encryptCfToken(plaintext) {
   const { safeStorage } = require('electron');
-  if (!safeStorage.isEncryptionAvailable()) return plaintext; // fallback: store as-is
-  return safeStorage.encryptString(plaintext).toString('base64');
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) return plaintext; // fallback: store as-is
+  return (await safeStorage.encryptStringAsync(plaintext)).toString('base64');
 }
 
-function decryptCfToken(stored) {
+async function decryptCfToken(stored) {
   if (!stored) return '';
   const { safeStorage } = require('electron');
-  if (!safeStorage.isEncryptionAvailable()) return stored;
+  if (!(await safeStorage.isAsyncEncryptionAvailable())) return stored;
   try {
-    return safeStorage.decryptString(Buffer.from(stored, 'base64'));
+    const { result } = await safeStorage.decryptStringAsync(Buffer.from(stored, 'base64'));
+    return result;
   } catch (_) {
     return '';
   }
@@ -6733,7 +6764,7 @@ ipcMain.handle('cf-verify-token', async (_event, { apiToken }) => {
 ipcMain.handle('cf-save-token', async (_event, { apiToken, accountId }) => {
   try {
     const prefs = loadPreferences();
-    prefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    prefs.cfApiTokenEncrypted = await encryptCfToken(apiToken);
     prefs.cfAccountId = accountId || prefs.cfAccountId || '';
     savePreferences(prefs);
     return { success: true };
@@ -6796,13 +6827,13 @@ ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname })
         // token-based run: use --token flag instead of credentials file
         // store token encrypted, flag as token-mode
         const updatedPrefs = loadPreferences();
-        updatedPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+        updatedPrefs.cfApiTokenEncrypted = await encryptCfToken(apiToken);
         updatedPrefs.cfAccountId = accountId;
         updatedPrefs.cfTunnelId = tunnelId;
         updatedPrefs.cfZoneId = zoneId;
         updatedPrefs.cfTunnelName = tunnelName;
         updatedPrefs.cfTunnelHostname = hostname;
-        updatedPrefs.cfTunnelToken = encryptCfToken(tokenStr);
+        updatedPrefs.cfTunnelToken = await encryptCfToken(tokenStr);
         updatedPrefs.cfCredentialsPath = '';
         updatedPrefs.tunnelMode = 'named';
         savePreferences(updatedPrefs);
@@ -6813,7 +6844,7 @@ ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname })
 
     // Persist everything
     const finalPrefs = loadPreferences();
-    finalPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    finalPrefs.cfApiTokenEncrypted = await encryptCfToken(apiToken);
     finalPrefs.cfAccountId = accountId;
     finalPrefs.cfTunnelId = tunnelId;
     finalPrefs.cfZoneId = zoneId;
@@ -6836,7 +6867,7 @@ ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname })
 // IPC: delete CF tunnel + DNS record
 ipcMain.handle('cf-delete-tunnel', async () => {
   const prefs = loadPreferences();
-  const apiToken = decryptCfToken(prefs.cfApiTokenEncrypted);
+  const apiToken = await decryptCfToken(prefs.cfApiTokenEncrypted);
   if (!apiToken) return { success: false, error: 'No API token saved' };
   if (!prefs.cfTunnelId) return { success: false, error: 'No tunnel ID saved' };
   try {
@@ -6893,7 +6924,7 @@ function stopCloudflaredTunnel() {
   broadcastTunnelUrl(null);
 }
 
-function startCloudflaredTunnel() {
+async function startCloudflaredTunnel() {
   const prefs = loadPreferences();
   if (!prefs.cloudflaredEnabled) return;
 
@@ -6921,7 +6952,7 @@ function startCloudflaredTunnel() {
 
   if (isNamed) {
     namedHostname = prefs.cfTunnelHostname || '';
-    const cfTunnelToken = prefs.cfTunnelToken ? decryptCfToken(prefs.cfTunnelToken) : '';
+    const cfTunnelToken = prefs.cfTunnelToken ? await decryptCfToken(prefs.cfTunnelToken) : '';
     const cfCredentialsPath = prefs.cfCredentialsPath || '';
     const cfTunnelName = prefs.cfTunnelName || '';
     if (!namedHostname) {
@@ -6949,6 +6980,7 @@ function startCloudflaredTunnel() {
     }
   }
 
+  if (cloudflaredProcess) return; // another start won the race while decrypting
   try {
     cloudflaredProcess = spawn(bin, tunnelArgs, {
       stdio: ['ignore', 'pipe', 'pipe']

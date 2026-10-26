@@ -28,6 +28,20 @@ const util = require('util');
 const QRCode = require('qrcode');
 const { createPerfectCueServer } = require('./src/perfectcue-server');
 const { normalizePerfectCuePorts } = require('./src/perfectcue-port-config');
+const { armNotesAdoption } = require('./src/notes-window-adoption');
+const {
+  OFFLINE_CACHE_STATES,
+  readManifestEntries,
+  buildHashToUrl,
+  createWarmGuard,
+  computeRestoreSteps,
+} = require('./src/offline-cache');
+let DecklinkOutputManager = null;
+try {
+  DecklinkOutputManager = require('./src/decklink-output').DecklinkOutputManager;
+} catch (e) {
+  // decklink-output module not available
+}
 
 // ----------------------------
 // Logging helpers (secure by default)
@@ -305,6 +319,10 @@ process.on('unhandledRejection', (reason, promise) => {
 let mainWindow;
 let presentationWindow = null;
 let notesWindow = null;
+// shape: { token: number, win: BrowserWindow, retryTimer: ReturnType<typeof setTimeout>|null, hook: object|null }
+let currentNotesLaunch = null;
+// Armed one-shot presenter-view adoption hook (see src/notes-window-adoption.js).
+let notesAdoptionHook = null;
 let notesNormalizeIntervalId = null;
 let currentSlide = null; // best-effort: we track on our next/prev; DOM can override when notes window has aria-posinset/aria-setsize
 let lastPresentationUrl = null; // Store the last-opened presentation URL for reload functionality
@@ -318,6 +336,13 @@ let lastKeyFillUrls = null; // { fillUrl, keyUrl, fillBgColor, keyBgColor } — 
 let lastGenericUrlBgColor = null; // stored for crash recovery reopen
 let keyFillFillWindow = null;
 let keyFillKeyWindow = null;
+
+// Speaker-notes launch reliability constants
+const NOTES_MAX_ATTEMPTS      = 15;   // ~15 s total window
+const NOTES_VERIFY_MS         = 1000; // wait after s-press before re-pressing
+const NOTES_READY_TIMEOUT_MS  = 20000;// max wait for present-mode gate
+const NOTES_FOCUS_SETTLE_MS   = 80;   // focus-settle delay before s-press
+const NOTES_PRESENT_SETTLE_MS = 250;  // post-navigate settle before first attempt
 
 // Google Slides speaker notes zoom: discrete steps from native baseline (Zoom in / Zoom out toolbar; see /api/zoom-in-notes).
 const NOTES_ZOOM_MIN_STEPS = -10;
@@ -519,13 +544,23 @@ const OFFLINE_INTERCEPT_PATTERNS = [
 
 // Runtime state
 let offlineModeActive = false;
-let offlineCacheState = 'not-cached'; // 'not-cached' | 'caching' | 'cached' | 'offline'
+// One of OFFLINE_CACHE_STATES: 'not-cached' | 'caching' | 'cached' | 'offline' | 'error'
+let offlineCacheState = OFFLINE_CACHE_STATES.NOT_CACHED;
 let offlineCachedAt = null;
 let offlineActivePresentationId = null;
 let offlineActiveManifest = null; // url → { hash, mimeType, statusCode, responseHeaders }
 let offlineHashToUrl = null;      // hash → url (reverse index for gs-cache:// serving)
 let offlineActiveCacheDir = null;
 let offlineWarmAbortController = null;
+// The 'debugger-message' listener the running warm registered, so a later warm
+// can remove it before adding its own instead of stacking listeners.
+let offlineWarmDebugListener = null;
+// Serialises warm-ups across all three entry points (auto-warm, IPC, HTTP).
+// A second request while one is running is refused, not queued behind it —
+// concurrent runs orphan CDP listeners and interleave recorded responses.
+const offlineWarmGuard = createWarmGuard(
+  (presWindow, presentationId) => warmOfflineCache(presWindow, presentationId)
+);
 
 function getOfflineCacheDir(presentationId) {
   return path.join(app.getPath('userData'), OFFLINE_CACHE_SUBDIR, presentationId);
@@ -599,21 +634,21 @@ function setOfflineCacheState(state, presentationId) {
 
 function loadOfflineModeForPresentation(presentationId) {
   offlineActivePresentationId = presentationId;
-  const manifest = loadOfflineManifest(presentationId);
-  if (manifest && manifest.entries) {
+  // readManifestEntries returns null for a corrupted or version-mismatched
+  // manifest rather than throwing on a missing `entries` map.
+  const manifest = readManifestEntries(loadOfflineManifest(presentationId));
+  if (manifest) {
     offlineActiveManifest = manifest.entries;
-    offlineHashToUrl = Object.fromEntries(
-      Object.entries(manifest.entries).map(([url, entry]) => [entry.hash, url])
-    );
+    offlineHashToUrl = buildHashToUrl(manifest.entries);
     offlineActiveCacheDir = getOfflineCacheDir(presentationId);
-    offlineCachedAt = manifest.cachedAt || null;
-    setOfflineCacheState('cached', presentationId);
+    offlineCachedAt = manifest.cachedAt;
+    setOfflineCacheState(OFFLINE_CACHE_STATES.CACHED, presentationId);
   } else {
     offlineActiveManifest = null;
     offlineHashToUrl = null;
     offlineActiveCacheDir = null;
     offlineCachedAt = null;
-    setOfflineCacheState('not-cached', presentationId);
+    setOfflineCacheState(OFFLINE_CACHE_STATES.NOT_CACHED, presentationId);
   }
 }
 
@@ -640,13 +675,16 @@ function applyOfflineMode(enabled) {
   const ses = session.fromPartition(GOOGLE_SESSION_PARTITION);
   if (enabled && offlineActiveManifest) {
     ses.webRequest.onBeforeRequest({ urls: OFFLINE_INTERCEPT_PATTERNS }, offlineRequestHandler);
-    setOfflineCacheState('offline', offlineActivePresentationId);
+    setOfflineCacheState(OFFLINE_CACHE_STATES.OFFLINE, offlineActivePresentationId);
     logInfo('[Offline] Offline playback enabled — serving', Object.keys(offlineActiveManifest).length, 'cached URLs');
   } else {
     ses.webRequest.onBeforeRequest(null);
     offlineModeActive = false;
-    if (offlineCacheState === 'offline') {
-      setOfflineCacheState(offlineActiveManifest ? 'cached' : 'not-cached', offlineActivePresentationId);
+    if (offlineCacheState === OFFLINE_CACHE_STATES.OFFLINE) {
+      setOfflineCacheState(
+        offlineActiveManifest ? OFFLINE_CACHE_STATES.CACHED : OFFLINE_CACHE_STATES.NOT_CACHED,
+        offlineActivePresentationId
+      );
     }
     logInfo('[Offline] Offline playback disabled — live mode');
   }
@@ -669,7 +707,7 @@ async function warmOfflineCache(presWindow, presentationId) {
   const abortController = { aborted: false };
   offlineWarmAbortController = abortController;
 
-  setOfflineCacheState('caching', presentationId);
+  setOfflineCacheState(OFFLINE_CACHE_STATES.CACHING, presentationId);
   logInfo('[Offline] Cache warm-up started for', presentationId);
 
   const cacheDir = getOfflineCacheDir(presentationId);
@@ -769,7 +807,16 @@ async function warmOfflineCache(presWindow, presentationId) {
 
   try {
     if (!dbg.isAttached()) dbg.attach('1.3');
+    // Drop any listener a previous warm left registered before adding ours, so
+    // repeated warms cannot stack 'debugger-message' handlers on the window.
+    if (offlineWarmDebugListener) {
+      try {
+        presWindow.webContents.removeListener('debugger-message', offlineWarmDebugListener);
+      } catch { /* window may already be gone */ }
+      offlineWarmDebugListener = null;
+    }
     presWindow.webContents.on('debugger-message', onDebugMessage);
+    offlineWarmDebugListener = onDebugMessage;
     await dbg.sendCommand('Network.enable', {
       maxTotalBufferSize: 200 * 1024 * 1024,
       maxResourceBufferSize: 10 * 1024 * 1024,
@@ -779,15 +826,8 @@ async function warmOfflineCache(presWindow, presentationId) {
     await waitForNetworkIdle();
 
     // Capture starting slide so we can restore it after advancing through the deck
-    if (notesWindow && !notesWindow.isDestroyed()) {
-      const startInfo = await notesWindow.webContents.executeJavaScript(`
-        (function(){
-          var el = document.querySelector('[aria-posinset]');
-          return el ? (parseInt(el.getAttribute('aria-posinset'), 10) || null) : null;
-        })()
-      `).catch(() => null);
-      if (typeof startInfo === 'number') startSlide = startInfo;
-    }
+    const startInfo = await readPresenterSlidePosition();
+    if (startInfo && Number.isFinite(startInfo.cur)) startSlide = startInfo.cur;
     warmEndSlide = startSlide;
 
     let slideCount = 0;
@@ -795,25 +835,17 @@ async function warmOfflineCache(presWindow, presentationId) {
 
     for (let i = 0; i < OFFLINE_PREFETCH_MAX_SLIDES && !abortController.aborted; i++) {
       // Check if this is the last slide by reading aria state from the notes window
-      if (notesWindow && !notesWindow.isDestroyed()) {
-        try {
-          const info = await notesWindow.webContents.executeJavaScript(`
-            (function(){
-              var el = document.querySelector('[aria-posinset]');
-              if (!el) return null;
-              return {
-                cur: parseInt(el.getAttribute('aria-posinset'), 10),
-                tot: parseInt(el.getAttribute('aria-setsize'), 10)
-              };
-            })()
-          `).catch(() => null);
-          if (info && info.cur === info.tot) {
-            reachedEnd = true;
-            slideCount = info.tot;
-            logInfo('[Offline] Pre-fetch reached last slide:', info.tot);
-            break;
-          }
-        } catch { /* ignore */ }
+      const info = await readPresenterSlidePosition();
+      if (info) {
+        // Trust the live reading over a count of key presses: a Right arrow
+        // that only advanced a click-build does not change the slide.
+        if (Number.isFinite(info.cur)) warmEndSlide = info.cur;
+        if (info.cur === info.tot) {
+          reachedEnd = true;
+          slideCount = info.tot;
+          logInfo('[Offline] Pre-fetch reached last slide:', info.tot);
+          break;
+        }
       }
 
       if (abortController.aborted) break;
@@ -845,31 +877,100 @@ async function warmOfflineCache(presWindow, presentationId) {
     logInfo('[Offline] Cache complete:', Object.keys(bufferedEntries).length, 'resources,',
       Math.round(diskBytes / 1024), 'KB on disk');
 
-    setOfflineCacheState('cached', presentationId);
+    setOfflineCacheState(OFFLINE_CACHE_STATES.CACHED, presentationId);
 
   } catch (e) {
+    // A failed warm must land in a terminal state the UI can render — leaving
+    // it on 'caching' sticks the badge on "Caching…" forever.
     logError('[Offline] Cache warm-up failed:', e.message);
-    setOfflineCacheState(loadOfflineManifest(presentationId) ? 'cached' : 'not-cached', presentationId);
+    setOfflineCacheState(OFFLINE_CACHE_STATES.ERROR, presentationId);
   } finally {
+    const stillCurrentWarm = offlineWarmAbortController === abortController;
     try {
       presWindow.webContents.removeListener('debugger-message', onDebugMessage);
+      if (offlineWarmDebugListener === onDebugMessage) offlineWarmDebugListener = null;
       // Only detach if we're still the current warm — an aborted warm must not
       // detach the debugger that the replacement warm is already using.
-      if (offlineWarmAbortController === abortController && dbg.isAttached()) dbg.detach();
+      if (stillCurrentWarm && dbg.isAttached()) dbg.detach();
     } catch { /* ignore detach errors */ }
-    // Restore the slide the presenter was on before the warm advanced through the deck.
-    // Done after debugger detach so the navigation is not re-captured.
-    const slidesToGoBack = warmEndSlide - startSlide;
-    if (slidesToGoBack > 0 && !presWindow.isDestroyed()) {
-      for (let i = 0; i < slidesToGoBack; i++) {
-        presWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
-        presWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
-      }
+
+    // Restore the slide the presenter was on before the warm advanced through
+    // the deck — on the success path, the error path and an early return
+    // alike. Skipped when a replacement warm has taken over the window, since
+    // it is driving the deck itself and owns the restore.
+    if (stillCurrentWarm) {
+      await restorePresenterSlide(presWindow, startSlide, warmEndSlide);
     }
-    if (offlineWarmAbortController === abortController) {
+
+    if (stillCurrentWarm) {
       offlineWarmAbortController = null;
     }
   }
+}
+
+/**
+ * Read the presenter's slide position from the notes window's aria state.
+ * Returns null when the notes window is absent or unreadable.
+ */
+async function readPresenterSlidePosition() {
+  if (!notesWindow || notesWindow.isDestroyed()) return null;
+  try {
+    const info = await notesWindow.webContents.executeJavaScript(`
+      (function(){
+        var el = document.querySelector('[aria-posinset]');
+        if (!el) return null;
+        return {
+          cur: parseInt(el.getAttribute('aria-posinset'), 10),
+          tot: parseInt(el.getAttribute('aria-setsize'), 10)
+        };
+      })()
+    `).catch(() => null);
+    if (!info || !Number.isFinite(info.cur)) return null;
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Walk the deck back to the slide the presenter started on. Paced like
+ * /api/go-to-slide, since Slides drops arrow keys sent back-to-back.
+ */
+async function restorePresenterSlide(presWindow, startSlide, endSlide) {
+  const steps = computeRestoreSteps(startSlide, endSlide);
+  if (steps === 0) return;
+  if (!presWindow || presWindow.isDestroyed()) return;
+
+  logInfo('[Offline] Restoring presenter to slide', startSlide, '(', steps, 'back )');
+  for (let i = 0; i < steps; i++) {
+    if (presWindow.isDestroyed()) return;
+    presWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Left' });
+    presWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Left' });
+    if (i < steps - 1) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * Start a cache warm-up unless one is already running.
+ *
+ * Every entry point (auto-warm, IPC, HTTP) goes through here so concurrency is
+ * decided in exactly one place and a failure always lands in the error state
+ * instead of leaving the UI stuck on "caching".
+ */
+function requestOfflineWarm(presWindow, presentationId) {
+  const result = offlineWarmGuard.start(presWindow, presentationId);
+
+  if (!result.started) {
+    logInfo('[Offline] Warm-up already in progress — ignoring duplicate request for', presentationId);
+    return result;
+  }
+
+  result.promise.catch(e => {
+    logWarn('[Offline] Cache warm-up failed:', e && e.message ? e.message : e);
+    setOfflineCacheState(OFFLINE_CACHE_STATES.ERROR, presentationId);
+  });
+
+  return result;
 }
 
 // Build BrowserWindow options for the speaker notes popup so it opens at notes-display size.
@@ -889,8 +990,6 @@ function getSpeakerNotesWindowOptions(notesDisplay) {
     }
   };
 }
-
-const VALID_PRESENTATION_GPU_MODES = new Set(['default', 'disable-gpu', 'angle-metal', 'angle-gl', 'swiftshader']);
 
 /** BrowserWindow constructor options shared by all Google Slides presentation windows. */
 function getPresentationBrowserWindowOptions(presentationBounds) {
@@ -1014,44 +1113,6 @@ function isAllowedGenericUrl(urlString) {
     return false;
   }
 }
-
-function readPreferencesFileJsonSync() {
-  try {
-    const prefsPath = path.join(app.getPath('userData'), 'preferences.json');
-    if (!fs.existsSync(prefsPath)) return {};
-    return JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
-  } catch (e) {
-    return {};
-  }
-}
-
-/**
- * Apply GPU / ANGLE switches before app.ready(). Must stay in sync with loadPreferences() normalization.
- * Changing presentationGpuMode requires an app restart to take effect.
- */
-function applyPresentationGpuCommandLineEarly() {
-  let mode = 'default';
-  try {
-    const prefs = readPreferencesFileJsonSync();
-    const raw = prefs && prefs.presentationGpuMode;
-    if (raw && VALID_PRESENTATION_GPU_MODES.has(String(raw))) {
-      mode = String(raw);
-    }
-  } catch (e) {
-    mode = 'default';
-  }
-  if (mode === 'disable-gpu') {
-    app.disableHardwareAcceleration();
-  } else if (mode === 'angle-metal') {
-    app.commandLine.appendSwitch('use-angle', 'metal');
-  } else if (mode === 'angle-gl') {
-    app.commandLine.appendSwitch('use-angle', 'gl');
-  } else if (mode === 'swiftshader') {
-    app.commandLine.appendSwitch('use-gl', 'swiftshader');
-  }
-}
-
-applyPresentationGpuCommandLineEarly();
 
 function wantsPresentationNativeFullscreen(prefs) {
   return process.platform === 'darwin' && prefs && prefs.presentationNativeFullscreen === true;
@@ -1231,6 +1292,13 @@ async function relaunchSpeakerNotesWindow() {
     notesWindow = null;
     await new Promise(resolve => setTimeout(resolve, 300));
   }
+  // Re-arm adoption before re-pressing "s": the hook disarmed itself when the
+  // previous notes window was adopted, so without this the relaunched popup is
+  // never tracked and the notes layout preference is never applied to it.
+  if (!currentNotesLaunch) {
+    currentNotesLaunch = { token: 0, win: presentationWindow, retryTimer: null, hook: null };
+  }
+  registerNotesWindowListener(getConfiguredNotesDisplay());
   presentationWindow.focus();
   await new Promise(resolve => setTimeout(resolve, 50));
   presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
@@ -1387,6 +1455,150 @@ function applySpeakerNotesInitialGeometry(window, notesDisplay, overrideBounds) 
     window.webContents.once('did-finish-load', () => setSpeakerNotesFullscreen(window, target));
     window.webContents.once('dom-ready', () => setTimeout(() => setSpeakerNotesFullscreen(window, target), 500));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Speaker-notes launch controller
+// ---------------------------------------------------------------------------
+
+/** Disarm and forget the presenter-view adoption hook, if one is armed. */
+function disposeNotesAdoptionHook() {
+  if (!notesAdoptionHook) return;
+  notesAdoptionHook.dispose();
+  notesAdoptionHook = null;
+  if (currentNotesLaunch) currentNotesLaunch.hook = null;
+}
+
+/** Cancel any in-flight notes launch (timers + armed adoption hook). */
+function cancelPendingNotesLaunch() {
+  if (!currentNotesLaunch) return;
+  console.log('[NotesLaunch] cancel: token=%d', currentNotesLaunch.token);
+  currentNotesLaunch.token = -1; // invalidate any running loop
+  if (currentNotesLaunch.retryTimer) {
+    clearTimeout(currentNotesLaunch.retryTimer);
+    currentNotesLaunch.retryTimer = null;
+  }
+  disposeNotesAdoptionHook();
+  currentNotesLaunch = null;
+}
+
+/** Resolve the notes display from saved preferences, falling back to the first display. */
+function getConfiguredNotesDisplay() {
+  const displays = screen.getAllDisplays();
+  const prefs = loadPreferences();
+  return displays.find(d => d.id === Number(prefs.notesDisplayId)) || displays[0];
+}
+
+/**
+ * Internal: called when the notes BrowserWindow has been identified.
+ * Disarms the adoption hook, wires up the window, and positions it.
+ */
+function adoptNotesWindow(win, notesDisplay) {
+  disposeNotesAdoptionHook();
+  console.log('[NotesLaunch] adopt: presenter-view window captured');
+  notesWindow = win;
+  onNotesWindowCreated(win);
+  attachCrashHandlers(win, 'notes');
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      event.preventDefault();
+      if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
+      if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
+    }
+  });
+  applySpeakerNotesInitialGeometry(win, notesDisplay, null);
+}
+
+/**
+ * Arm the one-shot hook that adopts the Google Slides presenter-view popup.
+ *
+ * The popup is identified by its opener — the presentation window's own
+ * webContents — not by its URL. Google's presenter-view URL is undocumented
+ * and contains no stable "speaker"/"notes" substring, so URL matching fails to
+ * adopt and silently kills notes layout, positioning, zoom, scroll and
+ * notes-text reads. Scoping to the presentation webContents also prevents
+ * grabbing unrelated app windows (key/fill outputs, overlays).
+ *
+ * Must be called after currentNotesLaunch is initialised, and re-called by any
+ * path that re-triggers the "s" keypress — the hook disarms once it adopts.
+ */
+function registerNotesWindowListener(notesDisplay) {
+  const token = currentNotesLaunch ? currentNotesLaunch.token : 0;
+  if (!presentationWindow || presentationWindow.isDestroyed()) {
+    console.warn('[NotesLaunch] register: token=%d skipped — no presentation window', token);
+    return;
+  }
+  disposeNotesAdoptionHook(); // never leave two hooks armed on the same launch
+  console.log('[NotesLaunch] register: token=%d', token);
+  notesAdoptionHook = armNotesAdoption({
+    webContents: presentationWindow.webContents,
+    onAdopt: win => adoptNotesWindow(win, notesDisplay)
+  });
+  if (!currentNotesLaunch) {
+    currentNotesLaunch = { token: 0, win: presentationWindow, retryTimer: null, hook: null };
+  }
+  currentNotesLaunch.hook = notesAdoptionHook;
+}
+
+/**
+ * Drive the "press s to open speaker notes" loop.
+ * Checks readiness before each press and verifies success before re-pressing.
+ * Bails immediately if the launch is superseded (token mismatch).
+ */
+function startNotesLaunchLoop(capturedWin, token, notesDisplay) {
+  let attempts = 0;
+  const startTime = Date.now();
+
+  function tick() {
+    // bail if superseded, window gone, or already captured
+    if (!currentNotesLaunch || token !== currentNotesLaunch.token) return;
+    if (!capturedWin || capturedWin.isDestroyed()) return;
+    if (notesWindow && !notesWindow.isDestroyed()) return; // already captured
+
+    if (Date.now() - startTime > NOTES_READY_TIMEOUT_MS) {
+      console.warn('[NotesLaunch] token=%d: timed out after %dms', token, NOTES_READY_TIMEOUT_MS);
+      return;
+    }
+
+    if (attempts >= NOTES_MAX_ATTEMPTS) {
+      console.warn('[NotesLaunch] token=%d: gave up after %d attempts', token, attempts);
+      return;
+    }
+    attempts++;
+
+    // Wait for present-mode readiness before first press
+    const url = capturedWin.webContents.getURL();
+    const ready = (url.includes('/present/') || url.includes('/localpresent')) &&
+                  !capturedWin.webContents.isLoading();
+
+    if (!ready) {
+      console.log('[NotesLaunch] token=%d attempt=%d: not ready yet, will retry', token, attempts);
+      if (!currentNotesLaunch) return;
+      currentNotesLaunch.retryTimer = setTimeout(tick, NOTES_VERIFY_MS);
+      return;
+    }
+
+    console.log('[NotesLaunch] token=%d attempt=%d: pressing s', token, attempts);
+    capturedWin.focus();
+    capturedWin.webContents.focus();
+    capturedWin.webContents.sendInputEvent({ type: 'keyDown', keyCode: 's' });
+    capturedWin.webContents.sendInputEvent({ type: 'char',    keyCode: 's' });
+    capturedWin.webContents.sendInputEvent({ type: 'keyUp',   keyCode: 's' });
+
+    // Wait NOTES_VERIFY_MS then check if notes appeared before re-pressing
+    if (!currentNotesLaunch) return;
+    currentNotesLaunch.retryTimer = setTimeout(() => {
+      if (!currentNotesLaunch || token !== currentNotesLaunch.token) return;
+      if (notesWindow && !notesWindow.isDestroyed()) {
+        console.log('[NotesLaunch] token=%d: captured on attempt %d', token, attempts);
+        return; // success
+      }
+      tick(); // re-press
+    }, NOTES_VERIFY_MS);
+  }
+
+  // Start after present-mode settle
+  setTimeout(tick, NOTES_PRESENT_SETTLE_MS);
 }
 
 // Capture "current slide" and "next slide" preview images from the speaker notes (Presenter View) window.
@@ -1677,13 +1889,16 @@ function loadPreferences() {
       prefs.presetUrls = getPresetUrlsFromPrefs(prefs);
       // Removed layout mode 'narrow' (broken preview scaling); treat as Google default.
       if (prefs.notesLayout === 'narrow') prefs.notesLayout = 'default';
-      if (!VALID_PRESENTATION_GPU_MODES.has(String(prefs.presentationGpuMode || ''))) {
-        prefs.presentationGpuMode = 'default';
-      }
       if (prefs.presentationNativeFullscreen !== undefined && prefs.presentationNativeFullscreen !== null) {
         prefs.presentationNativeFullscreen = prefs.presentationNativeFullscreen === true;
       }
       prefs.perfectCuePorts = normalizePerfectCuePorts(prefs);
+      if (!prefs.decklink) {
+        prefs.decklink = {
+          slides: { enabled: false, deviceIndex: 0, displayMode: '1080p2997' },
+          notes:  { enabled: false, deviceIndex: 1, displayMode: '1080p2997' }
+        };
+      }
       const _prefsJson = safeStringify(prefs);
       if (_prefsJson !== _lastLoggedPrefsJson) {
         logDebug('[Preferences] Loaded preferences:', _prefsJson);
@@ -2015,9 +2230,24 @@ function isAllowedByControllerEntry(entry, remoteIp) {
   return e === r;
 }
 
+function getEffectiveClientIp(req) {
+  // When a named CF tunnel is active, cloudflared connects from 127.0.0.1 and
+  // passes the real client IP in CF-Connecting-IP. Use that header so the
+  // allowlist evaluates the actual remote user, not the tunnel proxy.
+  const socketAddr = normalizeRemoteAddress(req?.socket?.remoteAddress);
+  if (isLocalhostAddress(socketAddr) && cloudflaredProcess) {
+    const prefs = loadPreferences();
+    if (prefs.tunnelMode === 'named') {
+      const cfIp = req.headers?.['cf-connecting-ip'];
+      if (cfIp) return normalizeRemoteAddress(cfIp);
+    }
+  }
+  return socketAddr;
+}
+
 function isControllerAllowedRequest(req, prefs) {
   // Always allow local requests (desktop app UI and local tooling)
-  const remote = normalizeRemoteAddress(req?.socket?.remoteAddress);
+  const remote = getEffectiveClientIp(req);
   if (isLocalhostAddress(remote)) return true;
 
   const allowlist = getControllerIpsFromPrefs(prefs);
@@ -2619,6 +2849,9 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
       ? clampNotesZoomSteps(savedNotesZoomSteps)
       : getDefaultNotesZoomStepsFromPrefs();
 
+  // Cancel any in-flight notes launch before closing old windows
+  cancelPendingNotesLaunch();
+
   if (notesWindow && !notesWindow.isDestroyed()) {
     notesWindow.removeAllListeners('closed');
     notesWindow.close();
@@ -2650,27 +2883,14 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
 
-  const windowCreatedListener = (event, window) => {
-    if (window !== presentationWindow && window !== mainWindow) {
-      notesWindow = window;
-      onNotesWindowCreated(window);
-      attachCrashHandlers(window, 'notes');
-      window.webContents.on('before-input-event', (event, input) => {
-        if (input.key === 'Escape' && input.type === 'keyDown') {
-          event.preventDefault();
-          if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-          if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-        }
-      });
-      const fromReload =
-        savedNotesBounds && savedNotesBounds.width > 0 && savedNotesBounds.height > 0
-          ? savedNotesBounds
-          : null;
-      applySpeakerNotesInitialGeometry(window, notesDisplay, fromReload);
-      app.removeListener('browser-window-created', windowCreatedListener);
-    }
-  };
-  app.on('browser-window-created', windowCreatedListener);
+  // Initialize centralized launch state and register notes window listener
+  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
+  registerNotesWindowListener(notesDisplay);
+
+  if (notesWereOpen) {
+    const token = currentNotesLaunch.token;
+    startNotesLaunchLoop(presentationWindow, token, notesDisplay);
+  }
 
   presentationWindow.on('closed', () => {
     presentationWindow = null;
@@ -2722,17 +2942,6 @@ async function reopenPresentationAtSlide(urlToReload, savedSlide, notesWereOpen,
       }
     }
   });
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  if (notesWereOpen && presentationWindow && !presentationWindow.isDestroyed()) {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    if (presentationWindow && !presentationWindow.isDestroyed()) {
-      presentationWindow.focus();
-      await new Promise(resolve => setTimeout(resolve, 200));
-      presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-      presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-      presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-    }
-  }
   if (presentationWindow && !presentationWindow.isDestroyed()) {
     setTimeout(() => presentationWindow.focus(), 500);
   }
@@ -3183,11 +3392,12 @@ function scheduleReadmeScreenshotCapture() {
 // Get all available displays
 ipcMain.handle('get-displays', async () => {
   const displays = screen.getAllDisplays();
+  const primaryId = screen.getPrimaryDisplay().id;
   return displays.map((display, index) => ({
     id: display.id,
-    label: `Monitor ${index + 1} (${display.bounds.width}x${display.bounds.height})`,
+    label: `Display ${index + 1} (${display.bounds.width}×${display.bounds.height})`,
     bounds: display.bounds,
-    primary: display.bounds.x === 0 && display.bounds.y === 0
+    primary: display.id === primaryId
   }));
 });
 
@@ -3357,10 +3567,6 @@ ipcMain.handle('save-preferences', async (event, incoming) => {
     const ps = String(incoming.webUiPinScope).toLowerCase();
     mergedPrefs.webUiPinScope = ps === 'lan' || ps === 'both' ? ps : 'tunnel';
   }
-  if (incoming && incoming.presentationGpuMode !== undefined) {
-    const g = String(incoming.presentationGpuMode || '');
-    mergedPrefs.presentationGpuMode = VALID_PRESENTATION_GPU_MODES.has(g) ? g : 'default';
-  }
   if (incoming && incoming.presentationNativeFullscreen !== undefined) {
     mergedPrefs.presentationNativeFullscreen = incoming.presentationNativeFullscreen === true;
   }
@@ -3433,6 +3639,19 @@ ipcMain.handle('show-open-key-dialog', async () => {
     title: 'Select TLS private key file',
     properties: ['openFile'],
     filters: [{ name: 'Key', extensions: ['pem', 'key'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { canceled: true, filePath: null };
+  }
+  return { canceled: false, filePath: result.filePaths[0] };
+});
+
+ipcMain.handle('show-open-credentials-dialog', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const result = await dialog.showOpenDialog(win || BrowserWindow.getAllWindows()[0], {
+    title: 'Select Cloudflare tunnel credentials file',
+    properties: ['openFile'],
+    filters: [{ name: 'Cloudflare Credentials', extensions: ['json'] }, { name: 'All Files', extensions: ['*'] }]
   });
   if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
     return { canceled: true, filePath: null };
@@ -3609,6 +3828,31 @@ ipcMain.handle('export-log-buffer', async () => {
   }
 });
 
+ipcMain.handle('get-decklink-devices', async () => {
+  if (!DecklinkOutputManager) return [];
+  try { return await DecklinkOutputManager.getDevices(); } catch (e) { return []; }
+});
+
+ipcMain.handle('get-decklink-modes', async (_event, deviceIndex) => {
+  if (!DecklinkOutputManager) return [];
+  try { return await DecklinkOutputManager.getModes(deviceIndex); } catch (e) { return []; }
+});
+
+ipcMain.handle('get-decklink-status', () => {
+  if (!DecklinkOutputManager) return { providerType: 'unavailable', slides: { active: false }, notes: { active: false } };
+  try { return DecklinkOutputManager.getStatus(); } catch (e) { return { providerType: 'unavailable', slides: { active: false }, notes: { active: false } }; }
+});
+
+ipcMain.handle('save-decklink-config', async (_event, decklinkConfig) => {
+  const prefs = loadPreferences();
+  prefs.decklink = decklinkConfig;
+  savePreferences(prefs);
+  if (DecklinkOutputManager) {
+    try { await DecklinkOutputManager.reconfigure(prefs); } catch (e) { logError('[DeckLink] reconfigure error:', e.message); }
+  }
+  return { ok: true };
+});
+
 // Sign in with Google
 ipcMain.handle('google-signin', async () => {
   const googleSession = getGoogleSession();
@@ -3771,34 +4015,37 @@ ipcMain.handle('google-signout', async () => {
 // Open test presentation (present URL opens directly in presentation/slideshow mode)
 ipcMain.handle('open-test-presentation', async () => {
   const testUrl = 'https://docs.google.com/presentation/d/1qKhywpFhjG4tAtA1e2Rk9dB2lVk_uu5_Ol5TaBhvvPo/present';
-  
+
+  // Cancel any in-flight notes launch before opening new windows
+  cancelPendingNotesLaunch();
+
   // Load preferences to get selected displays
   const prefs = loadPreferences();
   logDebug('[Test] Loaded preferences:', safeStringify(prefs));
-  
+
   const displays = screen.getAllDisplays();
   logDebug('[Test] All available displays:');
   displays.forEach((display, index) => {
     logDebug(`  Display ${index + 1} - ID: ${display.id}, Bounds: ${safeStringify(display.bounds)}`);
   });
-  
+
   // Convert IDs to numbers for comparison (they might be saved as strings)
   const presentationDisplayId = Number(prefs.presentationDisplayId);
   const notesDisplayId = Number(prefs.notesDisplayId);
-  
+
   const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
   const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-  
+
   logDebug('[Test] Selected presentation display ID:', prefs.presentationDisplayId, '(converted to:', presentationDisplayId, ')');
   logDebug('[Test] Resolved presentation display:', presentationDisplay.id, 'Bounds:', presentationDisplay.bounds);
   logDebug('[Test] Selected notes display ID:', prefs.notesDisplayId, '(converted to:', notesDisplayId, ')');
   logDebug('[Test] Resolved notes display:', notesDisplay.id, 'Bounds:', notesDisplay.bounds);
-  
+
   if (!presentationWindow) {
     // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
     // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
     presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-    
+
     // Set simple fullscreen on macOS to avoid Spaces conflicts
     if (process.platform === 'darwin') {
       applyPresentationFullscreenChrome(presentationWindow, prefs);
@@ -3809,7 +4056,7 @@ ipcMain.handle('open-test-presentation', async () => {
       presentationWindow = null;
       currentSlide = null;
     });
-    
+
     // Listen for Escape key to close both windows
     presentationWindow.webContents.on('before-input-event', (event, input) => {
       if (input.key === 'Escape' && input.type === 'keyDown') {
@@ -3826,35 +4073,10 @@ ipcMain.handle('open-test-presentation', async () => {
       const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
       return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
     });
-    
-    // Listen for new windows being created (this will be the notes window)
-    const testWindowCreatedListener = (event, window) => {
-      if (window !== presentationWindow && window !== mainWindow) {
-        logDebug('[Test] Notes window created');
-        logDebug('[Test] Presentation display ID:', presentationDisplay.id);
-        logDebug('[Test] Notes display ID:', notesDisplay.id);
-        notesWindow = window;
-        onNotesWindowCreated(window);
-        attachCrashHandlers(window, 'notes');
-        const initialBounds = window.getBounds();
-        logDebug('[Test] Initial window bounds:', initialBounds);
-        
-        // Add Escape key handler to notes window as well
-        window.webContents.on('before-input-event', (event, input) => {
-          if (input.key === 'Escape' && input.type === 'keyDown') {
-            logDebug('[Test] Escape pressed in notes window, closing all windows');
-            event.preventDefault();
-            if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-            if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-          }
-        });
-        
-        applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-        app.removeListener('browser-window-created', testWindowCreatedListener);
-      }
-    };
-    app.on('browser-window-created', testWindowCreatedListener);
+    // Register centralized notes window listener (no loop — test path is plain launch)
+    currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
+    registerNotesWindowListener(notesDisplay);
   }
 
   lastPresentationUrl = testUrl; // Store for reload
@@ -3910,6 +4132,9 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     return { success: false, message: 'Invalid presentation display' };
   }
 
+  // Cancel any in-flight notes launch before closing old windows
+  cancelPendingNotesLaunch();
+
   // Close existing windows if any
   if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
   if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
@@ -3919,7 +4144,7 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
   // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
   // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
   presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-  
+
   // Set simple fullscreen on macOS to avoid Spaces conflicts
   if (process.platform === 'darwin') {
     applyPresentationFullscreenChrome(presentationWindow, loadPreferences());
@@ -3932,39 +4157,10 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
     return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
   });
-  
-  // Listen for new windows being created (this will be the notes window)
-  const windowCreatedListener = (event, window) => {
-    // Check if this is not the presentation window or main window
-    if (window !== presentationWindow && window !== mainWindow) {
-      logDebug('[Multi-Monitor] Notes window created');
-      logDebug('[Multi-Monitor] Presentation display ID:', presentationDisplayIdNum);
-      logDebug('[Multi-Monitor] Notes display ID:', notesDisplayIdNum);
-      logDebug('[Multi-Monitor] Notes display object:', notesDisplay);
-      notesWindow = window;
-      onNotesWindowCreated(window);
-      attachCrashHandlers(window, 'notes');
-      // Get initial window bounds
-      const initialBounds = window.getBounds();
-      logDebug('[Multi-Monitor] Initial window bounds:', initialBounds);
-      
-      // Add Escape key handler to notes window as well
-      window.webContents.on('before-input-event', (event, input) => {
-        if (input.key === 'Escape' && input.type === 'keyDown') {
-          logDebug('[Multi-Monitor] Escape pressed in notes window, closing all windows');
-          event.preventDefault();
-          if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-          if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-        }
-      });
-      
-      applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-      // Remove listener after notes window is created
-      app.removeListener('browser-window-created', windowCreatedListener);
-    }
-  };
-  app.on('browser-window-created', windowCreatedListener);
+  // Register centralized notes window listener (no loop — plain launch, no auto-press)
+  currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
+  registerNotesWindowListener(notesDisplay);
 
   // Load presentation URL
   lastPresentationUrl = url; // Store for reload
@@ -4018,14 +4214,11 @@ ipcMain.handle('open-presentation', async (event, { url, presentationDisplayId, 
     const pid = extractPresentationId(url);
     if (pid) {
       loadOfflineModeForPresentation(pid);
-      if (!loadOfflineManifest(pid)) {
+      if (!readManifestEntries(loadOfflineManifest(pid))) {
         // Delay to let the presentation fully enter present mode before pre-fetching
         setTimeout(() => {
           if (presentationWindow && !presentationWindow.isDestroyed()) {
-            warmOfflineCache(presentationWindow, pid).catch(e => {
-              logWarn('[Offline] Auto-warm failed:', e.message);
-              if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
-            });
+            requestOfflineWarm(presentationWindow, pid);
           }
         }, 5000);
       }
@@ -4075,7 +4268,7 @@ ipcMain.handle('hide-stage-timer-overlay', async () => {
 ipcMain.handle('get-stage-timer-overlay-status', () => {
   const prefs = loadPreferences();
   return {
-    enabled:  !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed()),
+    enabled:  prefs.stageTimerOverlayEnabled === true,
     position: prefs.stageTimerOverlayPosition || 'bottom-left',
     size:     prefs.stageTimerOverlaySize     || 10
   };
@@ -4113,14 +4306,16 @@ ipcMain.handle('warm-offline-cache', async () => {
   }
   const pid = offlineActivePresentationId;
   if (!pid) return { success: false, error: 'No presentation ID' };
-  if (offlineCacheState === 'caching') {
-    return { success: true, cacheState: 'caching' }; // already in progress
+
+  const warm = requestOfflineWarm(presentationWindow, pid);
+  if (!warm.started) {
+    return {
+      success: false,
+      error: 'Cache warm-up already in progress',
+      cacheState: offlineCacheState,
+    };
   }
-  warmOfflineCache(presentationWindow, pid).catch(e => {
-    logWarn('[Offline] Manual warm failed:', e.message);
-    if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
-  });
-  return { success: true, cacheState: 'caching' };
+  return { success: true, cacheState: OFFLINE_CACHE_STATES.CACHING };
 });
 
 ipcMain.handle('set-offline-mode', async (_event, enabled) => {
@@ -4139,8 +4334,8 @@ ipcMain.handle('clear-offline-cache', async () => {
   offlineActiveCacheDir = null;
   offlineCachedAt = null;
   if (offlineModeActive) applyOfflineMode(false);
-  setOfflineCacheState('not-cached', pid);
-  return { success: true, cacheState: 'not-cached' };
+  setOfflineCacheState(OFFLINE_CACHE_STATES.NOT_CACHED, pid);
+  return { success: true, cacheState: OFFLINE_CACHE_STATES.NOT_CACHED };
 });
 
 // HTTP API for Bitfocus Companion integration
@@ -4268,10 +4463,13 @@ function startHttpServer() {
             electron: process.versions.electron,
             node: process.versions.node
           },
-          presentationGpuMode: statusPrefs.presentationGpuMode || 'default',
+          // Retained as a frozen literal: documented API contract (CHANGELOG 1.9.12),
+          // consumed by AV integrations we do not control. The GPU mode selector
+          // itself was removed once Chromium 152 made it unnecessary.
+          presentationGpuMode: 'default',
           presentationNativeFullscreen: statusPrefs.presentationNativeFullscreen === true,
           offlineModeEnabled: statusPrefs.offlineModeEnabled === true,
-          offlineCacheState: offlineCacheState,
+          offlineCacheState: offlineCacheState
         };
         
         // Get slide info and other data from notes window DOM
@@ -4393,7 +4591,7 @@ function startHttpServer() {
             adapter: adapter || 'dsan'
           }))
         };
-        state.stageTimerOverlayEnabled  = !!(stageTimerOverlayWindow && !stageTimerOverlayWindow.isDestroyed());
+        state.stageTimerOverlayEnabled  = prefs.stageTimerOverlayEnabled === true;
         state.stageTimerOverlayPosition = prefs.stageTimerOverlayPosition || 'bottom-left';
         state.stageTimerOverlaySize     = prefs.stageTimerOverlaySize     || 10;
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -4531,6 +4729,51 @@ function startHttpServer() {
       stopCloudflaredTunnel();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, message: 'Tunnel disabled' }));
+      return;
+    }
+
+    // GET /api/tunnel-config — return named tunnel configuration fields
+    if (req.method === 'GET' && req.url === '/api/tunnel-config') {
+      const p = loadPreferences();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        tunnelMode: p.tunnelMode || 'quick',
+        cfTunnelName: p.cfTunnelName || '',
+        cfTunnelHostname: p.cfTunnelHostname || '',
+        cfCredentialsPath: p.cfCredentialsPath || ''
+      }));
+      return;
+    }
+
+    // POST /api/tunnel-config — save named tunnel config; restart tunnel if currently running
+    if (req.method === 'POST' && req.url === '/api/tunnel-config') {
+      if (!isControllerAllowedRequest(req, loadPreferences())) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Forbidden' }));
+        return;
+      }
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body);
+          const p = loadPreferences();
+          if (data.tunnelMode !== undefined) p.tunnelMode = data.tunnelMode === 'named' ? 'named' : 'quick';
+          if (data.cfTunnelName !== undefined) p.cfTunnelName = String(data.cfTunnelName);
+          if (data.cfTunnelHostname !== undefined) p.cfTunnelHostname = String(data.cfTunnelHostname);
+          if (data.cfCredentialsPath !== undefined) p.cfCredentialsPath = String(data.cfCredentialsPath);
+          savePreferences(p);
+          if (p.cloudflaredEnabled && cloudflaredProcess) {
+            stopCloudflaredTunnel();
+            setTimeout(() => startCloudflaredTunnel(), 500);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
       return;
     }
 
@@ -4714,17 +4957,18 @@ function startHttpServer() {
         res.end(JSON.stringify({ error: 'No presentation ID' }));
         return;
       }
-      if (offlineCacheState === 'caching') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, cacheState: 'caching' }));
+      const warm = requestOfflineWarm(presentationWindow, pid);
+      if (!warm.started) {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: false,
+          error: 'Cache warm-up already in progress',
+          cacheState: offlineCacheState,
+        }));
         return;
       }
-      warmOfflineCache(presentationWindow, pid).catch(e => {
-        logWarn('[Offline] API warm failed:', e.message);
-        if (offlineCacheState === 'caching') setOfflineCacheState('not-cached', pid);
-      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, cacheState: 'caching' }));
+      res.end(JSON.stringify({ success: true, cacheState: OFFLINE_CACHE_STATES.CACHING }));
       return;
     }
 
@@ -4741,9 +4985,9 @@ function startHttpServer() {
       offlineActiveCacheDir = null;
       offlineCachedAt = null;
       if (offlineModeActive) applyOfflineMode(false);
-      setOfflineCacheState('not-cached', pid);
+      setOfflineCacheState(OFFLINE_CACHE_STATES.NOT_CACHED, pid);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, cacheState: 'not-cached' }));
+      res.end(JSON.stringify({ success: true, cacheState: OFFLINE_CACHE_STATES.NOT_CACHED }));
       return;
     }
 
@@ -4793,6 +5037,9 @@ function startHttpServer() {
             delete data.controllerIps;
             // Also desktop-only: web UI debug console gating
             delete data.webUiDebugConsoleEnabled;
+            // Video control gating is desktop-only (IPC); a web remote client must not be
+            // able to enable its own hidden control over HTTP
+            delete data.webUiVideoControlEnabled;
             // WAN tunnel toggle is desktop-only (IPC); do not allow enabling via HTTP API
             delete data.cloudflaredEnabled;
             // Tunnel PIN is desktop-only (IPC)
@@ -4821,11 +5068,12 @@ function startHttpServer() {
     if (req.method === 'GET' && req.url === '/api/displays') {
       try {
         const displays = screen.getAllDisplays();
-        const displayList = displays.map(display => ({
+        const primaryId = screen.getPrimaryDisplay().id;
+        const displayList = displays.map((display, index) => ({
           id: display.id,
           bounds: display.bounds,
-          label: `${display.bounds.width}x${display.bounds.height} @ (${display.bounds.x}, ${display.bounds.y})`,
-          primary: display.id === screen.getPrimaryDisplay().id
+          label: `Display ${index + 1} (${display.bounds.width}×${display.bounds.height})`,
+          primary: display.id === primaryId
         }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(displayList));
@@ -4855,7 +5103,10 @@ function startHttpServer() {
           }
           
           console.log('[API] Opening presentation:', url);
-          
+
+          // Cancel any in-flight notes launch before closing old windows
+          cancelPendingNotesLaunch();
+
           // Close any existing presentation windows
           try {
             if (notesWindow && !notesWindow.isDestroyed()) {
@@ -4874,69 +5125,41 @@ function startHttpServer() {
           } catch (error) {
             console.error('[API] Error closing existing windows:', error.message);
           }
-          
+
           // Load preferences for monitor selection
           const prefs = loadPreferences();
           const displays = screen.getAllDisplays();
-          
+
           const presentationDisplayId = Number(prefs.presentationDisplayId);
           const notesDisplayId = Number(prefs.notesDisplayId);
-          
+
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-          
+
           console.log('[API] Using presentation display:', presentationDisplay.id);
           console.log('[API] Using notes display:', notesDisplay.id);
-          
+
           // Open the presentation using the same logic as the IPC handler
           // Create the presentation window
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-          
+
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
             applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
-          
+
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
-          
-          // Listen for notes window creation
-          const windowCreatedListener = (event, window) => {
-            if (window !== presentationWindow && window !== mainWindow) {
-              console.log('[API] Notes window created');
-              notesWindow = window;
-              onNotesWindowCreated(window);
-              attachCrashHandlers(window, 'notes');
-              // Add Escape key handler to notes window
-              window.webContents.on('before-input-event', (event, input) => {
-                if (input.key === 'Escape' && input.type === 'keyDown') {
-                  console.log('[API] Escape pressed in notes window, closing all windows');
-                  event.preventDefault();
-                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-                }
-              });
 
-              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
-
-              app.removeListener('browser-window-created', windowCreatedListener);
-            }
-          };
-          app.on('browser-window-created', windowCreatedListener);
-
-          // Navigation listener (no auto-launch of notes - user must manually start notes)
-          const navigationListener = async (event, navUrl) => {
-            console.log('[API] Navigated to:', navUrl);
-            // Just log navigation, don't auto-launch notes
-          };
-          
-          presentationWindow.webContents.on('did-navigate', navigationListener);
+          // Register centralized notes window listener (no loop — plain launch, no auto-press)
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
+          registerNotesWindowListener(notesDisplay);
           
           // Listen for page load
           presentationWindow.webContents.once('did-finish-load', async () => {
@@ -5013,7 +5236,10 @@ function startHttpServer() {
           }
           
           console.log('[API] Opening presentation with notes:', url);
-          
+
+          // Cancel any in-flight notes launch before closing old windows
+          cancelPendingNotesLaunch();
+
           // Close any existing presentation windows
           try {
             if (notesWindow && !notesWindow.isDestroyed()) {
@@ -5032,105 +5258,44 @@ function startHttpServer() {
           } catch (error) {
             console.error('[API] Error closing existing windows:', error.message);
           }
-          
+
           // Load preferences for monitor selection
           const prefs = loadPreferences();
           const displays = screen.getAllDisplays();
-          
+
           const presentationDisplayId = Number(prefs.presentationDisplayId);
           const notesDisplayId = Number(prefs.notesDisplayId);
-          
+
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-          
+
           console.log('[API] Using presentation display:', presentationDisplay.id);
           console.log('[API] Using notes display:', notesDisplay.id);
-          
+
           // Create the presentation window
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-          
+
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
             applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
-          
+
           // Set up window open handler for speaker notes popup (open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
-          
-          // Listen for notes window creation
-          const windowCreatedListener = (event, window) => {
-            if (window !== presentationWindow && window !== mainWindow) {
-              console.log('[API] Notes window created');
-              notesWindow = window;
-              onNotesWindowCreated(window);
-              attachCrashHandlers(window, 'notes');
-              window.webContents.on('before-input-event', (event, input) => {
-                if (input.key === 'Escape' && input.type === 'keyDown') {
-                  event.preventDefault();
-                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-                }
-              });
-              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-              app.removeListener('browser-window-created', windowCreatedListener);
-            }
-          };
-          app.on('browser-window-created', windowCreatedListener);
+          // Initialize centralized launch state, register listener, and start the notes launch loop
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
+          const withNotesToken = currentNotesLaunch.token;
+          registerNotesWindowListener(notesDisplay);
 
-          // Auto-launch speaker notes reliably (some decks load fast and can miss a single 's' press).
-          // We'll retry a few times until the notes window is created.
-          let notesAttempts = 0;
-          const maxNotesAttempts = 8;
-          let notesRetryTimer = null;
-
-          const sendSpeakerNotesKey = async (reason) => {
-            if (!presentationWindow || presentationWindow.isDestroyed()) return false;
-            if (notesWindow && !notesWindow.isDestroyed()) return true;
-            if (notesAttempts >= maxNotesAttempts) return false;
-
-            notesAttempts += 1;
-            try {
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 80));
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-              console.log(`[API] Speaker notes attempt ${notesAttempts}/${maxNotesAttempts} (${reason}) - sent "s" key`);
-            } catch (error) {
-              console.error('[API] Error sending "s" key for speaker notes:', error);
-            }
-
-            // Schedule another attempt if notes window hasn't appeared yet
-            if (!notesWindow || notesWindow.isDestroyed()) {
-              if (notesRetryTimer) clearTimeout(notesRetryTimer);
-              notesRetryTimer = setTimeout(() => {
-                sendSpeakerNotesKey('retry');
-              }, 700);
-            }
-
-            return true;
-          };
-
-          const navigationListener = async (event, navUrl) => {
-            // Check if we're in presentation mode (URL contains /present/ or /localpresent but not /presentation/)
-            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('/localpresent')) && !navUrl.includes('/presentation/');
-            if (isPresentMode) {
-              // Slight delay to allow the presentation UI to become interactive
-              await new Promise(resolve => setTimeout(resolve, 250));
-              await sendSpeakerNotesKey('did-navigate');
-            }
-          };
-
-          presentationWindow.webContents.on('did-navigate', navigationListener);
-          
-          // Listen for page load
+          // Listen for page load — start the notes loop after first load
+          // (the loop itself handles readiness gating; no need for separate did-navigate trigger)
           presentationWindow.webContents.once('did-finish-load', async () => {
             console.log('[API] Page finished loading');
             if (!presentationWindow || presentationWindow.isDestroyed()) {
@@ -5148,7 +5313,7 @@ function startHttpServer() {
                 if (presentationWindow && !presentationWindow.isDestroyed()) {
                   console.log('[API] Not in present mode yet, triggering Ctrl+Shift+F5...');
                   presentationWindow.focus();
-                  await new Promise(resolve => setTimeout(resolve, 80));
+                  await new Promise(resolve => setTimeout(resolve, NOTES_FOCUS_SETTLE_MS));
                   presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
                   presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
                 }
@@ -5157,10 +5322,8 @@ function startHttpServer() {
               // ignore
             }
 
-            // Always attempt notes after load (covers cases where did-navigate isn't fired as expected).
-            setTimeout(() => {
-              sendSpeakerNotesKey('did-finish-load');
-            }, 650);
+            // Start the notes launch loop (token captured at launch time; loop handles readiness gating)
+            startNotesLaunchLoop(presentationWindow, withNotesToken, notesDisplay);
           });
           
           presentationWindow.on('closed', () => {
@@ -6634,7 +6797,10 @@ function startHttpServer() {
           // Forward to open-presentation endpoint logic
           // We'll reuse the same code path
           console.log(`[API] Opening preset ${presetNumber}: ${url}`);
-          
+
+          // Cancel any in-flight notes launch before closing old windows
+          cancelPendingNotesLaunch();
+
           // Close any existing presentation windows
           try {
             if (notesWindow && !notesWindow.isDestroyed()) {
@@ -6653,71 +6819,39 @@ function startHttpServer() {
           } catch (error) {
             console.error('[API] Error closing existing windows:', error.message);
           }
-          
+
           // Load preferences for monitor selection
           const displays = screen.getAllDisplays();
           const presentationDisplayId = Number(prefs.presentationDisplayId);
           const notesDisplayId = Number(prefs.notesDisplayId);
           const presentationDisplay = displays.find(d => d.id === presentationDisplayId) || displays[0];
           const notesDisplay = displays.find(d => d.id === notesDisplayId) || displays[0];
-          
+
           console.log('[API] Using presentation display:', presentationDisplay.id);
           console.log('[API] Using notes display:', notesDisplay.id);
-          
+
           // Create the presentation window (reuse open-presentation logic)
           // Note: Don't use fullscreen: true in constructor as it creates a new Space on macOS
           // We'll use setSimpleFullScreen() after creation to avoid Spaces conflicts
           presentationWindow = new BrowserWindow(getPresentationBrowserWindowOptions(presentationDisplay.bounds));
-          
+
           // Set simple fullscreen on macOS to avoid Spaces conflicts
           if (process.platform === 'darwin') {
             applyPresentationFullscreenChrome(presentationWindow, prefs);
           }
           attachCrashHandlers(presentationWindow, 'presentation');
-          
+
           // Set up window handlers (same as open-presentation; notes open at notes-display size for narrow-preview layout)
           presentationWindow.webContents.setWindowOpenHandler(({ url }) => {
             const windowOptions = getSpeakerNotesWindowOptions(notesDisplay);
             return { action: 'allow', overrideBrowserWindowOptions: windowOptions };
           });
-          
-          const windowCreatedListener = (event, window) => {
-            if (window !== presentationWindow && window !== mainWindow) {
-              notesWindow = window;
-              onNotesWindowCreated(window);
-              attachCrashHandlers(window, 'notes');
-              window.webContents.on('before-input-event', (event, input) => {
-                if (input.key === 'Escape' && input.type === 'keyDown') {
-                  event.preventDefault();
-                  if (notesWindow && !notesWindow.isDestroyed()) notesWindow.close();
-                  if (presentationWindow && !presentationWindow.isDestroyed()) presentationWindow.close();
-                }
-              });
-              applySpeakerNotesInitialGeometry(window, notesDisplay, null);
 
-              app.removeListener('browser-window-created', windowCreatedListener);
-            }
-          };
-          app.on('browser-window-created', windowCreatedListener);
+          // Initialize centralized launch state, register listener, and start the notes launch loop
+          currentNotesLaunch = { token: (currentNotesLaunch?.token ?? 0) + 1, win: presentationWindow, retryTimer: null, hook: null };
+          const presetNotesToken = currentNotesLaunch.token;
+          registerNotesWindowListener(notesDisplay);
 
-          let sKeyPressed = false;
-          const navigationListener = async (event, navUrl) => {
-            const isPresentMode = (navUrl.includes('/present/') || navUrl.includes('localpresent')) && !navUrl.includes('/presentation/');
-            if (isPresentMode && !sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              sKeyPressed = true;
-              await new Promise(resolve => setTimeout(resolve, 300));
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                presentationWindow.focus();
-                await new Promise(resolve => setTimeout(resolve, 50));
-                presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-                presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-                presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
-            }
-          };
-          presentationWindow.webContents.on('did-navigate', navigationListener);
-          
           presentationWindow.webContents.once('did-finish-load', async () => {
             if (!presentationWindow || presentationWindow.isDestroyed()) return;
             await new Promise(resolve => setTimeout(resolve, 200));
@@ -6727,21 +6861,9 @@ function startHttpServer() {
               presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F5', modifiers: ['control', 'shift'] });
               presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F5', modifiers: ['control', 'shift'] });
             }
+            // Start the notes launch loop after triggering present mode
+            startNotesLaunchLoop(presentationWindow, presetNotesToken, notesDisplay);
           });
-          
-          setTimeout(async () => {
-            if (!sKeyPressed && presentationWindow && !presentationWindow.isDestroyed()) {
-              sKeyPressed = true;
-              presentationWindow.focus();
-              await new Promise(resolve => setTimeout(resolve, 50));
-              presentationWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'S' });
-              presentationWindow.webContents.sendInputEvent({ type: 'char', keyCode: 's' });
-              presentationWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'S' });
-              if (presentationWindow && !presentationWindow.isDestroyed()) {
-                presentationWindow.webContents.removeListener('did-navigate', navigationListener);
-              }
-            }
-          }, 1000);
           
           presentationWindow.on('closed', () => {
             presentationWindow = null;
@@ -6808,6 +6930,27 @@ function startHttpServer() {
           res.end(JSON.stringify({ error: error.message }));
         }
       });
+      return;
+    }
+
+    if (req.method === 'GET' && apiReqPath === '/api/decklink/status') {
+      const status = DecklinkOutputManager ? DecklinkOutputManager.getStatus() : { providerType: 'unavailable', slides: { active: false }, notes: { active: false } };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(status));
+      return;
+    }
+
+    if (req.method === 'GET' && apiReqPath === '/api/decklink/devices') {
+      (async () => {
+        try {
+          const devices = DecklinkOutputManager ? await DecklinkOutputManager.getDevices() : [];
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(devices));
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      })();
       return;
     }
 
@@ -7027,6 +7170,9 @@ function showStageTimerOverlay() {
   }
 
   savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: true });
+  sendToBackups('/api/show-stage-timer-overlay', {}).catch(err => {
+    console.error('[Backup] Error broadcasting show-stage-timer-overlay:', err);
+  });
 }
 
 function hideStageTimerOverlay() {
@@ -7035,6 +7181,16 @@ function hideStageTimerOverlay() {
   }
   stageTimerOverlayWindow = null;
   savePreferences({ ...loadPreferences(), stageTimerOverlayEnabled: false });
+  sendToBackups('/api/hide-stage-timer-overlay', {}).catch(err => {
+    console.error('[Backup] Error broadcasting hide-stage-timer-overlay:', err);
+  });
+}
+
+function restoreStageTimerOverlayFromPreferences() {
+  const prefs = loadPreferences();
+  if (prefs.stageTimerOverlayEnabled === true) {
+    showStageTimerOverlay();
+  }
 }
 
 function updateStageTimerOverlaySettings({ position, size }) {
@@ -7049,9 +7205,300 @@ function updateStageTimerOverlaySettings({ position, size }) {
     const notesDisplay = displays.find(d => d.id === Number(updatedPrefs.notesDisplayId)) || displays[0];
     stageTimerOverlayWindow.setBounds(getOverlayBounds(notesDisplay, newPosition, newSize));
   }
+
+  const updatedPrefs = loadPreferences();
+  sendToBackups('/api/update-stage-timer-overlay-settings', {
+    position: updatedPrefs.stageTimerOverlayPosition || 'bottom-left',
+    size: updatedPrefs.stageTimerOverlaySize || 10
+  }).catch(err => {
+    console.error('[Backup] Error broadcasting update-stage-timer-overlay-settings:', err);
+  });
 }
 
 // --- End Stage Timer Overlay ---
+
+// ─── Cloudflare API helpers ───────────────────────────────────────────────────
+
+function cfApiRequest(method, endpoint, apiToken, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const options = {
+      hostname: 'api.cloudflare.com',
+      port: 443,
+      path: `/client/v4${endpoint}`,
+      method,
+      headers: {
+        'Authorization': `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {})
+      },
+      timeout: 10000
+    };
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error(`CF API parse error: ${e.message}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('CF API request timed out')); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function verifyCfToken(apiToken) {
+  const result = await cfApiRequest('GET', '/user/tokens/verify', apiToken);
+  if (!result.success) throw new Error(result.errors?.[0]?.message || 'Token invalid');
+  return result.result;
+}
+
+async function getCfZoneId(apiToken, hostname) {
+  const parts = hostname.split('.');
+  // try progressively shorter suffixes to find the zone
+  for (let i = parts.length - 2; i >= 0; i--) {
+    const domain = parts.slice(i).join('.');
+    const result = await cfApiRequest('GET', `/zones?name=${encodeURIComponent(domain)}&status=active`, apiToken);
+    if (result.success && result.result && result.result.length > 0) {
+      return result.result[0].id;
+    }
+  }
+  throw new Error(`No active Cloudflare zone found for hostname: ${hostname}`);
+}
+
+async function createOrGetCfTunnel(apiToken, accountId, tunnelName) {
+  // Check for existing tunnel with this name
+  const list = await cfApiRequest('GET', `/accounts/${accountId}/cfd_tunnel?name=${encodeURIComponent(tunnelName)}&is_deleted=false`, apiToken);
+  if (list.success && list.result && list.result.length > 0) {
+    return list.result[0];
+  }
+  // Create new tunnel
+  const secret = crypto.randomBytes(32).toString('base64');
+  const create = await cfApiRequest('POST', `/accounts/${accountId}/cfd_tunnel`, apiToken, {
+    name: tunnelName,
+    tunnel_secret: secret,
+    config_src: 'cloudflare'
+  });
+  if (!create.success) throw new Error(create.errors?.[0]?.message || 'Failed to create tunnel');
+  return create.result;
+}
+
+async function configureCfTunnelIngress(apiToken, accountId, tunnelId, hostname, localPort) {
+  const config = await cfApiRequest('PUT', `/accounts/${accountId}/cfd_tunnel/${tunnelId}/configurations`, apiToken, {
+    config: {
+      ingress: [
+        { hostname, service: `http://localhost:${localPort}` },
+        { service: 'http_status:404' }
+      ]
+    }
+  });
+  if (!config.success) throw new Error(config.errors?.[0]?.message || 'Failed to configure ingress');
+  return config.result;
+}
+
+async function createOrUpdateCfDnsRecord(apiToken, zoneId, hostname, tunnelId) {
+  const cname = `${tunnelId}.cfargotunnel.com`;
+  const subdomain = hostname.split('.')[0];
+  // Check if record already exists
+  const list = await cfApiRequest('GET', `/zones/${zoneId}/dns_records?name=${encodeURIComponent(hostname)}&type=CNAME`, apiToken);
+  if (list.success && list.result && list.result.length > 0) {
+    const recordId = list.result[0].id;
+    const patch = await cfApiRequest('PATCH', `/zones/${zoneId}/dns_records/${recordId}`, apiToken, {
+      content: cname, proxied: true
+    });
+    if (!patch.success) throw new Error(patch.errors?.[0]?.message || 'Failed to update DNS record');
+    return patch.result;
+  }
+  const create = await cfApiRequest('POST', `/zones/${zoneId}/dns_records`, apiToken, {
+    type: 'CNAME', name: subdomain, content: cname, proxied: true, ttl: 1
+  });
+  if (!create.success) throw new Error(create.errors?.[0]?.message || 'Failed to create DNS record');
+  return create.result;
+}
+
+async function deleteCfTunnelAndDns(apiToken, accountId, zoneId, tunnelId, hostname) {
+  // Delete DNS record first
+  const list = await cfApiRequest('GET', `/zones/${zoneId}/dns_records?name=${encodeURIComponent(hostname)}&type=CNAME`, apiToken);
+  if (list.success && list.result && list.result.length > 0) {
+    await cfApiRequest('DELETE', `/zones/${zoneId}/dns_records/${list.result[0].id}`, apiToken);
+  }
+  // Clean delete (requires tunnel to not be running)
+  await cfApiRequest('DELETE', `/accounts/${accountId}/cfd_tunnel/${tunnelId}`, apiToken);
+}
+
+// safeStorage wrappers — only usable after app ready
+function encryptCfToken(plaintext) {
+  const { safeStorage } = require('electron');
+  if (!safeStorage.isEncryptionAvailable()) return plaintext; // fallback: store as-is
+  return safeStorage.encryptString(plaintext).toString('base64');
+}
+
+function decryptCfToken(stored) {
+  if (!stored) return '';
+  const { safeStorage } = require('electron');
+  if (!safeStorage.isEncryptionAvailable()) return stored;
+  try {
+    return safeStorage.decryptString(Buffer.from(stored, 'base64'));
+  } catch (_) {
+    return '';
+  }
+}
+
+// Save CF credentials JSON to userData so cloudflared can use it
+function saveCfCredentialsFile(tunnelId, tunnelSecret, accountId) {
+  const filePath = path.join(app.getPath('userData'), `cf-tunnel-${tunnelId}.json`);
+  const creds = { AccountTag: accountId, TunnelID: tunnelId, TunnelSecret: tunnelSecret };
+  fs.writeFileSync(filePath, JSON.stringify(creds, null, 2), 'utf8');
+  return filePath;
+}
+
+// IPC: verify CF API token
+ipcMain.handle('cf-verify-token', async (_event, { apiToken }) => {
+  try {
+    const result = await verifyCfToken(apiToken);
+    return { success: true, status: result.status };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// IPC: save CF API token (encrypted) + account ID
+ipcMain.handle('cf-save-token', async (_event, { apiToken, accountId }) => {
+  try {
+    const prefs = loadPreferences();
+    prefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    prefs.cfAccountId = accountId || prefs.cfAccountId || '';
+    savePreferences(prefs);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// IPC: load CF auto-setup settings (token placeholder + accountId)
+ipcMain.handle('cf-get-auto-setup-config', async () => {
+  const prefs = loadPreferences();
+  const hasToken = !!(prefs.cfApiTokenEncrypted);
+  return {
+    hasToken,
+    accountId: prefs.cfAccountId || '',
+    hostname: prefs.cfTunnelHostname || '',
+    tunnelId: prefs.cfTunnelId || ''
+  };
+});
+
+// IPC: run full auto-setup flow
+ipcMain.handle('cf-auto-setup', async (event, { apiToken, accountId, hostname }) => {
+  const send = (phase, message) => {
+    try { event.sender.send('cf-setup-progress', { phase, message }); } catch (_) {}
+  };
+
+  try {
+    send('verifying', 'Verifying API token…');
+    await verifyCfToken(apiToken);
+
+    send('zone', 'Looking up DNS zone…');
+    const zoneId = await getCfZoneId(apiToken, hostname);
+
+    const tunnelName = `slides-controller`;
+    send('tunnel', 'Creating or retrieving tunnel…');
+    const tunnel = await createOrGetCfTunnel(apiToken, accountId, tunnelName);
+    const tunnelId = tunnel.id;
+    const tunnelSecret = tunnel.tunnel_secret || tunnel.credentials?.TunnelSecret || null;
+
+    const prefs = loadPreferences();
+    const webUiPort = prefs.webUiPort || 80;
+
+    send('ingress', 'Configuring tunnel ingress rules…');
+    await configureCfTunnelIngress(apiToken, accountId, tunnelId, hostname, webUiPort);
+
+    send('dns', `Creating DNS record for ${hostname}…`);
+    await createOrUpdateCfDnsRecord(apiToken, zoneId, hostname, tunnelId);
+
+    // Save credentials file so cloudflared can authenticate
+    let credentialsPath = null;
+    if (tunnelSecret) {
+      send('credentials', 'Saving credentials file…');
+      credentialsPath = saveCfCredentialsFile(tunnelId, tunnelSecret, accountId);
+    } else {
+      // Tunnel already existed — fetch the token directly
+      const tokenResult = await cfApiRequest('GET', `/accounts/${accountId}/cfd_tunnel/${tunnelId}/token`, apiToken);
+      if (tokenResult.success) {
+        const tokenStr = tokenResult.result;
+        const credPath = path.join(app.getPath('userData'), `cf-tunnel-${tunnelId}.json`);
+        // token-based run: use --token flag instead of credentials file
+        // store token encrypted, flag as token-mode
+        const updatedPrefs = loadPreferences();
+        updatedPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+        updatedPrefs.cfAccountId = accountId;
+        updatedPrefs.cfTunnelId = tunnelId;
+        updatedPrefs.cfZoneId = zoneId;
+        updatedPrefs.cfTunnelName = tunnelName;
+        updatedPrefs.cfTunnelHostname = hostname;
+        updatedPrefs.cfTunnelToken = encryptCfToken(tokenStr);
+        updatedPrefs.cfCredentialsPath = '';
+        updatedPrefs.tunnelMode = 'named';
+        savePreferences(updatedPrefs);
+        send('done', `Connected — https://${hostname}`);
+        return { success: true, tunnelId, hostname, useToken: true };
+      }
+    }
+
+    // Persist everything
+    const finalPrefs = loadPreferences();
+    finalPrefs.cfApiTokenEncrypted = encryptCfToken(apiToken);
+    finalPrefs.cfAccountId = accountId;
+    finalPrefs.cfTunnelId = tunnelId;
+    finalPrefs.cfZoneId = zoneId;
+    finalPrefs.cfTunnelName = tunnelName;
+    finalPrefs.cfTunnelHostname = hostname;
+    if (credentialsPath) finalPrefs.cfCredentialsPath = credentialsPath;
+    finalPrefs.tunnelMode = 'named';
+    savePreferences(finalPrefs);
+
+    send('done', `Connected — https://${hostname}`);
+    return { success: true, tunnelId, hostname, credentialsPath };
+
+  } catch (e) {
+    logError('[CF Auto-setup] Error:', e.message);
+    send('error', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+// IPC: delete CF tunnel + DNS record
+ipcMain.handle('cf-delete-tunnel', async () => {
+  const prefs = loadPreferences();
+  const apiToken = decryptCfToken(prefs.cfApiTokenEncrypted);
+  if (!apiToken) return { success: false, error: 'No API token saved' };
+  if (!prefs.cfTunnelId) return { success: false, error: 'No tunnel ID saved' };
+  try {
+    stopCloudflaredTunnel();
+    if (prefs.cfZoneId && prefs.cfTunnelHostname) {
+      await deleteCfTunnelAndDns(apiToken, prefs.cfAccountId, prefs.cfZoneId, prefs.cfTunnelId, prefs.cfTunnelHostname);
+    }
+    const updated = loadPreferences();
+    updated.cfTunnelId = '';
+    updated.cfZoneId = '';
+    updated.cfTunnelToken = '';
+    updated.cfCredentialsPath = '';
+    updated.cfTunnelName = '';
+    updated.cfTunnelHostname = '';
+    updated.tunnelMode = 'quick';
+    savePreferences(updated);
+    return { success: true };
+  } catch (e) {
+    logError('[CF Delete Tunnel] Error:', e.message);
+    return { success: false, error: e.message };
+  }
+});
+
+// ─── End Cloudflare API helpers ───────────────────────────────────────────────
 
 function stopCloudflaredTunnel() {
   hideTunnelQrOverlay();
@@ -7105,11 +7552,39 @@ function startCloudflaredTunnel() {
 
   if (cloudflaredProcess) return;
 
-  const origin = getWebUiLocalOriginForTunnel();
-  // Web UI often uses a self-signed cert; cloudflared rejects it without this → edge returns 502
-  const tunnelArgs = ['tunnel', '--url', origin];
-  if (origin.startsWith('https://')) {
-    tunnelArgs.push('--no-tls-verify');
+  const tunnelMode = prefs.tunnelMode || 'quick';
+  const isNamed = tunnelMode === 'named';
+  let tunnelArgs;
+  let namedHostname = '';
+
+  if (isNamed) {
+    namedHostname = prefs.cfTunnelHostname || '';
+    const cfTunnelToken = prefs.cfTunnelToken ? decryptCfToken(prefs.cfTunnelToken) : '';
+    const cfCredentialsPath = prefs.cfCredentialsPath || '';
+    const cfTunnelName = prefs.cfTunnelName || '';
+    if (!namedHostname) {
+      logError('[Tunnel] Named tunnel mode requires hostname to be configured.');
+      broadcastTunnelUrl(null);
+      return;
+    }
+    if (cfTunnelToken) {
+      // Auto-setup path: use run token directly
+      tunnelArgs = ['tunnel', 'run', '--token', cfTunnelToken];
+    } else if (cfCredentialsPath && cfTunnelName) {
+      // Manual path: use credentials file
+      tunnelArgs = ['tunnel', '--credentials-file', cfCredentialsPath, 'run', cfTunnelName];
+    } else {
+      logError('[Tunnel] Named tunnel requires either a tunnel token (auto-setup) or credentials file + tunnel name (manual).');
+      broadcastTunnelUrl(null);
+      return;
+    }
+  } else {
+    const origin = getWebUiLocalOriginForTunnel();
+    // Web UI often uses a self-signed cert; cloudflared rejects it without this → edge returns 502
+    tunnelArgs = ['tunnel', '--url', origin];
+    if (origin.startsWith('https://')) {
+      tunnelArgs.push('--no-tls-verify');
+    }
   }
 
   try {
@@ -7123,13 +7598,22 @@ function startCloudflaredTunnel() {
   }
 
   const onData = (data) => {
-    const found = extractTrycloudflareUrl(data);
-    if (found && !tunnelUrl) {
-      tunnelUrl = found;
-      logInfo('[Tunnel] URL:', tunnelUrl);
-      broadcastTunnelUrl(tunnelUrl);
+    const str = data.toString();
+    if (isNamed) {
+      if (!tunnelUrl && str.includes('Registered tunnel connection')) {
+        tunnelUrl = namedHostname.startsWith('http') ? namedHostname : `https://${namedHostname}`;
+        logInfo('[Tunnel] Named tunnel connected, URL:', tunnelUrl);
+        broadcastTunnelUrl(tunnelUrl);
+      }
+    } else {
+      const found = extractTrycloudflareUrl(data);
+      if (found && !tunnelUrl) {
+        tunnelUrl = found;
+        logInfo('[Tunnel] URL:', tunnelUrl);
+        broadcastTunnelUrl(tunnelUrl);
+      }
     }
-    logDebug('[Tunnel]', data.toString().slice(0, 240));
+    logDebug('[Tunnel]', str.slice(0, 240));
   };
 
   cloudflaredProcess.stdout.on('data', onData);
@@ -7346,6 +7830,7 @@ function startWebUiServer() {
       const showLogo = webUiTheme !== 'max' && webUiLogoPath && fs.existsSync(webUiLogoPath);
       const webUiRestrictedTunnelClient = isWebUiRestrictedTunnelClient(req, prefs);
       const showOpenUrlSection = prefs.allowArbitraryUrl === true && !webUiRestrictedTunnelClient;
+      const showVideoControl = prefs.webUiVideoControlEnabled === true;
 
       // Get version and build number
       const versionString = `v${appBuildInfo.version}.${appBuildInfo.buildNumber}`;
@@ -7928,6 +8413,28 @@ function startWebUiServer() {
       gap: 12px;
       min-height: 120px;
     }
+    /* Three-button row (video preference on): Previous/Next share the remaining
+       space equally; the two-button default above must stay flex: 0 0 calc(50% - 10px)
+       for exact pixel parity with the pre-video-button layout. Scoped to .has-video only. */
+    .remote-controls.has-video .remote-btn-prev,
+    .remote-controls.has-video .remote-btn-next {
+      flex: 1 1 0;
+    }
+    /* Pin the video button's own width so it isn't stretched by the rule above —
+       a bare .remote-btn-video selector (0,0,1,0) is too weak to beat the prev/next
+       rule's .remote-btn (0,0,2,0) once both match the video button too, since it
+       also carries the .remote-btn class. The old flex declarations on the base and
+       themed .remote-btn-video rules below are dead now that this .has-video rule
+       always wins; they were removed rather than left, since dead flex values sitting
+       next to live ones is exactly the trap that caused this bug. flex-shrink stays 1
+       (not 0) so the button can still yield space at narrow widths instead of
+       reintroducing the row overflow this branch already fixed once. */
+    .remote-controls.has-video .remote-btn-video {
+      flex: 0 1 96px;
+    }
+    body.theme-light .remote-controls.has-video .remote-btn-video {
+      flex: 0 1 92px;
+    }
     .remote-controls.with-notes .remote-btn,
     .remote-controls.with-panel .remote-btn {
       padding: 20px 16px;
@@ -7949,6 +8456,45 @@ function startWebUiServer() {
     .remote-btn-next:hover {
       background: #5568d3;
       transform: scale(1.02);
+    }
+    .remote-btn-video {
+      background: #667eea;
+      color: white;
+    }
+    .remote-btn-video:hover {
+      background: #5568d3;
+      transform: scale(1.02);
+    }
+    .remote-btn.remote-btn-video .remote-btn-label {
+      display: none;
+    }
+    body.theme-light .remote-btn.remote-btn-video .remote-btn-label {
+      display: block;
+    }
+    /* Narrow phone widths + video button on: Previous/Next can't shrink below their
+       content minimum (icon + label), so hide their labels and tighten the row gap
+       to keep all three buttons on one row. Scoped to .has-video (added only when the
+       video control preference is on) so the default two-button row is never affected,
+       and to body:not(.theme-light) so light's already-fitting column layout keeps
+       its labels. Selector specificity here intentionally exceeds
+       .remote-btn .remote-btn-label (0,0,2,0) and only targets prev/next labels, never
+       .remote-btn-video's own label (handled separately above). */
+    @media (max-width: 600px) {
+      body:not(.theme-light) .remote-controls.has-video {
+        gap: 10px;
+      }
+      body:not(.theme-light) .remote-controls.has-video .remote-btn-prev .remote-btn-label,
+      body:not(.theme-light) .remote-controls.has-video .remote-btn-next .remote-btn-label {
+        display: none;
+      }
+      /* touch/thumb still clip below ~380px even with labels hidden; trim their
+         horizontal padding in the three-button row to bring min-content down
+         further (measured to fit to roughly a 300px viewport). */
+      body.theme-touch .remote-controls.has-video .remote-btn,
+      body.theme-thumb .remote-controls.has-video .remote-btn {
+        padding-left: 8px;
+        padding-right: 8px;
+      }
     }
     .remote-btn:active {
       transform: scale(0.98);
@@ -8880,6 +9426,11 @@ function startWebUiServer() {
       border: 1px solid var(--faire-text);
       color: var(--faire-surface);
     }
+    body.theme-light .remote-btn-video {
+      background: var(--faire-surface);
+      border: 1px solid var(--faire-border);
+      color: var(--faire-text);
+    }
     body.theme-light .bottom-tabs {
       display: flex;
       position: fixed;
@@ -9127,7 +9678,7 @@ function startWebUiServer() {
     body.theme-dark h1, body.theme-dark h2, body.theme-dark h3 { color: rgba(255,255,255,0.92); }
     body.theme-dark .tab-btn { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); border: 1px solid rgba(255,255,255,0.15); }
     body.theme-dark .tab-btn.active { background: rgba(255,255,255,0.2); }
-    body.theme-dark .remote-btn-prev, body.theme-dark .remote-btn-next { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
+    body.theme-dark .remote-btn-prev, body.theme-dark .remote-btn-next, body.theme-dark .remote-btn-video { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2); }
     body.theme-dark .remote-btn:hover { background: rgba(255,255,255,0.25); }
     body.theme-dark .slide-previews-grid, body.theme-dark .speaker-notes-content-wrapper { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); }
     body.theme-dark .speaker-notes-content { color: rgba(255,255,255,0.88); }
@@ -9249,6 +9800,7 @@ function startWebUiServer() {
     body.theme-touch .container { background: #fff; border-radius: var(--faire-radius); box-shadow: 0 8px 32px rgba(0,0,0,0.12); max-width: 90%; padding: 28px; }
     body.theme-touch .remote-btn { min-height: 80px; padding: 24px 28px; font-size: 22px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .remote-btn:active { transform: scale(0.97); }
+    body.theme-touch .remote-btn-video { padding-left: 12px; padding-right: 12px; }
     body.theme-touch .tab-btn { padding: 16px 28px; font-size: 18px; min-height: 52px; -webkit-tap-highlight-color: transparent; }
     body.theme-touch .notes-toggle-btn, body.theme-touch .preview-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
     body.theme-touch .keyboard-toggle-btn { padding: 14px 20px; font-size: 16px; min-height: 48px; }
@@ -9315,7 +9867,8 @@ function startWebUiServer() {
     body.theme-thumb .speaker-notes-container { order: 2; flex: 1 1 auto; min-height: 0; }
     body.theme-thumb .remote-controls { order: 3; flex-shrink: 0; margin-top: 12px; }
     body.theme-thumb .remote-btn { min-height: 72px; padding: 20px 24px; font-size: 20px; -webkit-tap-highlight-color: transparent; }
-    body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    body.theme-thumb .remote-btn-prev, body.theme-thumb .remote-btn-next, body.theme-thumb .remote-btn-video { background: rgba(255,255,255,0.2); color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+    body.theme-thumb .remote-btn-video { padding-left: 12px; padding-right: 12px; }
     body.theme-thumb .remote-btn:hover { background: rgba(255,255,255,0.35); }
     body.theme-thumb .remote-btn:active { transform: scale(0.98); }
     body.theme-thumb .slide-previews-grid, body.theme-thumb .speaker-notes-content-wrapper { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--faire-radius); color: rgba(255,255,255,0.9); }
@@ -9988,14 +10541,22 @@ function startWebUiServer() {
           <div id="notes-encoding-warning" style="display:none; margin-top:6px; padding:6px 10px; font-size:12px; line-height:1.4; color:#b26a00; background:rgba(255,193,7,0.12); border:1px solid rgba(255,193,7,0.3); border-radius:6px;">Line break encoding issues detected on this slide. Notes are displayed with corrections applied. To fix permanently, re-enter line breaks in the Google Slides editor or run the <a href="https://github.com/TomsFaire/Google-Slides-Controller/blob/main/docs/fix-speaker-notes.gs" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">cleanup script</a>.</div>
         </div>
       </div>
-      <div class="remote-controls" id="remote-controls">
-        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev">
+      <div class="remote-controls${showVideoControl ? ' has-video' : ''}" id="remote-controls">
+        <button type="button" class="remote-btn remote-btn-prev" id="remote-btn-prev" aria-label="Previous">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
           <span class="remote-btn-label">Previous</span>
         </button>
-        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next">
+        ${showVideoControl ? `<button type="button" class="remote-btn remote-btn-video" id="remote-btn-video" title="Play or pause video on the current slide" aria-label="Video">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
+            <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+            <rect x="19" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+          </svg>
+          <span class="remote-btn-label">Video</span>
+        </button>` : ``}
+        <button type="button" class="remote-btn remote-btn-next" id="remote-btn-next" aria-label="Next slide">
           <span class="remote-btn-label">Next slide</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="9 18 15 12 9 6"></polyline>
@@ -10155,6 +10716,14 @@ function startWebUiServer() {
             </svg>
             Reload Presentation
           </button>
+          ${showVideoControl ? `<button type="button" class="btn-control" id="btn-toggle-video" data-tooltip="Play or pause video on the current slide">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="4 3 12 12 4 21" fill="currentColor" stroke="none"></polygon>
+              <rect x="15" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+              <rect x="19" y="4" width="2.6" height="16" fill="currentColor" stroke="none"></rect>
+            </svg>
+            Play / Pause Video
+          </button>` : ``}
           <button type="button" class="btn-control" id="btn-close-presentation" data-tooltip="Close current presentation">
             <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -10530,6 +11099,15 @@ function startWebUiServer() {
 
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         tabPanel.classList.add('active');
+
+        const hint = document.getElementById('keyboard-shortcuts-hint');
+        if (hint) {
+          if (tabName === 'remote') {
+            updateKeyboardHint();
+          } else {
+            hint.classList.remove('visible');
+          }
+        }
       });
     });
 
@@ -10592,6 +11170,13 @@ function startWebUiServer() {
     }
     
     // Set up control buttons
+    // Conditionally rendered — null guard required, same reason as remote-btn-video.
+    const controlsVideoBtn = document.getElementById('btn-toggle-video');
+    if (controlsVideoBtn) {
+      controlsVideoBtn.addEventListener('click', () => {
+        apiCall('/api/toggle-video');
+      });
+    }
     document.getElementById('btn-prev-slide').addEventListener('click', () => {
       apiCall('/api/previous-slide').then(() => {
         updateSlideButtons();
@@ -11042,7 +11627,17 @@ function startWebUiServer() {
         updateSlideButtons();
       });
     });
-    
+
+    // Conditionally rendered — the null guard is required. Without it this throws when
+    // webUiVideoControlEnabled is off, aborting every listener registered after it.
+    const remoteVideoBtn = document.getElementById('remote-btn-video');
+    if (remoteVideoBtn) {
+      remoteVideoBtn.addEventListener('click', () => {
+        triggerHapticFeedback();
+        apiCall('/api/toggle-video');
+      });
+    }
+
     // Clickable preview images: current → previous slide, next → next slide
     function refreshAfterSlideChange() {
       if (notesVisible) loadSpeakerNotes();
@@ -11662,8 +12257,7 @@ function startWebUiServer() {
     function updateStagetimerVisibility() {
       const container = document.getElementById('stagetimer-container');
       if (!container) return;
-      // Only show the widget once an API key has been saved; no key = no box
-      if (!stagetimerApiKeyCached) {
+      if (!stagetimerApiKeyCached || !stagetimerVisible) {
         container.style.display = 'none';
       } else {
         container.style.display = 'block';
@@ -12285,12 +12879,14 @@ function startWebUiServer() {
       const badge = document.getElementById('web-offline-cache-badge');
       const detail = document.getElementById('web-offline-cache-detail');
       if (!badge) return;
-      const labels = { 'not-cached': 'Not cached', 'caching': 'Caching…', 'cached': 'Cached', 'offline': 'Offline', 'stale': 'Stale' };
-      const colors = { 'not-cached': 'rgba(255,255,255,0.15)', 'caching': '#7b61ff', 'cached': '#22c55e', 'offline': '#3b82f6', 'stale': '#f59e0b' };
+      const labels = { 'not-cached': 'Not cached', 'caching': 'Caching…', 'cached': 'Cached', 'offline': 'Offline', 'stale': 'Stale', 'error': 'Failed' };
+      const colors = { 'not-cached': 'rgba(255,255,255,0.15)', 'caching': '#7b61ff', 'cached': '#22c55e', 'offline': '#3b82f6', 'stale': '#f59e0b', 'error': '#ef4444' };
       badge.textContent = labels[data.cacheState] || data.cacheState || 'Unknown';
       badge.style.background = colors[data.cacheState] || 'rgba(255,255,255,0.15)';
       badge.style.color = data.cacheState === 'not-cached' ? '' : '#fff';
-      if (data.cachedAt && data.cacheState !== 'not-cached') {
+      if (data.cacheState === 'error') {
+        detail.textContent = 'Download failed — try again';
+      } else if (data.cachedAt && data.cacheState !== 'not-cached') {
         detail.textContent = 'Cached: ' + new Date(data.cachedAt).toLocaleString();
       } else if (data.cacheState === 'caching') {
         detail.textContent = 'Recording…';
@@ -13126,7 +13722,7 @@ function startWebUiServer() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Register custom protocol for serving offline-cached responses
   protocol.registerBufferProtocol('gs-cache', (request, callback) => {
     try {
@@ -13161,10 +13757,21 @@ app.whenReady().then(() => {
   startWebUiServer();
   // Quick Tunnel starts from Web UI listen callback when cloudflaredEnabled is set
 
+  if (DecklinkOutputManager) {
+    try {
+      const prefs = loadPreferences();
+      await DecklinkOutputManager.init(() => presentationWindow, () => notesWindow, prefs);
+    } catch (e) {
+      logError('[DeckLink] init error:', e.message);
+    }
+  }
+
   // Start backup status polling if in primary mode
   startBackupStatusPolling();
 
   applyPerfectCuePrefs(loadPreferences());
+
+  restoreStageTimerOverlayFromPreferences();
 
   scheduleReadmeScreenshotCapture();
 
@@ -13191,5 +13798,8 @@ app.on('before-quit', () => {
   if (webUiServer) {
     console.log('[Web UI] Shutting down web UI server');
     webUiServer.close();
+  }
+  if (DecklinkOutputManager) {
+    DecklinkOutputManager.shutdown().catch(() => {});
   }
 });

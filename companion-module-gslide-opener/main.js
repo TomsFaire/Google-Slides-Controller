@@ -1,7 +1,8 @@
-const { InstanceBase, runEntrypoint, combineRgb } = require('@companion-module/base')
-const UpdateActions = require('./actions.js')
+import http from 'http'
+import { InstanceBase, InstanceStatus, combineRgb } from '@companion-module/base'
+import UpdateActions from './actions.js'
 
-class GoogleSlidesOpenerInstance extends InstanceBase {
+export default class GoogleSlidesOpenerInstance extends InstanceBase {
 	constructor(internal) {
 		super(internal)
 		console.log('[gslide-opener] Constructor called')
@@ -53,7 +54,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 		this.log('info', `Merged config: host=${this.config.host}, port=${this.config.port}`)
 
 		// Set initial status
-		this.updateStatus('ok', 'Initializing...')
+		this.updateStatus(InstanceStatus.Connecting, 'Initializing...')
 		this.log('info', 'Status set to: Initializing...')
 
 		// Update actions
@@ -165,20 +166,19 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			console.log('[gslide-opener] Connection successful:', response)
 			this.log('info', 'Connected to Google Slides Opener')
 			this.log('info', `Response: ${JSON.stringify(response)}`)
-			this.updateStatus('ok', 'Connected')
+			this.updateStatus(InstanceStatus.Ok, 'Connected')
 			
 			// Update state immediately on successful connection
 			await this.updateState()
 		} catch (error) {
 			console.log('[gslide-opener] Connection failed:', error)
 			this.log('error', `Failed to connect to Google Slides Opener: ${error.message}`)
-			this.updateStatus('error', `Connection failed: ${error.message}`)
+			this.updateStatus(InstanceStatus.ConnectionFailure, `Connection failed: ${error.message}`)
 		}
 	}
 
 	// Make API requests
 	async apiRequest(method, endpoint, data = null) {
-		const http = require('http')
 
 		console.log(`[gslide-opener] API Request: ${method} ${endpoint}`)
 		this.log('debug', `API Request: ${method} ${endpoint}`)
@@ -321,6 +321,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				variableId: 'notes_layout',
 				name: 'Notes Layout (hide / default)'
 			},
+			// Stage Timer Overlay
+			{ variableId: 'stage_timer_overlay_enabled',  name: 'Stage Timer Overlay Active (Yes/No)' },
+			{ variableId: 'stage_timer_overlay_position', name: 'Stage Timer Overlay Position' },
+			{ variableId: 'stage_timer_overlay_size',     name: 'Stage Timer Overlay Size (%)' },
 			// PerfectCue global enable
 			{ variableId: 'perfectcue_enabled', name: 'PerfectCue Global Enabled (1/0)' },
 			// PerfectCue port slots (up to 10)
@@ -332,7 +336,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			]).flat(),
 		]
 
-		this.setVariableDefinitions(variables)
+		// Companion 2.x expects an object keyed by variable id
+		this.setVariableDefinitions(
+			Object.fromEntries(variables.map(({ variableId, name }) => [variableId, { name }]))
+		)
 		this.log('info', `Defined ${variables.length} variables`)
 	}
 
@@ -480,6 +487,20 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				},
 				showInvert: false
 			},
+			stage_timer_overlay_active: {
+				type: 'boolean',
+				name: 'Stage Timer Overlay Active',
+				description: 'Active when the stage timer overlay is shown on the notes monitor',
+				defaultStyle: {
+					color: combineRgb(255, 255, 255),
+					bgcolor: combineRgb(0, 100, 220)
+				},
+				options: [],
+				callback: () => {
+					return this.state.stageTimerOverlayEnabled === true
+				},
+				showInvert: true
+			},
 		}
 
 		this.setFeedbackDefinitions(feedbacks)
@@ -525,6 +546,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			notesZoomDefault: response.notesZoomDefault !== null && response.notesZoomDefault !== undefined ? response.notesZoomDefault : null,
 			notesLayout: response.notesLayout || 'hide',
 			perfectcue: response.perfectcue || { enabled: false, ports: [] },
+			stageTimerOverlayEnabled:  response.stageTimerOverlayEnabled  === true,
+			stageTimerOverlayPosition: response.stageTimerOverlayPosition || 'bottom-left',
+			stageTimerOverlaySize:     response.stageTimerOverlaySize     != null ? response.stageTimerOverlaySize : 10,
 		}
 		
 		// Check if state changed (compare all fields)
@@ -550,7 +574,10 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			this.state.notesZoomSteps !== newState.notesZoomSteps ||
 			this.state.notesZoomDefault !== newState.notesZoomDefault ||
 			this.state.notesLayout !== newState.notesLayout ||
-			JSON.stringify(this.state.perfectcue) !== JSON.stringify(newState.perfectcue)
+			JSON.stringify(this.state.perfectcue) !== JSON.stringify(newState.perfectcue) ||
+			this.state.stageTimerOverlayEnabled  !== newState.stageTimerOverlayEnabled  ||
+			this.state.stageTimerOverlayPosition !== newState.stageTimerOverlayPosition ||
+			this.state.stageTimerOverlaySize     !== newState.stageTimerOverlaySize
 		
 		if (stateChanged) {
 			this.state = newState
@@ -578,6 +605,9 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 				notes_zoom_steps: this.state.notesZoomSteps !== null && this.state.notesZoomSteps !== undefined ? String(this.state.notesZoomSteps) : '',
 				notes_zoom_default: this.state.notesZoomDefault !== null && this.state.notesZoomDefault !== undefined ? String(this.state.notesZoomDefault) : '',
 				notes_layout: this.state.notesLayout || 'hide',
+				stage_timer_overlay_enabled:  this.state.stageTimerOverlayEnabled  ? 'Yes' : 'No',
+				stage_timer_overlay_position: this.state.stageTimerOverlayPosition || 'bottom-left',
+				stage_timer_overlay_size:     String(this.state.stageTimerOverlaySize || 10),
 				perfectcue_enabled: newState.perfectcue.enabled ? '1' : '0',
 				...Object.fromEntries(
 					Array.from({ length: 10 }, (_, i) => {
@@ -593,7 +623,7 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 			})
 			
 			// Trigger feedback updates
-			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state', 'backup_controls_enabled', 'notes_layout_is')
+			this.checkFeedbacks('presentation_open', 'notes_open', 'on_slide', 'is_first_slide', 'is_last_slide', 'login_state', 'backup_controls_enabled', 'notes_layout_is', 'stage_timer_overlay_active')
 			
 			this.log('debug', `State updated: presentation=${this.state.presentationOpen}, notes=${this.state.notesOpen}, slide=${this.state.currentSlide}/${this.state.totalSlides}, title=${this.state.presentationTitle || 'N/A'}`)
 		}
@@ -607,6 +637,4 @@ class GoogleSlidesOpenerInstance extends InstanceBase {
 	}
 }
 
-console.log('[gslide-opener] Module loaded, calling runEntrypoint...')
-runEntrypoint(GoogleSlidesOpenerInstance, [])
-console.log('[gslide-opener] runEntrypoint called')
+export const UpgradeScripts = []

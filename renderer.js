@@ -39,6 +39,7 @@ const savePerfectCueBtn = document.getElementById('save-perfectcue-btn');
 const verboseLoggingCheckbox = document.getElementById('verbose-logging');
 const webUiDebugConsoleEnabledCheckbox = document.getElementById('web-ui-debug-console-enabled');
 const allowArbitraryUrlCheckbox = document.getElementById('allow-arbitrary-url');
+const webUiVideoControlEnabledCheckbox = document.getElementById('web-ui-video-control-enabled');
 const genericUrlBgColorPicker = document.getElementById('generic-url-background-color');
 const genericUrlBgColorHex = document.getElementById('generic-url-background-color-hex');
 const webUiThemeSelect = document.getElementById('web-ui-theme');
@@ -77,18 +78,47 @@ const openCrashReportsFolderBtn = document.getElementById('open-crash-reports-fo
 const wanEnabledCheckbox = document.getElementById('wan-enabled');
 const wanStatusRow = document.getElementById('wan-status-row');
 const wanUrlDisplay = document.getElementById('wan-url-display');
+const wanUrlHint = document.getElementById('wan-url-hint');
 const wanCopyBtn = document.getElementById('wan-copy-btn');
+const tunnelModeQuickRadio = document.getElementById('tunnel-mode-quick');
+const tunnelModeNamedRadio = document.getElementById('tunnel-mode-named');
+const namedTunnelConfig = document.getElementById('named-tunnel-config');
+const cfTunnelNameInput = document.getElementById('cf-tunnel-name');
+const cfTunnelHostnameInput = document.getElementById('cf-tunnel-hostname');
+const cfCredentialsPathInput = document.getElementById('cf-credentials-path');
+const cfCredentialsBrowseBtn = document.getElementById('cf-credentials-browse');
+const namedTunnelSaveBtn = document.getElementById('named-tunnel-save');
+const namedTunnelStatus = document.getElementById('named-tunnel-status');
+const cfApiTokenInput = document.getElementById('cf-api-token');
+const cfVerifyTokenBtn = document.getElementById('cf-verify-token-btn');
+const cfAccountIdInput = document.getElementById('cf-account-id');
+const cfAutoHostnameInput = document.getElementById('cf-auto-hostname');
+const cfAutoSetupBtn = document.getElementById('cf-auto-setup-btn');
+const cfAutoSaveBtn = document.getElementById('cf-auto-save-btn');
+const cfDeleteTunnelBtn = document.getElementById('cf-delete-tunnel-btn');
+const cfAutoStatus = document.getElementById('cf-auto-status');
 const wanTunnelPinNewInput = document.getElementById('wan-tunnel-pin-new');
 const wanTunnelPinConfirmInput = document.getElementById('wan-tunnel-pin-confirm');
 const wanTunnelPinSaveBtn = document.getElementById('wan-tunnel-pin-save');
 const wanTunnelPinRemoveBtn = document.getElementById('wan-tunnel-pin-remove');
 const wanTunnelPinStatusEl = document.getElementById('wan-tunnel-pin-status');
 const wanPinScopeSelect = document.getElementById('wan-pin-scope');
+const decklinkSlidesEnabled = document.getElementById('decklink-slides-enabled');
+const decklinkSlidesDevice = document.getElementById('decklink-slides-device');
+const decklinkSlidesMode = document.getElementById('decklink-slides-mode');
+const decklinkNotesEnabled = document.getElementById('decklink-notes-enabled');
+const decklinkNotesDevice = document.getElementById('decklink-notes-device');
+const decklinkNotesMode = document.getElementById('decklink-notes-mode');
+const decklinkSlidesModeHint = document.getElementById('decklink-slides-mode-hint');
+const decklinkNotesModeHint = document.getElementById('decklink-notes-mode-hint');
+const saveDecklinkBtn = document.getElementById('save-decklink-btn');
 
 // Tab switching
 const NAV_ITEMS = document.querySelectorAll('.sidebar-nav [data-target]');
 const TAB_SECTIONS = document.querySelectorAll('.content section[data-tab]');
 const ACTIVE_TAB_KEY = 'desktop-ui:activeTab';
+
+let _decklinkStatusInterval = null;
 
 function switchTab(tabName) {
   TAB_SECTIONS.forEach(s => {
@@ -98,6 +128,14 @@ function switchTab(tabName) {
     a.classList.toggle('active', a.dataset.target === tabName);
   });
   try { localStorage.setItem(ACTIVE_TAB_KEY, tabName); } catch (_) {}
+
+  if (tabName === 'decklink') {
+    updateDecklinkStatus();
+    _decklinkStatusInterval = setInterval(updateDecklinkStatus, 5000);
+  } else {
+    clearInterval(_decklinkStatusInterval);
+    _decklinkStatusInterval = null;
+  }
 }
 
 NAV_ITEMS.forEach(item => {
@@ -538,12 +576,6 @@ async function initDisplays() {
       defaultNotesZoomInput.value = dz !== undefined && dz !== null ? String(dz) : '0';
     }
 
-    const presentationGpuModeSelect = document.getElementById('presentation-gpu-mode');
-    if (presentationGpuModeSelect) {
-      const allowedGpu = ['default', 'angle-metal', 'angle-gl', 'swiftshader', 'disable-gpu'];
-      const m = String(preferences.presentationGpuMode || 'default');
-      presentationGpuModeSelect.value = allowedGpu.includes(m) ? m : 'default';
-    }
     const presentationNativeFullscreenGroup = document.getElementById('presentation-native-fullscreen-group');
     const presentationNativeFullscreenCheckbox = document.getElementById('presentation-native-fullscreen');
     const isMacUi = /Mac/i.test(navigator.platform || '') || /Mac OS X/.test(navigator.userAgent || '');
@@ -588,6 +620,9 @@ async function initDisplays() {
     }
     if (allowArbitraryUrlCheckbox) {
       allowArbitraryUrlCheckbox.checked = preferences.allowArbitraryUrl === true;
+    }
+    if (webUiVideoControlEnabledCheckbox) {
+      webUiVideoControlEnabledCheckbox.checked = preferences.webUiVideoControlEnabled === true;
     }
     const savedBgColor = /^#[0-9a-fA-F]{6}$/.test(preferences.genericUrlBackgroundColor)
       ? preferences.genericUrlBackgroundColor : '#000000';
@@ -655,7 +690,41 @@ async function initDisplays() {
     // preferences.perfectCuePorts is already PortConfig[] after loadPreferences() normalization
     const perfectCuePorts = Array.isArray(preferences.perfectCuePorts) ? preferences.perfectCuePorts : [];
     renderPerfectCuePortList(perfectCuePorts);
-    
+
+    // Restore DeckLink settings
+    await populateDecklinkDevices();
+    if (decklinkSlidesDevice) {
+      decklinkSlidesDevice.addEventListener('change', () =>
+        populateDecklinkModes(decklinkSlidesMode, decklinkSlidesModeHint, decklinkSlidesDevice));
+    }
+    if (decklinkNotesDevice) {
+      decklinkNotesDevice.addEventListener('change', () =>
+        populateDecklinkModes(decklinkNotesMode, decklinkNotesModeHint, decklinkNotesDevice));
+    }
+    await loadDecklinkSettings(preferences);
+    await updateDecklinkStatus();
+
+    if (saveDecklinkBtn) {
+      saveDecklinkBtn.addEventListener('click', async () => {
+        const config = {
+          slides: {
+            enabled: decklinkSlidesEnabled ? decklinkSlidesEnabled.checked : false,
+            deviceIndex: decklinkSlidesDevice ? parseInt(decklinkSlidesDevice.value, 10) : 0,
+            displayMode: decklinkSlidesMode ? decklinkSlidesMode.value : '1080p2997'
+          },
+          notes: {
+            enabled: decklinkNotesEnabled ? decklinkNotesEnabled.checked : false,
+            deviceIndex: decklinkNotesDevice ? parseInt(decklinkNotesDevice.value, 10) : 1,
+            displayMode: decklinkNotesMode ? decklinkNotesMode.value : '1080p2997'
+          }
+        };
+        try {
+          await window.electronAPI.saveDecklinkConfig(config);
+          await updateDecklinkStatus();
+        } catch (e) { /* ignore */ }
+      });
+    }
+
     // Save preferences when selections change
     presentationDisplay.addEventListener('change', saveMonitorPreferences);
     notesDisplay.addEventListener('change', saveMonitorPreferences);
@@ -751,6 +820,9 @@ async function initDisplays() {
     }
     if (allowArbitraryUrlCheckbox) {
       allowArbitraryUrlCheckbox.addEventListener('change', saveAllowArbitraryUrlPreference);
+    }
+    if (webUiVideoControlEnabledCheckbox) {
+      webUiVideoControlEnabledCheckbox.addEventListener('change', saveWebUiVideoControlPreference);
     }
     if (genericUrlBgColorPicker) {
       genericUrlBgColorPicker.addEventListener('input', () => {
@@ -925,6 +997,143 @@ async function initDisplays() {
       });
     }
 
+    // Named tunnel: radio toggle show/hide
+    [tunnelModeQuickRadio, tunnelModeNamedRadio].forEach(radio => {
+      if (!radio) return;
+      radio.addEventListener('change', () => {
+        const isNamed = tunnelModeNamedRadio && tunnelModeNamedRadio.checked;
+        if (namedTunnelConfig) namedTunnelConfig.style.display = isNamed ? '' : 'none';
+        if (wanUrlHint) {
+          wanUrlHint.textContent = isNamed
+            ? 'Fixed URL — does not change between app restarts.'
+            : 'The URL changes each time the app starts. Requires internet access.';
+        }
+      });
+    });
+
+    // Named tunnel: Browse credentials file
+    if (cfCredentialsBrowseBtn && window.electronAPI.showOpenCredentialsDialog) {
+      cfCredentialsBrowseBtn.addEventListener('click', async () => {
+        const result = await window.electronAPI.showOpenCredentialsDialog();
+        if (!result.canceled && result.filePath && cfCredentialsPathInput) {
+          cfCredentialsPathInput.value = result.filePath;
+        }
+      });
+    }
+
+    // Named tunnel: Save config
+    if (namedTunnelSaveBtn) {
+      namedTunnelSaveBtn.addEventListener('click', async () => {
+        const tunnelMode = (tunnelModeNamedRadio && tunnelModeNamedRadio.checked) ? 'named' : 'quick';
+        const cfg = {
+          tunnelMode,
+          cfTunnelName: cfTunnelNameInput ? cfTunnelNameInput.value.trim() : '',
+          cfTunnelHostname: cfTunnelHostnameInput ? cfTunnelHostnameInput.value.trim() : '',
+          cfCredentialsPath: cfCredentialsPathInput ? cfCredentialsPathInput.value.trim() : ''
+        };
+        if (tunnelMode === 'named' && (!cfg.cfTunnelName || !cfg.cfTunnelHostname || !cfg.cfCredentialsPath)) {
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Please fill in all named tunnel fields.';
+          return;
+        }
+        try {
+          await window.electronAPI.savePreferences(cfg);
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Saved.';
+          setTimeout(() => { if (namedTunnelStatus) namedTunnelStatus.textContent = ''; }, 2500);
+          // Restart tunnel if currently running so the new config takes effect
+          if (wanEnabledCheckbox && wanEnabledCheckbox.checked) {
+            await window.electronAPI.setTunnelEnabled(false);
+            await window.electronAPI.setTunnelEnabled(true);
+            if (wanUrlDisplay) wanUrlDisplay.value = 'Connecting…';
+          }
+        } catch (e) {
+          console.error('save named tunnel config:', e);
+          if (namedTunnelStatus) namedTunnelStatus.textContent = 'Save failed.';
+        }
+      });
+    }
+
+    // CF auto-setup: verify token
+    if (cfVerifyTokenBtn) {
+      cfVerifyTokenBtn.addEventListener('click', async () => {
+        const token = cfApiTokenInput ? cfApiTokenInput.value.trim() : '';
+        if (!token) { setCfAutoStatus('Enter an API token first.', 'error'); return; }
+        setCfAutoStatus('Verifying…');
+        const result = await window.electronAPI.cfVerifyToken(token);
+        if (result.success) {
+          setCfAutoStatus('Token is valid.', 'ok');
+        } else {
+          setCfAutoStatus(`Invalid token: ${result.error}`, 'error');
+        }
+      });
+    }
+
+    // CF auto-setup: save token only
+    if (cfAutoSaveBtn) {
+      cfAutoSaveBtn.addEventListener('click', async () => {
+        const token = cfApiTokenInput ? cfApiTokenInput.value.trim() : '';
+        const accountId = cfAccountIdInput ? cfAccountIdInput.value.trim() : '';
+        if (!token) { setCfAutoStatus('Enter an API token first.', 'error'); return; }
+        const result = await window.electronAPI.cfSaveToken(token, accountId);
+        if (result.success) {
+          setCfAutoStatus('Token saved.', 'ok');
+          if (cfApiTokenInput) cfApiTokenInput.value = '';
+        } else {
+          setCfAutoStatus(`Save failed: ${result.error}`, 'error');
+        }
+      });
+    }
+
+    // CF auto-setup: full connect flow
+    if (cfAutoSetupBtn) {
+      cfAutoSetupBtn.addEventListener('click', async () => {
+        const token = cfApiTokenInput ? cfApiTokenInput.value.trim() : '';
+        const accountId = cfAccountIdInput ? cfAccountIdInput.value.trim() : '';
+        const hostname = cfAutoHostnameInput ? cfAutoHostnameInput.value.trim() : '';
+        if (!token) { setCfAutoStatus('Enter an API token.', 'error'); return; }
+        if (!accountId) { setCfAutoStatus('Enter your Cloudflare Account ID.', 'error'); return; }
+        if (!hostname) { setCfAutoStatus('Enter a hostname (e.g. slides.pconair.com).', 'error'); return; }
+        cfAutoSetupBtn.disabled = true;
+        setCfAutoStatus('Starting…');
+        window.electronAPI.onCfSetupProgress(({ phase, message }) => {
+          setCfAutoStatus(message, phase === 'error' ? 'error' : 'info');
+        });
+        const result = await window.electronAPI.cfAutoSetup({ apiToken: token, accountId, hostname });
+        cfAutoSetupBtn.disabled = false;
+        if (result.success) {
+          setCfAutoStatus(`Connected — https://${hostname}`, 'ok');
+          if (cfApiTokenInput) cfApiTokenInput.value = '';
+          // Reflect new hostname in the manual fields too
+          if (cfTunnelHostnameInput) cfTunnelHostnameInput.value = hostname;
+          if (cfDeleteTunnelBtn) cfDeleteTunnelBtn.style.display = '';
+          // Restart tunnel with new config if WAN is enabled
+          if (wanEnabledCheckbox && wanEnabledCheckbox.checked) {
+            await window.electronAPI.setTunnelEnabled(false);
+            await window.electronAPI.setTunnelEnabled(true);
+          }
+        } else {
+          setCfAutoStatus(`Setup failed: ${result.error}`, 'error');
+        }
+      });
+    }
+
+    // CF auto-setup: delete tunnel
+    if (cfDeleteTunnelBtn) {
+      cfDeleteTunnelBtn.addEventListener('click', async () => {
+        if (!confirm('Delete the Cloudflare tunnel and DNS record? This cannot be undone.')) return;
+        setCfAutoStatus('Deleting…');
+        const result = await window.electronAPI.cfDeleteTunnel();
+        if (result.success) {
+          setCfAutoStatus('Tunnel deleted.', 'ok');
+          if (cfDeleteTunnelBtn) cfDeleteTunnelBtn.style.display = 'none';
+          if (cfTunnelHostnameInput) cfTunnelHostnameInput.value = '';
+          if (cfCredentialsPathInput) cfCredentialsPathInput.value = '';
+          if (cfTunnelNameInput) cfTunnelNameInput.value = '';
+        } else {
+          setCfAutoStatus(`Delete failed: ${result.error}`, 'error');
+        }
+      });
+    }
+
     if (wanTunnelPinSaveBtn) {
       wanTunnelPinSaveBtn.addEventListener('click', () => {
         saveWanTunnelPinFromDesktop();
@@ -1017,6 +1226,7 @@ async function initDisplays() {
         'cached': 'Cached',
         'offline': 'Offline',
         'stale': 'Stale',
+        'error': 'Failed',
       };
       const colors = {
         'not-cached': 'rgba(255,255,255,0.1)',
@@ -1024,13 +1234,16 @@ async function initDisplays() {
         'cached': '#22c55e',
         'offline': '#3b82f6',
         'stale': '#f59e0b',
+        'error': '#ef4444',
       };
 
       offlineCacheStatusBadge.textContent = labels[cacheState] || cacheState || 'Unknown';
       offlineCacheStatusBadge.style.background = colors[cacheState] || 'rgba(255,255,255,0.1)';
       offlineCacheStatusBadge.style.color = cacheState === 'not-cached' ? '' : '#fff';
 
-      if (cachedAt && cacheState !== 'not-cached') {
+      if (cacheState === 'error') {
+        offlineCacheStatusDetail.textContent = 'Download failed — check the debug log and try again';
+      } else if (cachedAt && cacheState !== 'not-cached') {
         const d = new Date(cachedAt);
         offlineCacheStatusDetail.textContent = 'Last cached: ' + d.toLocaleString();
       } else if (cacheState === 'caching') {
@@ -1068,6 +1281,7 @@ async function initDisplays() {
           const result = await window.electronAPI.offlineMode.warmCache();
           if (!result.success) {
             console.error('[Offline] Warm failed:', result.error);
+            showStatus(result.error || 'Could not start offline download', 'error');
           }
           const status = await window.electronAPI.offlineMode.getStatus();
           updateOfflineCacheUI(status);
@@ -1139,7 +1353,10 @@ async function initDisplays() {
 
     updateStatusBar();
   } catch (error) {
-    showStatus('Failed to load displays', 'error');
+    showStatus('Failed to load displays — restart the app to retry', 'error');
+    [presentationDisplay, notesDisplay].forEach((sel, i) => {
+      if (sel) sel.innerHTML = `<option value="">Display ${i + 1} (unavailable)</option>`;
+    });
   }
 }
 
@@ -1435,7 +1652,10 @@ async function savePerfectCuePrefs() {
 async function loadTunnelStatus() {
   if (!wanEnabledCheckbox || !window.electronAPI.getTunnelStatus) return;
   try {
-    const status = await window.electronAPI.getTunnelStatus();
+    const [status, prefs] = await Promise.all([
+      window.electronAPI.getTunnelStatus(),
+      window.electronAPI.getPreferences()
+    ]);
     wanEnabledCheckbox.checked = !!status.enabled;
     if (wanStatusRow) {
       wanStatusRow.style.display = status.enabled ? '' : 'none';
@@ -1443,10 +1663,44 @@ async function loadTunnelStatus() {
     if (wanUrlDisplay) {
       wanUrlDisplay.value = status.url || (status.running ? 'Connecting\u2026' : '');
     }
+    applyTunnelConfig(prefs);
     updateStatusBar();
     syncDashboardWan();
   } catch (err) {
     console.error('Failed to load tunnel status:', err);
+  }
+}
+
+function setCfAutoStatus(message, type) {
+  if (!cfAutoStatus) return;
+  cfAutoStatus.textContent = message;
+  cfAutoStatus.style.color = type === 'error' ? 'var(--color-error, #c0392b)'
+    : type === 'ok' ? 'var(--color-success, #27ae60)'
+    : 'var(--text-muted)';
+}
+
+function applyTunnelConfig(prefs) {
+  const mode = prefs.tunnelMode || 'quick';
+  if (tunnelModeQuickRadio) tunnelModeQuickRadio.checked = mode !== 'named';
+  if (tunnelModeNamedRadio) tunnelModeNamedRadio.checked = mode === 'named';
+  if (namedTunnelConfig) namedTunnelConfig.style.display = mode === 'named' ? '' : 'none';
+  if (cfTunnelNameInput) cfTunnelNameInput.value = prefs.cfTunnelName || '';
+  if (cfTunnelHostnameInput) cfTunnelHostnameInput.value = prefs.cfTunnelHostname || '';
+  if (cfCredentialsPathInput) cfCredentialsPathInput.value = prefs.cfCredentialsPath || '';
+  if (wanUrlHint) {
+    wanUrlHint.textContent = mode === 'named'
+      ? 'Fixed URL \u2014 does not change between app restarts.'
+      : 'The URL changes each time the app starts. Requires internet access.';
+  }
+  // Load auto-setup fields
+  if (window.electronAPI.cfGetAutoSetupConfig) {
+    window.electronAPI.cfGetAutoSetupConfig().then(cfg => {
+      if (cfAccountIdInput) cfAccountIdInput.value = cfg.accountId || '';
+      if (cfAutoHostnameInput) cfAutoHostnameInput.value = cfg.hostname || '';
+      if (cfApiTokenInput) cfApiTokenInput.placeholder = cfg.hasToken ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022  (saved)' : 'Cloudflare API token';
+      if (cfDeleteTunnelBtn) cfDeleteTunnelBtn.style.display = cfg.tunnelId ? '' : 'none';
+      if (cfg.tunnelId && cfg.hostname) setCfAutoStatus(`Tunnel configured \u2014 https://${cfg.hostname}`, 'ok');
+    }).catch(() => {});
   }
 }
 
@@ -1500,16 +1754,11 @@ async function updateNetworkInfo() {
 
 async function savePresentationRenderingPreferences() {
   try {
-    const gpuEl = document.getElementById('presentation-gpu-mode');
     const nativeEl = document.getElementById('presentation-native-fullscreen');
-    const mode = gpuEl ? String(gpuEl.value || 'default') : 'default';
-    const allowedGpu = ['default', 'angle-metal', 'angle-gl', 'swiftshader', 'disable-gpu'];
-    const presentationGpuMode = allowedGpu.includes(mode) ? mode : 'default';
     await window.electronAPI.savePreferences({
-      presentationGpuMode,
       presentationNativeFullscreen: nativeEl ? nativeEl.checked === true : false
     });
-    showStatus('Presentation rendering saved. Restart the app for GPU mode to take effect.', 'info');
+    showStatus('Presentation rendering saved.', 'info');
   } catch (error) {
     console.error('Failed to save presentation rendering:', error);
     showStatus('Failed to save presentation rendering', 'error');
@@ -1651,6 +1900,18 @@ async function saveAllowArbitraryUrlPreference() {
     showStatus('Web remote features saved', 'info');
   } catch (error) {
     console.error('Failed to save allow arbitrary URL preference:', error);
+    showStatus('Failed to save web remote features setting', 'error');
+  }
+}
+
+async function saveWebUiVideoControlPreference() {
+  try {
+    await window.electronAPI.savePreferences({
+      webUiVideoControlEnabled: webUiVideoControlEnabledCheckbox && webUiVideoControlEnabledCheckbox.checked === true
+    });
+    showStatus('Web remote features saved', 'info');
+  } catch (error) {
+    console.error('Failed to save video control preference:', error);
     showStatus('Failed to save web remote features setting', 'error');
   }
 }
@@ -2082,6 +2343,97 @@ async function displayBuildNumber() {
     if (buildNumberEl) {
       buildNumberEl.textContent = 'v2.2.1.72';
     }
+  }
+}
+
+// DeckLink settings
+async function loadDecklinkSettings(prefs) {
+  if (!decklinkSlidesEnabled) return;
+  const deckPrefs = prefs.decklink || {};
+  const slides = deckPrefs.slides || {};
+  const notes = deckPrefs.notes || {};
+  decklinkSlidesEnabled.checked = !!slides.enabled;
+  if (slides.deviceIndex !== undefined) decklinkSlidesDevice.value = String(slides.deviceIndex);
+  if (slides.displayMode) decklinkSlidesMode.value = slides.displayMode;
+  decklinkNotesEnabled.checked = !!notes.enabled;
+  if (notes.deviceIndex !== undefined) decklinkNotesDevice.value = String(notes.deviceIndex);
+  if (notes.displayMode) decklinkNotesMode.value = notes.displayMode;
+  await refreshDecklinkModes();
+}
+
+const DECKLINK_DEFAULT_MODE = '1080p2997';
+
+// Fill a Format dropdown with the modes the chosen device supports. The static
+// options in index.html stay when the device reports nothing (absent, or the
+// probe failed), so the tab still works without hardware.
+async function populateDecklinkModes(selectEl, hintEl, deviceSelect) {
+  if (!selectEl || !deviceSelect) return;
+  const wanted = selectEl.value;
+  let modes = [];
+  try { modes = await window.electronAPI.getDecklinkModes(parseInt(deviceSelect.value, 10) || 0); }
+  catch (e) { /* keep the static list */ }
+  if (!modes || modes.length === 0) {
+    if (hintEl) hintEl.textContent = '';
+    return;
+  }
+  selectEl.innerHTML = modes.map(m => `<option value="${m.key}">${m.label}</option>`).join('');
+  const keys = modes.map(m => m.key);
+  if (keys.includes(wanted)) {
+    selectEl.value = wanted;
+    if (hintEl) hintEl.textContent = '';
+  } else {
+    selectEl.value = keys.includes(DECKLINK_DEFAULT_MODE) ? DECKLINK_DEFAULT_MODE : keys[0];
+    if (hintEl) hintEl.textContent = 'The previously selected format is not supported by this device. Showing the formats it supports.';
+  }
+}
+
+async function refreshDecklinkModes() {
+  await populateDecklinkModes(decklinkSlidesMode, decklinkSlidesModeHint, decklinkSlidesDevice);
+  await populateDecklinkModes(decklinkNotesMode, decklinkNotesModeHint, decklinkNotesDevice);
+}
+
+async function populateDecklinkDevices() {
+  if (!decklinkSlidesDevice) return;
+  try {
+    const devices = await window.electronAPI.getDecklinkDevices();
+    if (!devices || devices.length === 0) return;
+    const makeOptions = () => devices.map(d => `<option value="${d.index}">${d.name}</option>`).join('');
+    decklinkSlidesDevice.innerHTML = makeOptions();
+    decklinkNotesDevice.innerHTML = makeOptions();
+  } catch (e) { /* hardware not present */ }
+}
+
+async function updateDecklinkStatus() {
+  const providerEl = document.getElementById('decklink-provider-status');
+  const slidesLed = document.getElementById('decklink-slides-led');
+  const slidesLabel = document.getElementById('decklink-slides-status-label');
+  const notesLed = document.getElementById('decklink-notes-led');
+  const notesLabel = document.getElementById('decklink-notes-status-label');
+  if (!providerEl) return;
+  try {
+    const status = await window.electronAPI.getDecklinkStatus();
+    if (status.providerType === 'unavailable') {
+      const errs = status.detectionErrors || {};
+      providerEl.textContent = errs.macadam
+        ? `DeckLink unavailable — ${errs.macadam}`
+        : 'DeckLink unavailable (the macadam module could not be loaded)';
+    } else {
+      providerEl.textContent = status.driverVersion
+        ? `Provider: ${status.providerType} (${status.driverVersion})`
+        : `Provider: ${status.providerType}`;
+    }
+    if (slidesLed) slidesLed.className = `led ${status.slides.active ? 'led-ok' : 'led-neutral'}`;
+    if (slidesLabel) {
+      slidesLabel.textContent = status.slides.active ? 'Active'
+        : (status.slides.error ? `Error: ${status.slides.error}` : 'Inactive');
+    }
+    if (notesLed) notesLed.className = `led ${status.notes.active ? 'led-ok' : 'led-neutral'}`;
+    if (notesLabel) {
+      notesLabel.textContent = status.notes.active ? 'Active'
+        : (status.notes.error ? `Error: ${status.notes.error}` : 'Inactive');
+    }
+  } catch (e) {
+    if (providerEl) providerEl.textContent = 'Status unavailable';
   }
 }
 

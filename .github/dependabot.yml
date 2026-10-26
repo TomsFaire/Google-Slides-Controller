@@ -1,0 +1,44 @@
+version: 2
+updates:
+  # Root app — Yarn 1
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      # electron and electron-builder are a coupled pair: a major Electron bump
+      # generally needs a matching builder. Never let them move separately.
+      electron-toolchain:
+        patterns:
+          - "electron"
+          - "electron-builder"
+    commit-message:
+      prefix: "chore"
+      include: scope
+
+  # Companion module — Yarn 4, separate lockfile
+  - package-ecosystem: npm
+    directory: "/companion-module-gslide-opener"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - companion-module
+    commit-message:
+      prefix: "chore"
+      include: scope
+
+  # Keep the CI actions themselves current
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies
+      - ci

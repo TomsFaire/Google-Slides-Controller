@@ -1,3 +1,5 @@
+@.claude/skills/token-optimization.md
+
 # CLAUDE.md
 
 Project: Google Slides Controller (Electron Desktop App)
@@ -123,8 +125,15 @@ Key HTTP endpoints on local API:
 | POST | `/api/next-slide` / `/api/previous-slide` | Navigate slides |
 | POST | `/api/go-to-slide` | Jump to specific slide |
 | POST | `/api/reload-presentation` | Reload current presentation |
-| POST | `/api/share-link` | Generate/get share link with QR |
-| POST | `/api/show-share-qr` | Display QR code on presentation screen |
+| POST | `/api/show-tunnel-qr` | Display tunnel QR code on presentation screen |
+| POST | `/api/hide-tunnel-qr` | Hide the tunnel QR overlay |
+
+The table above covers the commonly used routes. `main.js` serves 40 in total; for the
+authoritative list run:
+
+```bash
+grep -oE "'/api/[a-z0-9-]+'" main.js | tr -d "'" | sort -u
+```
 
 All endpoints require IP allowlist validation; see `isControllerAllowedRequest()` for security details.
 
@@ -154,3 +163,11 @@ Use `/security-review` skill for authentication and API security questions.
 - `CHANGELOG.md` – Version history and feature changes
 - `_FINDINGS.md` – Technical findings and design decisions
 - `.claude/settings.local.json` – Local development settings
+
+## Three Man Team
+
+Available agents: Arch (Architect, Opus), Bob (Builder, Sonnet), Richard (Reviewer, Haiku)
+
+**Docs policy:** All docs live in `docs/`. After completing any work outlined in a doc, update that doc's status section to reflect what was done, what's pending, and any decisions made.
+
+Start sessions with: *You are the Architect on this project. Read CLAUDE.md, then ARCHITECT.md.*

@@ -1,5 +1,28 @@
 # Companion Module Changelog
 
+## [1.7.2] - 2026-10-14
+
+### Changed
+- Pin `@companion-module/base` to 2.1.x. Companion builds that only support module API up to 2.1 hide modules built against 2.2.x ("Module Api version is too new").
+
+## [1.7.1] - 2026-10-14
+
+### Changed
+- Migrated to `@companion-module/base` 2.x and `@companion-module/tools` 3.x (ESM entrypoint, manifest `type: connection`, object-style variable definitions, pre-evaluated action options).
+- Connection failures now report the `ConnectionFailure` status instead of an invalid `error` value.
+
+## [1.7.0] - 2026-06-12
+
+### Added
+- **Stage timer overlay actions** — `show_stage_timer_overlay`, `hide_stage_timer_overlay`, `set_stage_timer_overlay_position`, `set_stage_timer_overlay_size`.
+- **Stage timer overlay variables** — `stage_timer_overlay_enabled`, `stage_timer_overlay_position`, `stage_timer_overlay_size`.
+- **Stage timer overlay feedback** — `stage_timer_overlay_active`.
+
+## [1.6.0] - 2026-05-06
+
+### Added
+- **Open URL** action (`open_url`) with variable support for arbitrary URL display.
+
 ## [1.5.0] - 2026-04-28
 
 ### Added

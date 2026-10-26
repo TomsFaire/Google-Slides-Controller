@@ -1,4 +1,4 @@
-module.exports = function (self) {
+export default function (self) {
 	console.log('[gslide-opener] actions.js - Setting up action definitions')
 	self.log('info', '=== Setting up action definitions ===')
 	
@@ -18,7 +18,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
+					const url = event.options.url
 					self.log('info', `Opening presentation: ${url}`)
 
 					const response = await self.apiRequest('POST', '/api/open-presentation', { url })
@@ -44,7 +44,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
+					const url = event.options.url
 					self.log('info', `Opening presentation with notes: ${url}`)
 
 					const response = await self.apiRequest('POST', '/api/open-presentation-with-notes', { url })
@@ -70,7 +70,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
+					const url = event.options.url
 					self.log('info', `Opening Slido: ${url}`)
 
 					const response = await self.apiRequest('POST', '/api/open-slido', { url })
@@ -104,8 +104,8 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const url = await self.parseVariablesInString(event.options.url)
-					const backgroundColor = await self.parseVariablesInString(event.options.backgroundColor || '#000000')
+					const url = event.options.url
+					const backgroundColor = event.options.backgroundColor || '#000000'
 					self.log('info', `Opening URL: ${url} bg: ${backgroundColor}`)
 
 					const response = await self.apiRequest('POST', '/api/open-url', { url, backgroundColor })
@@ -155,10 +155,10 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const fillUrl = await self.parseVariablesInString(event.options.fillUrl)
-					const fillBgColor = await self.parseVariablesInString(event.options.fillBgColor || '#000000')
-					const keyUrl = await self.parseVariablesInString(event.options.keyUrl)
-					const keyBgColor = await self.parseVariablesInString(event.options.keyBgColor || '#000000')
+					const fillUrl = event.options.fillUrl
+					const fillBgColor = event.options.fillBgColor || '#000000'
+					const keyUrl = event.options.keyUrl
+					const keyBgColor = event.options.keyBgColor || '#000000'
 					self.log('info', `Opening key/fill — fill: ${fillUrl} (bg: ${fillBgColor}), key: ${keyUrl} (bg: ${keyBgColor})`)
 
 					const response = await self.apiRequest('POST', '/api/open-key-fill', { fillUrl, fillBgColor, keyUrl, keyBgColor })
@@ -286,7 +286,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const slideStr = await self.parseVariablesInString(String(event.options.slide))
+					const slideStr = String(event.options.slide)
 					const slide = parseInt(slideStr, 10)
 					
 					if (isNaN(slide) || slide < 1) {
@@ -435,7 +435,7 @@ module.exports = function (self) {
 			],
 			callback: async (event) => {
 				try {
-					const durationStr = await self.parseVariablesInString(String(event.options.durationSec))
+					const durationStr = String(event.options.durationSec)
 					const durationSec = parseInt(durationStr, 10)
 
 					if (isNaN(durationSec) || durationSec < 5 || durationSec > 300) {
@@ -605,6 +605,93 @@ module.exports = function (self) {
 					self.log('info', `PerfectCue port ${port} ${enabled ? 'enabled' : 'disabled'}`)
 				} catch (error) {
 					self.log('error', `PerfectCue toggle port failed: ${error.message}`)
+				}
+			},
+		},
+
+		show_stage_timer_overlay: {
+			name: 'Show Stage Timer Overlay',
+			description: 'Show the stage timer clock overlay on the notes monitor',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Showing stage timer overlay')
+					await self.apiRequest('POST', '/api/show-stage-timer-overlay', {})
+				} catch (error) {
+					self.log('error', `Failed to show stage timer overlay: ${error.message}`)
+				}
+			},
+		},
+
+		hide_stage_timer_overlay: {
+			name: 'Hide Stage Timer Overlay',
+			description: 'Hide the stage timer clock overlay on the notes monitor',
+			options: [],
+			callback: async () => {
+				try {
+					self.log('info', 'Hiding stage timer overlay')
+					await self.apiRequest('POST', '/api/hide-stage-timer-overlay', {})
+				} catch (error) {
+					self.log('error', `Failed to hide stage timer overlay: ${error.message}`)
+				}
+			},
+		},
+
+		set_stage_timer_overlay_position: {
+			name: 'Set Stage Timer Overlay Position',
+			description: 'Move the stage timer overlay to a different corner of the notes monitor',
+			options: [
+				{
+					id: 'position',
+					type: 'dropdown',
+					label: 'Position',
+					default: 'bottom-left',
+					choices: [
+						{ id: 'bottom-left',  label: 'Bottom Left'  },
+						{ id: 'bottom-right', label: 'Bottom Right' },
+						{ id: 'top-left',     label: 'Top Left'     },
+						{ id: 'top-right',    label: 'Top Right'    },
+					],
+				},
+			],
+			callback: async (event) => {
+				try {
+					const position = event.options.position
+					self.log('info', `Setting stage timer overlay position to: ${position}`)
+					await self.apiRequest('POST', '/api/update-stage-timer-overlay-settings', { position })
+				} catch (error) {
+					self.log('error', `Failed to set overlay position: ${error.message}`)
+				}
+			},
+		},
+
+		set_stage_timer_overlay_size: {
+			name: 'Set Stage Timer Overlay Size',
+			description: 'Set the stage timer overlay size as a percentage of the notes monitor (1–100)',
+			options: [
+				{
+					id: 'size',
+					type: 'number',
+					label: 'Size (%)',
+					default: 10,
+					min: 1,
+					max: 100,
+					required: true,
+					useVariables: true,
+				},
+			],
+			callback: async (event) => {
+				try {
+					const sizeStr = String(event.options.size)
+					const size = parseInt(sizeStr, 10)
+					if (isNaN(size) || size < 1 || size > 100) {
+						self.log('error', `Invalid overlay size: ${sizeStr} (must be 1–100)`)
+						return
+					}
+					self.log('info', `Setting stage timer overlay size to: ${size}%`)
+					await self.apiRequest('POST', '/api/update-stage-timer-overlay-settings', { size })
+				} catch (error) {
+					self.log('error', `Failed to set overlay size: ${error.message}`)
 				}
 			},
 		},

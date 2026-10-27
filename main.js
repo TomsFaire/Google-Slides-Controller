@@ -29,6 +29,8 @@ const QRCode = require('qrcode');
 const { createPerfectCueServer } = require('./src/perfectcue-server');
 const { normalizePerfectCuePorts } = require('./src/perfectcue-port-config');
 const { armNotesAdoption } = require('./src/notes-window-adoption');
+const { writeSecretFileSync, ensureSecretFileMode } = require('./src/secret-files');
+const { assessSecretStorage } = require('./src/secret-storage-health');
 let DecklinkOutputManager = null;
 try {
   DecklinkOutputManager = require('./src/decklink-output').DecklinkOutputManager;
@@ -1492,7 +1494,8 @@ function savePreferences(prefs) {
       fs.mkdirSync(prefsDir, { recursive: true });
     }
     
-    fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf8');
+    // Owner-only: preferences hold the encrypted Cloudflare API and tunnel tokens.
+    writeSecretFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf8');
     logInfo('[Preferences] Preferences saved');
     invalidateLocalBackupTargetKeyCache();
 
@@ -1855,7 +1858,7 @@ function getWebUiTunnelSessionSecretPath() {
 function rotateWebUiTunnelSessionSecret() {
   webUiTunnelSessionSecret = crypto.randomBytes(WEBUI_TUNNEL_SESSION_SECRET_BYTES);
   try {
-    fs.writeFileSync(getWebUiTunnelSessionSecretPath(), webUiTunnelSessionSecret);
+    writeSecretFileSync(getWebUiTunnelSessionSecretPath(), webUiTunnelSessionSecret);
   } catch (e) {
     logError('[Web UI] Failed to write tunnel session secret:', e.message);
   }
@@ -6715,9 +6718,66 @@ function decryptCfToken(stored) {
 function saveCfCredentialsFile(tunnelId, tunnelSecret, accountId) {
   const filePath = path.join(app.getPath('userData'), `cf-tunnel-${tunnelId}.json`);
   const creds = { AccountTag: accountId, TunnelID: tunnelId, TunnelSecret: tunnelSecret };
-  fs.writeFileSync(filePath, JSON.stringify(creds, null, 2), 'utf8');
+  // cloudflared requires this file in the clear, so owner-only is the protection.
+  writeSecretFileSync(filePath, JSON.stringify(creds, null, 2), 'utf8');
   return filePath;
 }
+
+/**
+ * Tighten secret files written by earlier versions, which created them
+ * world-readable. Runs once at startup; new writes are owner-only already.
+ */
+function tightenExistingSecretFiles() {
+  const userData = app.getPath('userData');
+  const paths = [getPreferencesPath(), getWebUiTunnelSessionSecretPath()];
+  try {
+    for (const name of fs.readdirSync(userData)) {
+      if (name.startsWith('cf-tunnel-') && name.endsWith('.json')) {
+        paths.push(path.join(userData, name));
+      }
+    }
+  } catch (e) {
+    logWarn('[Secrets] Could not scan userData for tunnel credentials:', e.message);
+  }
+
+  const tightened = paths.filter(p => ensureSecretFileMode(p) === 'tightened');
+  if (tightened.length > 0) {
+    logInfo('[Secrets] Restricted to owner-only:', tightened.map(p => path.basename(p)).join(', '));
+  }
+}
+
+/** How well safeStorage is protecting the stored Cloudflare tokens. */
+async function getSecretStorageHealth() {
+  const { safeStorage } = require('electron');
+  let backend;
+  try {
+    // Linux-only; absent elsewhere.
+    backend = typeof safeStorage.getSelectedStorageBackend === 'function'
+      ? safeStorage.getSelectedStorageBackend()
+      : undefined;
+  } catch (_) {
+    backend = undefined;
+  }
+  let available = false;
+  try {
+    // Prefer the async check: the sync one is deprecated in Electron 45 and
+    // removed in 46. Fall back for older runtimes.
+    available = typeof safeStorage.isAsyncEncryptionAvailable === 'function'
+      ? await safeStorage.isAsyncEncryptionAvailable()
+      : safeStorage.isEncryptionAvailable();
+  } catch (_) {
+    available = false;
+  }
+  return assessSecretStorage({ available, backend, platform: process.platform });
+}
+
+ipcMain.handle('get-secret-storage-health', async () => {
+  try {
+    return { success: true, health: await getSecretStorageHealth() };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
 
 // IPC: verify CF API token
 ipcMain.handle('cf-verify-token', async (_event, { apiToken }) => {
@@ -13005,6 +13065,7 @@ app.whenReady().then(async () => {
       logError('[readme-capture] could not apply capture Web UI port:', e);
     }
   }
+  tightenExistingSecretFiles();
   setupGoogleSessionEncoding();
   createWindow();
   startHttpServer();

@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Cloudflare auto-setup
+  getSecretStorageHealth: () => ipcRenderer.invoke('get-secret-storage-health'),
   cfVerifyToken: (apiToken) => ipcRenderer.invoke('cf-verify-token', { apiToken }),
   cfSaveToken: (apiToken, accountId) => ipcRenderer.invoke('cf-save-token', { apiToken, accountId }),
   cfGetAutoSetupConfig: () => ipcRenderer.invoke('cf-get-auto-setup-config'),

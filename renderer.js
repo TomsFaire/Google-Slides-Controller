@@ -86,6 +86,7 @@ const namedTunnelSaveBtn = document.getElementById('named-tunnel-save');
 const namedTunnelStatus = document.getElementById('named-tunnel-status');
 const cfApiTokenInput = document.getElementById('cf-api-token');
 const cfVerifyTokenBtn = document.getElementById('cf-verify-token-btn');
+const cfTokenStorageNote = document.getElementById('cf-token-storage-note');
 const cfAccountIdInput = document.getElementById('cf-account-id');
 const cfAutoHostnameInput = document.getElementById('cf-auto-hostname');
 const cfAutoSetupBtn = document.getElementById('cf-auto-setup-btn');
@@ -1552,6 +1553,7 @@ async function loadTunnelStatus() {
       wanUrlDisplay.value = status.url || (status.running ? 'Connecting\u2026' : '');
     }
     applyTunnelConfig(prefs);
+    refreshSecretStorageNote();
     updateStatusBar();
     syncDashboardWan();
   } catch (err) {
@@ -1565,6 +1567,27 @@ function setCfAutoStatus(message, type) {
   cfAutoStatus.style.color = type === 'error' ? 'var(--color-error, #c0392b)'
     : type === 'ok' ? 'var(--color-success, #27ae60)'
     : 'var(--text-muted)';
+}
+
+// Say so when safeStorage is not actually protecting the saved token. Silent
+// when it is, so the note only ever appears if there is something to act on.
+async function refreshSecretStorageNote() {
+  if (!cfTokenStorageNote || !window.electronAPI.getSecretStorageHealth) return;
+  let health;
+  try {
+    const result = await window.electronAPI.getSecretStorageHealth();
+    if (!result || !result.success) return;
+    health = result.health;
+  } catch (_) {
+    return;
+  }
+  if (!health || health.protected) {
+    cfTokenStorageNote.style.display = 'none';
+    return;
+  }
+  cfTokenStorageNote.textContent = `⚠ ${health.summary}: ${health.detail}`;
+  cfTokenStorageNote.style.color = 'var(--color-error, #c0392b)';
+  cfTokenStorageNote.style.display = '';
 }
 
 function applyTunnelConfig(prefs) {

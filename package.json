@@ -41,7 +41,7 @@
   "devDependencies": {
     "@electron/rebuild": "^4.2.1",
     "cross-env": "^10.1.0",
-    "electron": "^45.0.0",
+    "electron": "^45.1.0",
     "electron-builder": "^26.18.0",
     "png-to-ico": "^3.0.2"
   },

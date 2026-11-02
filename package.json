@@ -1,7 +1,7 @@
 {
   "name": "gslide-opener",
   "version": "2.4.0",
-  "buildNumber": "94",
+  "buildNumber": "95",
   "description": "Quick Google Slides deck switcher",
   "main": "main.js",
   "scripts": {

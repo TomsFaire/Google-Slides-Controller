@@ -39,7 +39,7 @@
     "url": "https://github.com/TomsFaire/Google-Slides-Controller.git"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.6.0",
+    "@electron/rebuild": "^4.2.1",
     "cross-env": "^10.1.0",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0",

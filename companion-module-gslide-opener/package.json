@@ -20,7 +20,7 @@
     "@companion-module/base": "~2.2.2"
   },
   "devDependencies": {
-    "@companion-module/tools": "^3.2.0"
+    "@companion-module/tools": "^3.2.1"
   },
   "engines": {
     "node": "^22.20",
